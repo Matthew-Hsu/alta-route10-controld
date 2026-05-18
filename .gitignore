@@ -1,3 +1,7 @@
 # Never commit actual config with real resolver IDs
 ctrld.toml
 post-cfg.sh
+
+# Binaries
+*.exe
+alta-controld

@@ -1,7 +1,8 @@
-# Never commit actual config with real resolver IDs
-ctrld.toml
-post-cfg.sh
+# OS files
+.DS_Store
+Thumbs.db
 
-# Binaries
-*.exe
-alta-controld
+# Editor files
+*.swp
+*.swo
+*~

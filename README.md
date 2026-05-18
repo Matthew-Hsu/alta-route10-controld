@@ -6,29 +6,29 @@ Encrypted DNS-over-HTTPS with per-device visibility on the Alta Labs Route 10 ro
 
 - Routes all DNS traffic through ControlD via encrypted DoH
 - Shows individual device hostnames and IPs in the ControlD dashboard
-- Persists across router reboots via `/cfg/post-cfg.sh`
+- Self-healing: survives reboots, auto-downloads missing binaries
 - Falls back to `https-dns-proxy` if `ctrld` fails to start
 
 ## Architecture
 
 ```
 LAN Devices
-    │
-    ▼ (port 53)
+    |
+    v (port 53)
 iptables REDIRECT
-    │
-    ▼ (port 5354)
-┌──────────┐     DoH      ┌───────────┐
-│  ctrld   │ ───────────► │ ControlD  │
-│  :5354   │              │  DoH API  │
-└──────────┘              └───────────┘
-    ▲ sends client
-    │ IP/hostname/MAC
-    │
-┌──────────┐
-│ dnsmasq  │ (fallback: port 5053/5054/5055)
-│  :53     │ ──► https-dns-proxy ──► ControlD
-└──────────┘
+    |
+    v (port 5354)
++----------+     DoH      +-----------+
+|  ctrld   | -----------> | ControlD  |
+|  :5354   |              |  DoH API  |
++----------+              +-----------+
+    ^ sends client
+    | IP/hostname/MAC
+    |
++----------+
+| dnsmasq  | (fallback: port 5053/5054/5055)
+|  :53     | --> https-dns-proxy --> ControlD
++----------+
 ```
 
 ## Prerequisites
@@ -40,121 +40,76 @@ iptables REDIRECT
 
 ## Quick Start
 
-### Option A: Automated Setup
-
 ```sh
 # SSH into your router and run:
-wget -O /tmp/setup.sh https://your-forgejo-url/setup.sh
+wget -O /tmp/setup.sh https://codeberg.org/CookieTyrant/alta-route10-controld/raw/branch/master/setup.sh
 sh /tmp/setup.sh
 ```
 
-### Option B: Manual Setup
+The installer will prompt for your resolver ID (from the ControlD dashboard) and handle everything else: downloading the binary, writing configs, setting up iptables redirects, and installing a weekly auto-update cron job.
 
-1. **Download `ctrld` to the router:**
+## Scripts
 
-```sh
-ssh root@<router-ip>
-cd /cfg
-wget -O ctrld.tar.gz 'https://github.com/Control-D-Inc/ctrld/releases/download/v1.5.0/ctrld_1.5.0_linux_arm64.tar.gz'
-tar xzf ctrld.tar.gz -C /tmp
-mv /tmp/dist/ctrld_*/ctrld /cfg/ctrld
-chmod +x /cfg/ctrld
-rm -rf /tmp/dist ctrld.tar.gz
-```
-
-2. **Upload config files:**
-
-Copy `config/ctrld.toml.example` to `/cfg/ctrld.toml` and `config/post-cfg.sh.example` to `/cfg/post-cfg.sh` on the router. Replace `<YOUR_RESOLVER_ID>` with your ControlD resolver ID in both files.
-
-```sh
-# Edit the files on the router
-vi /cfg/ctrld.toml
-vi /cfg/post-cfg.sh
-chmod +x /cfg/post-cfg.sh
-```
-
-3. **Apply immediately:**
-
-```sh
-/cfg/post-cfg.sh
-```
-
-4. **Verify:**
-
-```sh
-nslookup google.com        # Should resolve
-nslookup google.com 127.0.0.1#5354  # Test ctrld directly
-pidof ctrld                 # Should return a PID
-```
-
-Check your [ControlD dashboard](https://controld.com) — you should see individual devices with hostnames, IPs, and MAC addresses.
-
-## Configuration Files
-
-### ctrld.toml
-
-The `ctrld` daemon config. Key settings:
-
-| Setting | Purpose |
+| Script | Purpose |
 |---|---|
-| `discover_dhcp` | Reads dnsmasq lease file for hostnames |
-| `discover_arp` | ARP table discovery for MAC addresses |
-| `discover_ptr` | Reverse DNS lookups for hostnames |
-| `dhcp_lease_file_path` | Path to `/cfg/dhcp.leases` |
-| `send_client_info` | Sends device IP/hostname/MAC to ControlD |
+| `setup.sh` | Interactive installer. Run once on the router. |
+| `status.sh` | Health check. Shows service status, DNS resolution, iptables rules. |
+| `uninstall.sh` | Removes everything. Restores default DNS. |
 
-### post-cfg.sh
+## What Gets Installed
 
-Runs on every boot. Does the following:
+| File | Purpose |
+|---|---|
+| `/cfg/controld.env` | Resolver ID, version, bootstrap IP |
+| `/cfg/ctrld` | DNS proxy binary (arm64) |
+| `/cfg/ctrld.toml` | DNS proxy config |
+| `/cfg/post-cfg.sh` | Self-healing boot script |
+| `/cfg/controld-update.sh` | Weekly auto-update script |
 
-1. Configures `https-dns-proxy` with ControlD URLs (fallback)
-2. Restores `dnsmasq` to use `https-dns-proxy`
-3. Starts `ctrld` as a daemon on port 5354
-4. Health checks `ctrld` before redirecting DNS
-5. Adds `iptables` PREROUTING rules to redirect LAN DNS (port 53) to `ctrld` (port 5354)
-6. If `ctrld` fails the health check, keeps `https-dns-proxy` as the DNS backend
+### Self-Healing
+
+`post-cfg.sh` runs on every boot and:
+
+1. Re-downloads the `ctrld` binary if missing
+2. Regenerates `ctrld.toml` from `/cfg/controld.env` if missing
+3. Configures `https-dns-proxy` as a fallback
+4. Starts `ctrld` on port 5354
+5. Health checks before adding iptables redirect rules
+6. If `ctrld` fails, keeps `https-dns-proxy` as the DNS backend
+
+### Auto-Update
+
+A cron job runs weekly (Monday 3 AM) to check for new `ctrld` releases and update automatically.
 
 ## Fallback Safety
 
-The setup has two layers of protection:
+Two layers of protection:
 
-1. **ctrld health check** — `post-cfg.sh` only adds iptables redirect rules if ctrld passes a DNS resolution test
-2. **https-dns-proxy fallback** — Even if ctrld fails, dnsmasq still forwards to `https-dns-proxy` → ControlD. DNS stays encrypted, just without per-device visibility.
+1. **ctrld health check** -- iptables redirect rules are only added if ctrld passes a DNS resolution test
+2. **https-dns-proxy fallback** -- even if ctrld fails, dnsmasq still forwards to https-dns-proxy which routes to ControlD. DNS stays encrypted, just without per-device visibility.
 
-If DNS breaks, reboot the router. The `post-cfg.sh` will re-evaluate on boot.
+## Manual Setup
+
+If you prefer not to use the automated installer, see `config/ctrld.toml.example` and `config/post-cfg.sh.example`. Replace `<YOUR_RESOLVER_ID>` in both files, upload to `/cfg/`, and run `post-cfg.sh`.
 
 ## Firmware Updates
 
-Firmware updates **may** wipe `/cfg/`. Keep backups of:
-
-- `/cfg/ctrld.toml`
-- `/cfg/ctrld` (binary)
-- `/cfg/post-cfg.sh`
-
-After a firmware update, re-upload the files and run `post-cfg.sh`.
-
-## Removing the Setup
+Firmware updates may wipe `/cfg/`. After updating, re-run `setup.sh` or restore your backed-up files:
 
 ```sh
-# Remove iptables rules
-iptables -t nat -F PREROUTING
-
-# Stop ctrld
-kill $(pidof ctrld)
-
-# Remove persistent config
-rm /cfg/ctrld /cfg/ctrld.toml /cfg/post-cfg.sh
-
-# Restore default DNS (reboot or run)
-/etc/init.d/https-dns-proxy restart
-/etc/init.d/dnsmasq restart
+scp controld.env ctrld ctrld.toml post-cfg.sh root@<router-ip>:/cfg/
+ssh root@<router-ip> "chmod +x /cfg/ctrld /cfg/post-cfg.sh && /cfg/post-cfg.sh"
 ```
+
+## Troubleshooting
+
+See [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ## Credits
 
-- [ControlD](https://controld.com) — DNS resolver service
-- [ctrld](https://github.com/Control-D-Inc/ctrld) — DNS forwarding proxy
-- [Alta Labs](https://alta.inc) — Route 10 router
+- [ControlD](https://controld.com) -- DNS resolver service
+- [ctrld](https://github.com/Control-D-Inc/ctrld) -- DNS forwarding proxy
+- [Alta Labs](https://alta.inc) -- Route 10 router
 
 ## License
 

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"codeberg.org/CookieTyrant/alta-route10-controld/internal"
 )
@@ -14,9 +15,96 @@ func Setup() {
 	fmt.Println("╚══════════════════════════════════════════════════════════════╝")
 	fmt.Println()
 
+	// Check for existing state file (redeploy support)
+	if internal.ConfigExists() {
+		cfg, err := internal.LoadConfig()
+		if err == nil && cfg.RouterIP != "" {
+			fmt.Println("  Found previous configuration:")
+			fmt.Printf("    Router:   %s\n", cfg.RouterIP)
+			fmt.Printf("    Resolver: %s\n", cfg.ResolverID)
+			fmt.Printf("    Version:  %s\n", cfg.CtrlDVersion)
+			fmt.Println()
+
+			fmt.Println("  Options:")
+			fmt.Println("    [R] Redeploy (reinstall everything)")
+			fmt.Println("    [N] New configuration")
+			fmt.Println("    [Q] Quit")
+			fmt.Println()
+
+			choice := internal.PromptDefault("Choose", "R")
+			fmt.Println()
+
+			switch strings.ToUpper(choice) {
+			case "R":
+				redeploy(cfg)
+				return
+			case "Q":
+				return
+			default:
+				// Fall through to new setup
+			}
+		}
+	}
+
+	freshSetup()
+}
+
+func redeploy(cfg *internal.Config) {
+	internal.PrintInfo("Redeploying to " + cfg.RouterIP + "...")
+
+	keyPath := internal.FindSSHKey()
+	if keyPath == "" {
+		internal.PrintErr("No SSH key found. Run a fresh setup first.")
+		return
+	}
+
+	client, err := internal.NewSSHClient(cfg.RouterIP, keyPath)
+	if err != nil {
+		internal.PrintErr("Cannot connect to router: " + err.Error())
+		fmt.Println()
+		fmt.Println("  Troubleshooting:")
+		fmt.Println("    - Is the router on and reachable?")
+		fmt.Println("    - Is your SSH key still in manage.alta.inc?")
+		return
+	}
+	defer client.Close()
+	internal.PrintOK("SSH connected")
+
+	// Reinstall ctrld
+	internal.PrintInfo("Reinstalling ctrld...")
+	if err := internal.InstallCtrlDOnRouter(client, func(msg string) { internal.PrintInfo(msg) }); err != nil {
+		internal.PrintErr("ctrld install failed: " + err.Error())
+		return
+	}
+
+	// Reconfigure
+	internal.PrintInfo("Reconfiguring...")
+	if err := internal.ConfigureRouter(client, cfg.ResolverID, cfg.BootstrapIP, func(msg string) { internal.PrintInfo(msg) }); err != nil {
+		internal.PrintErr("Configuration failed: " + err.Error())
+		return
+	}
+
+	// Apply
+	internal.PrintInfo("Applying configuration...")
+	if err := internal.ApplyConfig(client, func(msg string) { internal.PrintInfo(msg) }); err != nil {
+		internal.PrintErr("Apply failed: " + err.Error())
+		return
+	}
+
+	// Verify
+	if err := internal.VerifySetup(client, func(msg string) { internal.PrintOK(msg) }); err != nil {
+		internal.PrintWarn("Verification issue: " + err.Error())
+	} else {
+		internal.PrintOK("All checks passed!")
+	}
+
+	printSuccess()
+}
+
+func freshSetup() {
 	// ── Step 1: ControlD Configuration ──
 	internal.PrintStep(1, "ControlD Configuration")
-	fmt.Println("  Get your resolver ID from: https://controld.com → Dashboard → Endpoint Resolvers")
+	fmt.Println("  Get your resolver ID from: https://controld.com -> Dashboard -> Endpoint Resolvers")
 	fmt.Println()
 
 	resolverID := internal.PromptDefault("Resolver ID", "")
@@ -60,7 +148,7 @@ func Setup() {
 			fmt.Println()
 			fmt.Printf("    %s\n\n", pubKey)
 			fmt.Println("  1. Go to https://manage.alta.inc")
-			fmt.Println("  2. Settings → System → SSH Keys")
+			fmt.Println("  2. Settings -> System -> SSH Keys")
 			fmt.Println("  3. Click 'Add a new key' and paste the key above")
 			fmt.Println("  4. Click 'Add Key'")
 			fmt.Println()
@@ -170,7 +258,21 @@ func Setup() {
 		internal.PrintOK("All checks passed!")
 	}
 
-	// ── Done ──
+	// Save state for future redeploy
+	cfg := &internal.Config{
+		ResolverID:   resolverID,
+		BootstrapIP:  bootstrapIP,
+		RouterIP:     routerIP,
+		CtrlDVersion: internal.CtrlDVersion,
+	}
+	if err := internal.SaveConfig(cfg); err != nil {
+		internal.PrintWarn("Could not save state file: " + err.Error())
+	}
+
+	printSuccess()
+}
+
+func printSuccess() {
 	fmt.Println()
 	fmt.Println("╔══════════════════════════════════════════════════════════════╗")
 	fmt.Println("║                    Setup Complete!                           ║")
@@ -182,24 +284,21 @@ func Setup() {
 	fmt.Println("  You should see individual devices appear within a few minutes.")
 	fmt.Println()
 	fmt.Println("  Installed files on router:")
-	fmt.Println("    /cfg/ctrld         - DNS proxy binary")
-	fmt.Println("    /cfg/ctrld.toml    - DNS proxy configuration")
-	fmt.Println("    /cfg/post-cfg.sh   - Boot persistence script")
+	fmt.Println("    /cfg/controld.env       - Recovery config (self-healing)")
+	fmt.Println("    /cfg/ctrld               - DNS proxy binary")
+	fmt.Println("    /cfg/ctrld.toml          - DNS proxy configuration")
+	fmt.Println("    /cfg/post-cfg.sh         - Self-healing boot script")
+	fmt.Println("    /cfg/controld-update.sh  - Weekly auto-update script")
 	fmt.Println()
 	fmt.Println("  These files persist across reboots.")
-	fmt.Println("  To remove: alta-controld uninstall")
+	fmt.Println("  If ctrld or its config gets deleted, post-cfg.sh will rebuild them on boot.")
+	fmt.Println()
+	fmt.Println("  To redeploy after a firmware update: alta-controld setup")
+	fmt.Println("  To check status:  alta-controld status")
+	fmt.Println("  To remove:        alta-controld uninstall")
 	fmt.Println()
 }
 
 func containsStr(s, substr string) bool {
-	return len(s) >= len(substr) && len(s) > 0 && searchStr(s, substr)
-}
-
-func searchStr(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
+	return strings.Contains(s, substr)
 }

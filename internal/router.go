@@ -6,7 +6,6 @@ import (
 )
 
 const (
-	CtrlDVersion     = "1.5.0"
 	CtrlDDownloadURL = "https://github.com/Control-D-Inc/ctrld/releases/download/v" + CtrlDVersion + "/ctrld_" + CtrlDVersion + "_linux_arm64.tar.gz"
 )
 
@@ -38,6 +37,14 @@ func InstallCtrlDOnRouter(client *SSHClient, progress func(string)) error {
 }
 
 func ConfigureRouter(client *SSHClient, resolverID, bootstrapIP string, progress func(string)) error {
+	// Upload recovery env file (survives firmware updates if /cfg/ persists)
+	progress("Uploading recovery config...")
+	env := RenderControldEnv(resolverID, bootstrapIP, CtrlDVersion)
+	if err := client.UploadFile("/cfg/controld.env", env); err != nil {
+		return fmt.Errorf("failed to upload controld.env: %w", err)
+	}
+
+	// Upload ctrld.toml
 	progress("Generating ctrld.toml...")
 	toml := RenderCtrlDTOML(resolverID, bootstrapIP)
 	if err := client.UploadFile("/cfg/ctrld.toml", toml); err != nil {
@@ -45,6 +52,7 @@ func ConfigureRouter(client *SSHClient, resolverID, bootstrapIP string, progress
 	}
 	progress("ctrld.toml uploaded")
 
+	// Upload post-cfg.sh (self-healing boot script)
 	progress("Generating post-cfg.sh...")
 	postCfg := RenderPostCfgSh(resolverID, bootstrapIP)
 	if err := client.UploadFile("/cfg/post-cfg.sh", postCfg); err != nil {
@@ -56,6 +64,37 @@ func ConfigureRouter(client *SSHClient, resolverID, bootstrapIP string, progress
 	}
 	progress("post-cfg.sh uploaded and made executable")
 
+	// Upload auto-update script
+	progress("Installing auto-update script...")
+	updateSh := RenderControldUpdateSh()
+	if err := client.UploadFile("/cfg/controld-update.sh", updateSh); err != nil {
+		return fmt.Errorf("failed to upload controld-update.sh: %w", err)
+	}
+	if _, err := client.RunCommand("chmod +x /cfg/controld-update.sh"); err != nil {
+		return fmt.Errorf("failed to chmod controld-update.sh: %w", err)
+	}
+
+	// Install weekly cron job for auto-updates
+	if err := InstallUpdateCron(client); err != nil {
+		// Non-fatal: auto-update is nice-to-have
+		progress("Warning: could not install cron job: " + err.Error())
+	} else {
+		progress("Weekly auto-update cron job installed")
+	}
+
+	return nil
+}
+
+// InstallUpdateCron adds a weekly cron job to check for ctrld updates.
+func InstallUpdateCron(client *SSHClient) error {
+	// Remove any existing entry first
+	client.RunCommand("crontab -l 2>/dev/null | grep -v controld-update | crontab -")
+
+	// Add the weekly job (Mondays at 3am)
+	output, err := client.RunCommand("(crontab -l 2>/dev/null; echo '0 3 * * 1 /cfg/controld-update.sh') | crontab -")
+	if err != nil {
+		return fmt.Errorf("crontab install failed: %w, output: %s", err, output)
+	}
 	return nil
 }
 

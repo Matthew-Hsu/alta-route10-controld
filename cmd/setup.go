@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"strings"
 
 	"codeberg.org/CookieTyrant/alta-route10-controld/internal"
 )
@@ -51,7 +50,11 @@ func Setup() {
 				return
 			}
 
-			pubKey, _ := internal.ReadSSHPublicKey(keyPath)
+			pubKey, err := internal.ReadSSHPublicKey(keyPath)
+			if err != nil {
+				internal.PrintErr("Cannot read generated public key: " + err.Error())
+				return
+			}
 			fmt.Println()
 			internal.PrintInfo("SSH key generated! Add this public key to your Alta account:")
 			fmt.Println()
@@ -111,7 +114,7 @@ func Setup() {
 
 	// Check if already installed
 	existing, _ := client.RunCommand("ls /cfg/ctrld /cfg/ctrld.toml /cfg/post-cfg.sh 2>&1")
-	if existing != "" && !strings.Contains(existing, "No such") {
+	if existing != "" && !containsStr(existing, "No such") {
 		internal.PrintWarn("Existing ControlD configuration found on the router.")
 		if !internal.Confirm("Overwrite existing configuration?", true) {
 			return
@@ -186,4 +189,17 @@ func Setup() {
 	fmt.Println("  These files persist across reboots.")
 	fmt.Println("  To remove: alta-controld uninstall")
 	fmt.Println()
+}
+
+func containsStr(s, substr string) bool {
+	return len(s) >= len(substr) && len(s) > 0 && searchStr(s, substr)
+}
+
+func searchStr(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }

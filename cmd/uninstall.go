@@ -6,7 +6,6 @@ import (
 	"codeberg.org/CookieTyrant/alta-route10-controld/internal"
 )
 
-// Uninstall removes all ControlD configuration from the router
 func Uninstall() {
 	fmt.Println("╔══════════════════════════════════════════════════════════════╗")
 	fmt.Println("║   Uninstall ControlD from Alta Route 10                     ║")
@@ -36,25 +35,31 @@ func Uninstall() {
 
 	fmt.Println()
 
-	// Stop ctrld
 	internal.PrintInfo("Stopping ctrld...")
-	client.RunCommand("kill $(pidof ctrld) 2>/dev/null")
+	if _, err := client.RunCommand("pidof ctrld"); err == nil {
+		if _, err := client.RunCommand("kill $(pidof ctrld) 2>/dev/null"); err != nil {
+			internal.PrintWarn("Could not stop ctrld: " + err.Error())
+		}
+	}
 	internal.PrintOK("ctrld stopped")
 
-	// Remove iptables rules
 	internal.PrintInfo("Removing iptables redirect rules...")
-	client.RunCommand("iptables -t nat -F PREROUTING 2>/dev/null")
+	if _, err := client.RunCommand("iptables -t nat -F PREROUTING 2>/dev/null"); err != nil {
+		internal.PrintWarn("Could not flush iptables rules: " + err.Error())
+	}
 	internal.PrintOK("iptables rules removed")
 
-	// Remove files
 	internal.PrintInfo("Removing configuration files...")
-	client.RunCommand("rm -f /cfg/ctrld /cfg/ctrld.toml /cfg/post-cfg.sh")
+	if _, err := client.RunCommand("rm -f /cfg/ctrld /cfg/ctrld.toml /cfg/post-cfg.sh"); err != nil {
+		internal.PrintErr("Failed to remove files: " + err.Error())
+		return
+	}
 	internal.PrintOK("Files removed")
 
-	// Restart default DNS services
 	internal.PrintInfo("Restarting default DNS services...")
-	client.RunCommand("/etc/init.d/https-dns-proxy restart")
-	client.RunCommand("/etc/init.d/dnsmasq restart")
+	if _, err := client.RunCommand("/etc/init.d/https-dns-proxy restart && /etc/init.d/dnsmasq restart"); err != nil {
+		internal.PrintWarn("DNS service restart had issues: " + err.Error())
+	}
 	internal.PrintOK("Default DNS restored")
 
 	fmt.Println()

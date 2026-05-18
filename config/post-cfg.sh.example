@@ -1,0 +1,55 @@
+#!/bin/sh
+# ControlD DoH with per-device visibility on Alta Labs Route 10
+# Copy this file to /cfg/post-cfg.sh and replace <YOUR_RESOLVER_ID>
+# This script runs on every boot and re-applies the configuration.
+
+# Wait for https-dns-proxy to initialize (kept as fallback)
+while ! uci get https-dns-proxy.@https-dns-proxy[0] >/dev/null 2>&1; do sleep 1; done
+
+# Set https-dns-proxy to ControlD as fallback
+uci set https-dns-proxy.@https-dns-proxy[0].resolver_url='https://dns.controld.com/<YOUR_RESOLVER_ID>'
+uci set https-dns-proxy.@https-dns-proxy[0].bootstrap_dns='76.76.2.22'
+uci set https-dns-proxy.@https-dns-proxy[1].resolver_url='https://dns.controld.com/<YOUR_RESOLVER_ID>'
+uci set https-dns-proxy.@https-dns-proxy[1].bootstrap_dns='76.76.2.22'
+uci set https-dns-proxy.@https-dns-proxy[2].resolver_url='https://dns.controld.com/<YOUR_RESOLVER_ID>'
+uci set https-dns-proxy.@https-dns-proxy[2].bootstrap_dns='76.76.2.22'
+uci commit https-dns-proxy
+/etc/init.d/https-dns-proxy restart
+
+# Restore dnsmasq to use https-dns-proxy (fallback)
+uci delete dhcp.@dnsmasq[0].server 2>/dev/null
+uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5053'
+uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5054'
+uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5055'
+uci set dhcp.@dnsmasq[0].noresolv='0'
+uci commit dhcp
+/etc/init.d/dnsmasq restart
+
+# Wait for network connectivity
+while ! ping -c1 76.76.2.22 >/dev/null 2>&1; do sleep 2; done
+
+# Start ctrld as daemon with config file
+nohup /cfg/ctrld run -c /cfg/ctrld.toml -d >/dev/null 2>&1 &
+
+# Wait for ctrld to be ready (up to 15s)
+n=0
+while [ $n -lt 15 ]; do
+    if nslookup google.com 127.0.0.1#5354 >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+    n=`expr $n + 1`
+done
+
+# Only redirect DNS if ctrld is confirmed working
+if nslookup google.com 127.0.0.1#5354 >/dev/null 2>&1; then
+    # Redirect LAN DNS traffic to ctrld (preserves source IP for per-device visibility)
+    iptables -t nat -A PREROUTING -i br-lan -p udp --dport 53 -j REDIRECT --to-port 5354
+    iptables -t nat -A PREROUTING -i br-lan -p tcp --dport 53 -j REDIRECT --to-port 5354
+    iptables -t nat -A PREROUTING -i br-lan_2 -p udp --dport 53 -j REDIRECT --to-port 5354
+    iptables -t nat -A PREROUTING -i br-lan_2 -p tcp --dport 53 -j REDIRECT --to-port 5354
+    logger -t post-cfg 'ctrld started with device discovery, DNS redirected to port 5354'
+else
+    # Fallback: dnsmasq uses https-dns-proxy (already configured above)
+    logger -t post-cfg 'ctrld failed health check, using https-dns-proxy fallback'
+fi

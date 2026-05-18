@@ -1,0 +1,3 @@
+# Never commit actual config with real resolver IDs
+ctrld.toml
+post-cfg.sh

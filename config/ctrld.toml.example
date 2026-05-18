@@ -1,0 +1,41 @@
+# ctrld configuration for Alta Labs Route 10
+# Copy this file to /cfg/ctrld.toml and replace <YOUR_RESOLVER_ID>
+
+[service]
+    log_level = "notice"
+    cache_enable = true
+    cache_size = 4096
+    # Client discovery methods - all enabled for best hostname visibility
+    discover_dhcp = true
+    discover_ptr = true
+    discover_mdns = false
+    discover_arp = true
+    discover_hosts = true
+    discover_refresh_interval = 60
+    # dnsmasq lease file location on Alta Route 10
+    dhcp_lease_file_path = "/cfg/dhcp.leases"
+    dhcp_lease_file_format = "dnsmasq"
+
+[network.0]
+    cidrs = ["0.0.0.0/0"]
+    name = "Everyone"
+
+[network.1]
+    cidrs = ["192.168.1.0/24"]
+    name = "LAN"
+
+[network.2]
+    cidrs = ["192.168.2.0/24"]
+    name = "LAN2"
+
+[upstream.0]
+    bootstrap_ip = "76.76.2.22"
+    endpoint = "https://dns.controld.com/<YOUR_RESOLVER_ID>"
+    name = "ControlD"
+    timeout = 5000
+    type = "doh"
+    send_client_info = true
+
+[listener.0]
+    ip = "0.0.0.0"
+    port = 5354

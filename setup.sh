@@ -290,6 +290,221 @@ BOOTSCRIPT
 chmod +x /cfg/post-cfg.sh
 echo "  [OK] /cfg/post-cfg.sh written (self-healing)"
 
+# ── Step 6b: Advanced DNS Policy (optional) ──
+
+echo ""
+echo "  ── Advanced DNS Policy (optional) ──"
+echo "  Route specific devices or networks to different ControlD profiles."
+echo "  Requires multiple resolver IDs from your ControlD dashboard."
+echo ""
+printf "  Configure split DNS policies? [y/N]: "
+read -r DO_SPLIT
+POLICY_CONF=""
+
+if [ "$DO_SPLIT" = "y" ] || [ "$DO_SPLIT" = "Y" ]; then
+    POLICY_UPSTREAMS=""
+    POLICY_NETWORKS=""
+    POLICY_MACS=""
+    UPSTREAM_IDX=1
+    NETWORK_IDX=3
+
+    while true; do
+        echo ""
+        echo "  Adding DNS policy upstream..."
+        printf "    Resolver ID (or empty to finish): "
+        read -r POLICY_RESOLVER
+        [ -z "$POLICY_RESOLVER" ] && break
+
+        printf "    Policy name (e.g. Kids, IoT, Guest): "
+        read -r POLICY_NAME
+        POLICY_NAME=${POLICY_NAME:-"Policy-${UPSTREAM_IDX}"}
+
+        case "${DNS_TYPE}" in
+            doq) POLICY_EP="${POLICY_RESOLVER}.dns.controld.com" ;;
+            *)   POLICY_EP="https://dns.controld.com/${POLICY_RESOLVER}" ;;
+        esac
+
+        POLICY_UPSTREAMS="${POLICY_UPSTREAMS}
+[upstream.${UPSTREAM_IDX}]
+    bootstrap_ip = \"${BOOTSTRAP_IP}\"
+    endpoint = \"${POLICY_EP}\"
+    name = \"ControlD-${POLICY_NAME}\"
+    timeout = 5000
+    type = \"${DNS_TYPE}\"
+    send_client_info = true
+"
+
+        echo ""
+        echo "    Route to this policy by:"
+        echo "      1) Network/subnet (e.g. 192.168.1.200/32)"
+        echo "      2) Device MAC address (e.g. AA:BB:CC:DD:EE:FF)"
+        echo "      3) Both"
+        printf "    Route type [1]: "
+        read -r ROUTE_TYPE
+        ROUTE_TYPE=${ROUTE_TYPE:-1}
+
+        case "$ROUTE_TYPE" in
+            1|3)
+                echo ""
+                echo "    Enter CIDRs (space-separated). Examples:"
+                echo "      192.168.1.200/32       (single device)"
+                echo "      192.168.2.0/24         (entire subnet)"
+                printf "    CIDRs: "
+                read -r CIDR_LIST
+                if [ -n "$CIDR_LIST" ]; then
+                    CIDR_ARRAY=""
+                    for cidr in $CIDR_LIST; do
+                        CIDR_ARRAY="${CIDR_ARRAY}\"${cidr}\", "
+                    done
+                    CIDR_ARRAY=$(echo "$CIDR_ARRAY" | sed 's/, $//')
+                    POLICY_NETWORKS="${POLICY_NETWORKS}
+[network.${NETWORK_IDX}]
+    cidrs = [${CIDR_ARRAY}]
+    name = \"${POLICY_NAME}\"
+"
+                    POLICY_CONF="${POLICY_CONF}
+    {\"network.${NETWORK_IDX}\" = [\"upstream.${UPSTREAM_IDX}\"]},"
+                    NETWORK_IDX=$(expr $NETWORK_IDX + 1)
+                fi
+                ;;
+        esac
+
+        case "$ROUTE_TYPE" in
+            2|3)
+                printf "    MAC addresses (space-separated): "
+                read -r MAC_LIST
+                if [ -n "$MAC_LIST" ]; then
+                    for mac in $MAC_LIST; do
+                        POLICY_MACS="${POLICY_MACS}
+    {\"${mac}\" = [\"upstream.${UPSTREAM_IDX}\"]},"
+                    done
+                fi
+                ;;
+        esac
+
+        UPSTREAM_IDX=$(expr $UPSTREAM_IDX + 1)
+    done
+
+    # Append policy config to ctrld.toml
+    if [ -n "$POLICY_UPSTREAMS" ] || [ -n "$POLICY_NETWORKS" ]; then
+        echo "" >> /cfg/ctrld.toml
+        echo "# Policy upstreams" >> /cfg/ctrld.toml
+        echo "$POLICY_UPSTREAMS" >> /cfg/ctrld.toml
+        echo "# Policy networks" >> /cfg/ctrld.toml
+        echo "$POLICY_NETWORKS" >> /cfg/ctrld.toml
+
+        if [ -n "$POLICY_CONF" ] || [ -n "$POLICY_MACS" ]; then
+            POLICY_CONF=$(echo "$POLICY_CONF" | sed '$ s/,$//')
+            POLICY_MACS=$(echo "$POLICY_MACS" | sed '$ s/,$//')
+
+            echo "" >> /cfg/ctrld.toml
+            echo "[listener.0.policy]" >> /cfg/ctrld.toml
+            echo "    name = \"Split DNS Policy\"" >> /cfg/ctrld.toml
+            if [ -n "$POLICY_CONF" ]; then
+                echo "    networks = [" >> /cfg/ctrld.toml
+                echo "$POLICY_CONF" >> /cfg/ctrld.toml
+                echo "    ]" >> /cfg/ctrld.toml
+            fi
+            if [ -n "$POLICY_MACS" ]; then
+                echo "    macs = [" >> /cfg/ctrld.toml
+                echo "$POLICY_MACS" >> /cfg/ctrld.toml
+                echo "    ]" >> /cfg/ctrld.toml
+            fi
+        fi
+
+        echo "POLICY_UPSTREAMS=${UPSTREAM_IDX}" >> /cfg/controld.env
+        echo "  [OK] Split DNS policy configured"
+    fi
+fi
+
+# ── Step 6c: Install watchdog ──
+
+cat > /cfg/watchdog.sh << 'WATCHDOG'
+#!/bin/sh
+# ControlD watchdog with automatic protocol fallback
+# Runs via cron every 5 minutes
+[ -f /cfg/controld.env ] || exit 0
+. /cfg/controld.env
+DNS_TYPE=${DNS_TYPE:-doh3}
+FALLBACK_CHAIN="doq doh3 doh"
+DNS_PORT=5354
+
+get_endpoint() {
+    case "$1" in
+        doq) echo "${RESOLVER_ID}.dns.controld.com" ;;
+        *)   echo "https://dns.controld.com/${RESOLVER_ID}" ;;
+    esac
+}
+
+next_protocol() {
+    current="$1"; found=0
+    for proto in $FALLBACK_CHAIN; do
+        if [ "$found" = "1" ]; then echo "$proto"; return; fi
+        [ "$proto" = "$current" ] && found=1
+    done
+    echo "$FALLBACK_CHAIN" | awk '{print $1}'
+}
+
+restart_ctrld() {
+    kill $(pidof ctrld) 2>/dev/null; sleep 1
+    nohup /cfg/ctrld run -c /cfg/ctrld.toml -d >/dev/null 2>&1 &
+    n=0
+    while [ $n -lt 10 ]; do
+        nslookup google.com 127.0.0.1#${DNS_PORT} >/dev/null 2>&1 && return 0
+        sleep 1; n=$(expr $n + 1)
+    done
+    return 1
+}
+
+# Check if ctrld is running
+if ! pidof ctrld >/dev/null 2>&1; then
+    logger -t watchdog "ctrld not running, restarting"
+    restart_ctrld && logger -t watchdog "ctrld restarted (${DNS_TYPE})"
+    exit 0
+fi
+
+# Check DNS resolution
+if nslookup google.com 127.0.0.1#${DNS_PORT} >/dev/null 2>&1; then
+    exit 0
+fi
+
+# DNS failing — try protocol fallback
+logger -t watchdog "DNS failed on ${DNS_TYPE}, starting fallback"
+
+# Restore iptables if missing
+RULES=$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c ${DNS_PORT})
+if [ "$RULES" -eq 0 ]; then
+    iptables -t nat -A PREROUTING -i br-lan -p udp --dport 53 -j REDIRECT --to-port ${DNS_PORT}
+    iptables -t nat -A PREROUTING -i br-lan -p tcp --dport 53 -j REDIRECT --to-port ${DNS_PORT}
+    iptables -t nat -A PREROUTING -i br-lan_2 -p udp --dport 53 -j REDIRECT --to-port ${DNS_PORT}
+    iptables -t nat -A PREROUTING -i br-lan_2 -p tcp --dport 53 -j REDIRECT --to-port ${DNS_PORT}
+    logger -t watchdog "restored iptables rules"
+fi
+
+proto="$DNS_TYPE"; attempt=0
+while [ $attempt -lt 3 ]; do
+    proto=$(next_protocol "$proto"); attempt=$(expr $attempt + 1)
+    logger -t watchdog "trying ${proto} (attempt ${attempt}/3)"
+    endpoint=$(get_endpoint "$proto")
+    sed -i "s/endpoint = \".*\"/endpoint = \"${endpoint}\"/" /cfg/ctrld.toml
+    sed -i "s/type = \"[a-z0-9]*\"/type = \"${proto}\"/" /cfg/ctrld.toml
+    if restart_ctrld; then
+        sed -i "s/DNS_TYPE=.*/DNS_TYPE=${proto}/" /cfg/controld.env
+        logger -t watchdog "fallback to ${proto} succeeded"
+        exit 0
+    fi
+done
+logger -t watchdog "all protocols failed"
+WATCHDOG
+chmod +x /cfg/watchdog.sh
+
+# Install watchdog cron (every 5 minutes)
+crontab -l 2>/dev/null | grep -v watchdog | crontab -
+(crontab -l 2>/dev/null; echo '*/5 * * * * /cfg/watchdog.sh') | crontab - 2>/dev/null || {
+    echo "  [!] Could not install watchdog cron"
+}
+echo "  [OK] Watchdog installed (5-min health check + protocol fallback)"
+
 # ── Step 7: Write auto-update script ──
 
 cat > /cfg/controld-update.sh << 'UPDATESCRIPT'
@@ -386,7 +601,9 @@ echo "    /cfg/ctrld                DNS proxy binary"
 echo "    /cfg/ctrld.toml           DNS proxy configuration"
 echo "    /cfg/post-cfg.sh          Self-healing boot script"
 echo "    /cfg/controld-update.sh   Weekly auto-update"
+echo "    /cfg/watchdog.sh          5-min health check + protocol fallback"
 echo ""
 echo "  To check:      sh status.sh"
+echo "  To benchmark:  sh benchmark.sh"
 echo "  To uninstall:  sh uninstall.sh"
 echo ""

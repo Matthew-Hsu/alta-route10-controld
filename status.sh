@@ -9,7 +9,7 @@ echo ""
 
 # Check config files
 echo "  -- Configuration Files --"
-for f in /cfg/controld.env /cfg/ctrld /cfg/ctrld.toml /cfg/post-cfg.sh /cfg/controld-update.sh; do
+for f in /cfg/controld.env /cfg/ctrld /cfg/ctrld.toml /cfg/post-cfg.sh /cfg/controld-update.sh /cfg/watchdog.sh; do
     if [ -f "$f" ]; then
         echo "  [OK] $f exists"
     else
@@ -89,12 +89,51 @@ fi
 
 echo ""
 
+# Check upstreams and policies
+echo "  -- Upstreams & Policies --"
+if [ -f /cfg/ctrld.toml ]; then
+    UPSTREAM_COUNT=$(grep -c '^\[upstream\.' /cfg/ctrld.toml 2>/dev/null || echo 0)
+    echo "  [OK] ${UPSTREAM_COUNT} upstream(s) configured"
+    grep '^\[upstream\.' /cfg/ctrld.toml 2>/dev/null | while read -r line; do
+        idx=$(echo "$line" | grep -o '[0-9]*')
+        name=$(grep -A1 "\[upstream.${idx}\]" /cfg/ctrld.toml | grep 'name' | sed 's/.*= "//;s/"//')
+        proto=$(grep -A5 "\[upstream.${idx}\]" /cfg/ctrld.toml | grep 'type' | sed 's/.*= "//;s/"//')
+        echo "    upstream.${idx}: ${name} (${proto})"
+    done
+    if grep -q '\[listener.0.policy\]' /cfg/ctrld.toml 2>/dev/null; then
+        echo "  [OK] Split DNS policy active"
+        MAC_COUNT=$(grep -c '="' /cfg/ctrld.toml 2>/dev/null || echo 0)
+        if [ "$MAC_COUNT" -gt 0 ]; then
+            echo "       MAC rules: ${MAC_COUNT} device(s)"
+        fi
+    fi
+fi
+
+echo ""
+
 # Check cron
-echo "  -- Auto-Update --"
+echo "  -- Cron Jobs --"
 if crontab -l 2>/dev/null | grep -q controld-update; then
-    echo "  [OK] Weekly cron job installed"
+    echo "  [OK] Weekly auto-update cron installed"
 else
     echo "  [!!] No auto-update cron job"
+fi
+if crontab -l 2>/dev/null | grep -q watchdog; then
+    echo "  [OK] Watchdog cron installed (5-min health check)"
+else
+    echo "  [!!] No watchdog cron job"
+fi
+
+# Show recent watchdog logs
+if [ -f /cfg/watchdog.sh ]; then
+    LOG_ENTRIES=$(logread 2>/dev/null | grep watchdog | tail -3)
+    if [ -n "$LOG_ENTRIES" ]; then
+        echo ""
+        echo "  -- Recent Watchdog Activity --"
+        echo "$LOG_ENTRIES" | while read -r line; do
+            echo "  $(echo "$line" | sed 's/.*watchdog:/  watchdog:/')"
+        done
+    fi
 fi
 
 echo ""

@@ -18,8 +18,9 @@ ENV_FILE="/cfg/controld.env"
 # ── Usage ────────────────────────────────────────────────────────────────────
 
 usage() {
+    _name="$(basename "$0")"
     cat <<EOF
-Usage: $(basename "$0") [OPTIONS]
+Usage: ${_name} [OPTIONS]
 
 ControlD health monitor with automatic protocol fallback.
 

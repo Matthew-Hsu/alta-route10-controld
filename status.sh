@@ -11,8 +11,9 @@ LIB_DIR="$(dirname "$0")"
 # ── Usage ────────────────────────────────────────────────────────────────────
 
 usage() {
+    _name="$(basename "$0")"
     cat <<EOF
-Usage: $(basename "$0") [OPTIONS]
+Usage: ${_name} [OPTIONS]
 
 Report ControlD DNS status on an Alta Labs Route 10 router.
 

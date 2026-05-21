@@ -240,7 +240,7 @@ assert_false "missing env file returns error" load_env "$TMPDIR/nonexistent.env"
 # ══════════════════════════════════════════════════════════════════
 
 describe "--help flags on all scripts"
-for script in setup.sh status.sh watchdog.sh benchmark.sh uninstall.sh; do
+for script in setup.sh status.sh watchdog.sh benchmark.sh uninstall.sh reconfigure.sh; do
     if [ -f "$SCRIPT_DIR/$script" ]; then
         HELP_OUT=$(sh "$SCRIPT_DIR/$script" --help 2>&1 || true)
         assert_contains "$script --help mentions usage" "$HELP_OUT" "Usage"

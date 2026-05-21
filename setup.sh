@@ -156,17 +156,147 @@ BOOTSTRAP_IP="${BOOTSTRAP_IP:-76.76.2.22}"
 
 DNS_TYPE="${FLAG_PROTOCOL}"
 if [ -z "$DNS_TYPE" ]; then
-    printf "\n  ${BOLD}DNS Protocol:${RESET}\n"
-    printf "    1) DoH3 (HTTP/3)  -- fastest, uses QUIC transport [default]\n"
-    printf "    2) DoQ   (QUIC)   -- native QUIC, lower overhead\n"
-    printf "    3) DoH   (HTTP/2) -- most compatible\n\n"
-    printf "  Protocol [1]: "
+    printf "\n  ${BOLD}${BLUE}════════════════════════════════════════════════════════════${RESET}\n"
+    printf "  ${BOLD}Choose Your DNS Protocol${RESET}\n"
+    printf "  ${BOLD}${BLUE}════════════════════════════════════════════════════════════${RESET}\n\n"
+
+    printf "  ${BOLD}1) DoH3 — DNS-over-HTTPS/3  (HTTP/3 + QUIC)${RESET}  ${GREEN}[recommended]${RESET}\n"
+    printf "     ${DIM}Port 443 | Looks like normal HTTPS traffic\n"
+    printf "     Fastest for most ISPs. Hard to block or identify as DNS.${RESET}\n\n"
+
+    printf "  ${BOLD}2) DoQ — DNS-over-QUIC${RESET}\n"
+    printf "     ${DIM}Port 853 | Purpose-built DNS over QUIC\n"
+    printf "     Lowest protocol overhead. ISPs can see it's DNS traffic.${RESET}\n\n"
+
+    printf "  ${BOLD}3) DoH — DNS-over-HTTPS/2  (HTTP/2 + TCP)${RESET}\n"
+    printf "     ${DIM}Port 443 | Most widely compatible\n"
+    printf "     No QUIC — higher latency but works everywhere.${RESET}\n\n"
+
+    printf "  ${BOLD}4) Benchmark — test all three and pick the fastest${RESET}\n"
+    printf "     ${DIM}Runs 10 queries per protocol, takes about 30 seconds.${RESET}\n\n"
+
+    printf "  ${DIM}All protocols encrypt your DNS. The difference is speed and stealth.${RESET}\n"
+    printf "  ${DIM}The watchdog will auto-fallback (DoQ -> DoH3 -> DoH) if one fails.${RESET}\n\n"
+
+    printf "  Choice [1]: "
     read -r PROTO_CHOICE
     PROTO_CHOICE="${PROTO_CHOICE:-1}"
+
     case "$PROTO_CHOICE" in
         1) DNS_TYPE="doh3" ;;
         2) DNS_TYPE="doq"  ;;
         3) DNS_TYPE="doh"  ;;
+        4)
+            # ── Inline benchmark ──
+            print_step "Benchmarking DNS protocols..."
+            printf "  ${DIM}Testing 10 queries per protocol against your ControlD endpoint...${RESET}\n\n"
+
+            BENCH_PORT=5360
+            BENCH_QUERIES=10
+            BENCH_DOMAINS="google.com cloudflare.com amazon.com wikipedia.org github.com"
+            BENCH_FASTEST=""
+            BENCH_FASTEST_MS=999999
+
+            # Download ctrld first if not already present (needed for benchmark)
+            if [ ! -x /cfg/ctrld ]; then
+                print_info "Downloading ctrld for benchmark..."
+                wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${VERSION}/ctrld_${VERSION}_linux_arm64.tar.gz" >/dev/null 2>&1 || die "Download failed"
+                tar xzf /tmp/ctrld.tar.gz -C /tmp
+                mv "/tmp/dist/ctrld_${VERSION}_linux_arm64/ctrld" /cfg/ctrld
+                chmod +x /cfg/ctrld
+                rm -rf /tmp/dist /tmp/ctrld.tar.gz
+            fi
+
+            for BPROTO in doq doh3 doh; do
+                BLABEL=$(proto_label "$BPROTO")
+                BENDPOINT=$(get_endpoint "$BPROTO" "$RESOLVER_ID")
+
+                # Write temp config
+                cat > /tmp/ctrld-bench.toml << EOF
+[service]
+    log_level = "error"
+    cache_enable = false
+[network.0]
+    cidrs = ["0.0.0.0/0"]
+    name = "bench"
+[upstream.0]
+    bootstrap_ip = "${BOOTSTRAP_IP}"
+    endpoint = "${BENDPOINT}"
+    name = "bench"
+    timeout = 5000
+    type = "${BPROTO}"
+    send_client_info = false
+[listener.0]
+    ip = "127.0.0.1"
+    port = ${BENCH_PORT}
+EOF
+
+                kill "$(pidof ctrld 2>/dev/null)" 2>/dev/null || true
+                sleep 1
+                /cfg/ctrld run -c /tmp/ctrld-bench.toml -d >/dev/null 2>&1 &
+
+                # Wait for ready
+                _bn=0
+                while [ "$_bn" -lt 10 ]; do
+                    nslookup google.com "127.0.0.1#${BENCH_PORT}" >/dev/null 2>&1 && break
+                    sleep 1; _bn=$((_bn + 1))
+                done
+
+                if [ "$_bn" -eq 10 ]; then
+                    printf "  %-18s ${RED}FAILED${RESET}  (could not connect)\n" "$BLABEL"
+                    kill "$(pidof ctrld 2>/dev/null)" 2>/dev/null || true
+                    continue
+                fi
+
+                # Run queries
+                _bt=0; _bs=0; _bf=0
+                for _bi in $(seq 1 "$BENCH_QUERIES"); do
+                    _bd=$(echo "$BENCH_DOMAINS" | awk "{print \$(((_bi - 1) % 5 + 1))}")
+                    _bs1=$(date +%s%N 2>/dev/null || date +%s)
+                    if nslookup "$_bd" "127.0.0.1#${BENCH_PORT}" >/dev/null 2>&1; then
+                        _bs2=$(date +%s%N 2>/dev/null || date +%s)
+                        if [ -n "$_bs1" ] && [ "${#_bs1}" -gt 9 ]; then
+                            _bel=$(( (_bs2 - _bs1) / 1000000 ))
+                        else
+                            _bel=$(( (_bs2 - _bs1) * 1000 ))
+                            [ "$_bel" -eq 0 ] && _bel=1
+                        fi
+                        _bt=$((_bt + _bel)); _bs=$((_bs + 1))
+                    else
+                        _bf=$((_bf + 1))
+                    fi
+                done
+
+                kill "$(pidof ctrld 2>/dev/null)" 2>/dev/null || true
+                sleep 1
+
+                if [ "$_bs" -eq 0 ]; then
+                    printf "  %-18s ${RED}FAILED${RESET}  (0/${BENCH_QUERIES} succeeded)\n" "$BLABEL"
+                    continue
+                fi
+
+                _bavg=$((_bt / _bs))
+
+                if [ "$_bavg" -lt "$BENCH_FASTEST_MS" ]; then
+                    BENCH_FASTEST_MS=$_bavg
+                    BENCH_FASTEST=$BPROTO
+                    printf "  %-18s ${GREEN}%dms${RESET} avg   %d/%d ok   ${DIM}<-- fastest${RESET}\n" "$BLABEL" "$_bavg" "$_bs" "$BENCH_QUERIES"
+                else
+                    printf "  %-18s ${BOLD}%dms${RESET} avg   %d/%d ok\n" "$BLABEL" "$_bavg" "$_bs" "$BENCH_QUERIES"
+                fi
+            done
+
+            rm -f /tmp/ctrld-bench.toml
+
+            if [ -n "$BENCH_FASTEST" ]; then
+                DNS_TYPE="$BENCH_FASTEST"
+                printf "\n  ${GREEN}${BOLD}>>> Fastest: %s (%dms avg)${RESET} — selected automatically.\n" "$(proto_label "$DNS_TYPE")" "$BENCH_FASTEST_MS"
+            else
+                DNS_TYPE="doh3"
+                print_warn "All protocols failed benchmark. Defaulting to DoH3."
+            fi
+            printf "\n"
+            ;;
         *)  print_warn "Invalid choice, defaulting to DoH3"
             DNS_TYPE="doh3" ;;
     esac

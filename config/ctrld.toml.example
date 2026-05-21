@@ -1,5 +1,11 @@
 # ctrld configuration for Alta Labs Route 10
 # Copy this file to /cfg/ctrld.toml and replace <YOUR_RESOLVER_ID>
+#
+# Supported upstream types:
+#   doh3 = DNS-over-HTTPS/3 (HTTP/3, QUIC transport) [recommended]
+#   doq  = DNS-over-QUIC (native QUIC)
+#   doh  = DNS-over-HTTPS (HTTP/2)
+#   dot  = DNS-over-TLS
 
 [service]
     log_level = "notice"
@@ -33,7 +39,7 @@
     endpoint = "https://dns.controld.com/<YOUR_RESOLVER_ID>"
     name = "ControlD"
     timeout = 5000
-    type = "doh"
+    type = "doh3"
     send_client_info = true
 
 [listener.0]

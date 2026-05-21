@@ -74,7 +74,16 @@ fi
 
 if [ -f /cfg/controld.env ]; then
     . /cfg/controld.env
+    DNS_TYPE=${DNS_TYPE:-doh}
+    case "${DNS_TYPE}" in
+        doh3) PROTO_LABEL="DoH3 (HTTP/3)" ;;
+        doq)  PROTO_LABEL="DoQ (QUIC)" ;;
+        doh)  PROTO_LABEL="DoH (HTTP/2)" ;;
+        dot)  PROTO_LABEL="DoT (TLS)" ;;
+        *)    PROTO_LABEL="${DNS_TYPE}" ;;
+    esac
     echo "  [OK] Resolver ID: ${RESOLVER_ID}"
+    echo "  [OK] Protocol: ${PROTO_LABEL}"
     echo "  [OK] Version: ${CURLD_VERSION}"
 fi
 

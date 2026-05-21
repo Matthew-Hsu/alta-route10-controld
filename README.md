@@ -9,6 +9,10 @@ Encrypted DNS with per-device visibility on the Alta Labs Route 10 router using 
 - Shows individual device hostnames and IPs in the ControlD dashboard
 - Self-healing: survives reboots, auto-downloads missing binaries
 - Falls back to `https-dns-proxy` if `ctrld` fails to start
+- **Watchdog**: 5-minute health check with automatic protocol fallback
+- **Split DNS**: route different devices/networks to different ControlD profiles
+- **Per-device policy**: assign specific MAC addresses to filtered DNS resolvers
+- **Benchmark tool**: test which protocol is fastest on your ISP
 
 ## Supported Protocols
 
@@ -69,8 +73,9 @@ It handles everything else: downloading the binary, writing configs, setting up 
 
 | Script | Purpose |
 |---|---|
-| `setup.sh` | Interactive installer. Run once on the router. |
-| `status.sh` | Health check. Shows service status, DNS resolution, iptables rules. |
+| `setup.sh` | Interactive installer with protocol selection and split DNS setup |
+| `status.sh` | Health check. Shows services, upstreams, policies, watchdog activity. |
+| `benchmark.sh` | Test DNS query latency across DoQ, DoH3, and DoH. |
 | `uninstall.sh` | Removes everything. Restores default DNS. |
 
 ## What Gets Installed
@@ -79,9 +84,10 @@ It handles everything else: downloading the binary, writing configs, setting up 
 |---|---|
 | `/cfg/controld.env` | Resolver ID, version, bootstrap IP, protocol type |
 | `/cfg/ctrld` | DNS proxy binary (arm64) |
-| `/cfg/ctrld.toml` | DNS proxy config |
+| `/cfg/ctrld.toml` | DNS proxy config (upstreams, policies, routing rules) |
 | `/cfg/post-cfg.sh` | Self-healing boot script |
 | `/cfg/controld-update.sh` | Weekly auto-update script |
+| `/cfg/watchdog.sh` | 5-min health check with protocol fallback |
 
 ### Self-Healing
 
@@ -97,6 +103,56 @@ It handles everything else: downloading the binary, writing configs, setting up 
 ### Auto-Update
 
 A cron job runs weekly (Monday 3 AM) to check for new `ctrld` releases and update automatically.
+
+### Watchdog (Health Monitor)
+
+`watchdog.sh` runs every 5 minutes via cron and:
+
+1. Checks if `ctrld` is running — restarts if dead
+2. Tests DNS resolution through `ctrld`
+3. If DNS fails, tries the next protocol in the fallback chain (DoQ -> DoH3 -> DoH)
+4. Restores iptables redirect rules if they disappeared
+5. Logs all actions to syslog
+
+Protocol fallback is automatic — if your ISP blocks port 853 (DoQ), the watchdog switches to DoH3 or DoH within minutes.
+
+### Split DNS & Per-Device Policy
+
+During setup, you can configure multiple ControlD resolver profiles and route traffic by:
+
+- **Network/subnet** — e.g. route `192.168.2.0/24` to a filtered resolver
+- **MAC address** — e.g. route a kid's device to a safe-search resolver
+- **Both** — combine network and device rules
+
+Example config with per-device routing:
+
+```toml
+[upstream.0]
+    name = "ControlD-Unfiltered"
+    endpoint = "https://dns.controld.com/abc123"
+    type = "doq"
+
+[upstream.1]
+    name = "ControlD-Kids"
+    endpoint = "https://dns.controld.com/xyz789"
+    type = "doq"
+
+[listener.0.policy]
+    macs = [
+        {"AA:BB:CC:DD:EE:01" = ["upstream.1"]},
+        {"AA:BB:CC:DD:EE:02" = ["upstream.1"]},
+    ]
+```
+
+### Benchmark
+
+Run `benchmark.sh` on the router to test which DNS protocol performs best on your connection:
+
+```sh
+sh benchmark.sh
+```
+
+Tests DoQ, DoH3, and DoH with 15 queries each and recommends the fastest.
 
 ## Fallback Safety
 

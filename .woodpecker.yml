@@ -4,6 +4,11 @@ steps:
     commands:
       - find . -name "*.sh" -exec shellcheck -s sh -S warning -e SC2154 {} +
 
+  test:
+    image: koalaman/shellcheck:stable
+    commands:
+      - sh test.sh
+
   gitleaks:
     image: zricethezav/gitleaks:latest
     commands:

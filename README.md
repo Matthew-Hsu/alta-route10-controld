@@ -13,6 +13,8 @@ Encrypted DNS with per-device visibility on the Alta Labs Route 10 router using 
 - **Split DNS**: route different devices/networks to different ControlD profiles
 - **Per-device policy**: assign specific MAC addresses to filtered DNS resolvers
 - **Benchmark tool**: test which protocol is fastest on your ISP
+- **Quick reconfigure**: change protocol, resolver, or policies without re-running setup
+- **Built-in test suite**: 70+ tests covering all functions, run locally or on-router
 
 ## Supported Protocols
 
@@ -50,7 +52,7 @@ iptables REDIRECT
 ## Prerequisites
 
 - Alta Labs Route 10 router
-- [ControlD](https://controld.com) account with a resolver ID
+- [ControlD](https://controld.com) account with a resolver id
 - SSH access to the router (add your key at [manage.alta.inc](https://manage.alta.inc) > Settings > System > SSH Keys)
 - `aarch64` architecture (default for Route 10)
 
@@ -62,21 +64,31 @@ wget -O /tmp/setup.sh https://codeberg.org/CookieTyrant/alta-route10-controld/ra
 sh /tmp/setup.sh
 ```
 
-The installer will prompt for:
-- **Resolver ID** — from your ControlD dashboard
-- **Bootstrap IP** — defaults to `76.76.2.22`
-- **Protocol** — choose DoH3 (HTTP/3), DoQ (QUIC), or DoH (HTTP/2)
+The installer will:
+1. Prompt for your **Resolver ID** (from your ControlD dashboard)
+2. Offer guided **protocol selection** with descriptions of each option
+3. Optionally run an **inline benchmark** to auto-detect the fastest protocol
+4. Handle everything else: binary download, config generation, iptables, cron jobs
 
-It handles everything else: downloading the binary, writing configs, setting up iptables redirects, and installing a weekly auto-update cron job.
+### Non-Interactive Setup
+
+```sh
+sh setup.sh --resolver abc123 --protocol doh3
+```
 
 ## Scripts
 
-| Script | Purpose |
-|---|---|
-| `setup.sh` | Interactive installer with protocol selection and split DNS setup |
-| `status.sh` | Health check. Shows services, upstreams, policies, watchdog activity. |
-| `benchmark.sh` | Test DNS query latency across DoQ, DoH3, and DoH. |
-| `uninstall.sh` | Removes everything. Restores default DNS. |
+| Script | Purpose | Key Flags |
+|---|---|---|
+| `setup.sh` | Interactive installer with guided protocol selection and inline benchmark | `--help` `--version` `--protocol <type>` `--resolver <id>` |
+| `status.sh` | Health check: services, upstreams, policies, watchdog activity | `--help` |
+| `reconfigure.sh` | Change protocol, resolver, or policies without re-running setup | `--help` `--show` `--protocol` `--resolver` `--benchmark` `--policy` `--to <value>` `--force` |
+| `benchmark.sh` | Test DNS query latency across DoQ, DoH3, and DoH | `--help` `--queries N` |
+| `watchdog.sh` | 5-min health monitor with automatic protocol fallback | `--help` `--dry-run` |
+| `uninstall.sh` | Removes everything, restores default DNS | `--help` `--force` |
+| `test.sh` | Comprehensive test suite (70+ tests) | — |
+
+Every script supports `--help` with full usage documentation.
 
 ## What Gets Installed
 
@@ -85,9 +97,55 @@ It handles everything else: downloading the binary, writing configs, setting up 
 | `/cfg/controld.env` | Resolver ID, version, bootstrap IP, protocol type |
 | `/cfg/ctrld` | DNS proxy binary (arm64) |
 | `/cfg/ctrld.toml` | DNS proxy config (upstreams, policies, routing rules) |
+| `/cfg/lib.sh` | Shared function library used by all scripts |
 | `/cfg/post-cfg.sh` | Self-healing boot script |
 | `/cfg/controld-update.sh` | Weekly auto-update script |
 | `/cfg/watchdog.sh` | 5-min health check with protocol fallback |
+| `/cfg/benchmark.sh` | Protocol benchmark tool |
+| `/cfg/reconfigure.sh` | Quick reconfiguration tool |
+| `/cfg/status.sh` | Status reporting tool |
+
+## Key Features
+
+### Guided Protocol Selection
+
+During setup, each protocol is presented with detailed information:
+
+```
+  1) DoH3 (HTTP/3)   — Port 443, UDP/QUIC. Stealthy, fast, widely compatible.
+  2) DoQ  (QUIC)     — Port 853, UDP/QUIC. Dedicated DNS port, lower overhead.
+  3) DoH  (HTTP/2)   — Port 443, TCP+TLS. Most compatible fallback.
+  4) Benchmark       — Test all protocols and auto-select the fastest.
+```
+
+Option 4 runs a quick benchmark (10 queries per protocol) and automatically configures the winner.
+
+### Quick Reconfigure
+
+Change your setup without re-running the full installer:
+
+```sh
+# See current configuration
+sh reconfigure.sh --show
+
+# Switch protocol
+sh reconfigure.sh --protocol --to doq
+
+# Switch with interactive menu
+sh reconfigure.sh --protocol
+
+# Change resolver
+sh reconfigure.sh --resolver --to abc123
+
+# Benchmark and auto-apply fastest
+sh reconfigure.sh --benchmark --force
+
+# Manage split DNS policies
+sh reconfigure.sh --policy
+
+# Interactive menu (no flags)
+sh reconfigure.sh
+```
 
 ### Self-Healing
 
@@ -116,9 +174,15 @@ A cron job runs weekly (Monday 3 AM) to check for new `ctrld` releases and updat
 
 Protocol fallback is automatic — if your ISP blocks port 853 (DoQ), the watchdog switches to DoH3 or DoH within minutes.
 
-### Split DNS & Per-Device Policy
+Use `--dry-run` to check health without making changes:
 
-During setup, you can configure multiple ControlD resolver profiles and route traffic by:
+```sh
+sh watchdog.sh --dry-run
+```
+
+### Split DNS and Per-Device Policy
+
+During setup or via `reconfigure.sh --policy`, configure multiple ControlD resolver profiles and route traffic by:
 
 - **Network/subnet** — e.g. route `192.168.2.0/24` to a filtered resolver
 - **MAC address** — e.g. route a kid's device to a safe-search resolver
@@ -149,17 +213,55 @@ Example config with per-device routing:
 Run `benchmark.sh` on the router to test which DNS protocol performs best on your connection:
 
 ```sh
-sh benchmark.sh
+sh benchmark.sh              # default: 15 queries per protocol
+sh benchmark.sh --queries 30 # more queries for accuracy
 ```
 
-Tests DoQ, DoH3, and DoH with 15 queries each and recommends the fastest.
+Tests DoQ, DoH3, and DoH with real DNS lookups on a separate port (5360) so production DNS is not disrupted. Outputs a formatted table and recommends the fastest protocol.
+
+### Test Suite
+
+Run `test.sh` to verify everything works:
+
+```sh
+sh test.sh    # works locally and on-router
+```
+
+**Unit tests** (run everywhere):
+- Endpoint URL generation for all protocols
+- Protocol labels and fallback chain ordering
+- Input validation (resolver IDs, MACs, CIDRs, protocols)
+- TOML config generation
+- Env file parsing with defaults
+- `--help` and `--version` flags on all scripts
+- Invalid input rejection
+
+**Integration tests** (run on-router only):
+- DNS resolution through ctrld
+- ctrld process running
+- iptables redirect rules present
+- Cron jobs installed
+- Self-healing config regeneration
+- Watchdog dry-run
+- Benchmark completion
+
+## Shared Library
+
+All scripts source `lib.sh` which provides:
+
+- Colored output helpers (`print_ok`, `print_fail`, `print_warn`, `print_info`)
+- Config generation (`write_ctrld_config`, `get_endpoint`)
+- Process management (`start_ctrld`, `stop_ctrld`, `restart_ctrld`)
+- Health checks (`check_dns`, `ensure_iptables`)
+- Input validation (`valid_resolver`, `valid_mac`, `valid_cidr`, `valid_proto`)
+- Protocol utilities (`proto_label`, `next_proto`)
 
 ## Fallback Safety
 
 Two layers of protection:
 
-1. **ctrld health check** -- iptables redirect rules are only added if ctrld passes a DNS resolution test
-2. **https-dns-proxy fallback** -- even if ctrld fails, dnsmasq still forwards to https-dns-proxy which routes to ControlD. DNS stays encrypted, just without per-device visibility.
+1. **ctrld health check** — iptables redirect rules are only added if ctrld passes a DNS resolution test
+2. **https-dns-proxy fallback** — even if ctrld fails, dnsmasq still forwards to https-dns-proxy which routes to ControlD. DNS stays encrypted, just without per-device visibility.
 
 ## Manual Setup
 
@@ -178,11 +280,19 @@ ssh root@<router-ip> "chmod +x /cfg/ctrld /cfg/post-cfg.sh && /cfg/post-cfg.sh"
 
 See [docs/troubleshooting.md](docs/troubleshooting.md).
 
+## CI
+
+The Codeberg CI pipeline runs on every push:
+
+1. **shellcheck** — lints all shell scripts
+2. **test suite** — runs `test.sh`
+3. **gitleaks** — scans for leaked secrets
+
 ## Credits
 
-- [ControlD](https://controld.com) -- DNS resolver service
-- [ctrld](https://github.com/Control-D-Inc/ctrld) -- DNS forwarding proxy
-- [Alta Labs](https://alta.inc) -- Route 10 router
+- [ControlD](https://controld.com) — DNS resolver service
+- [ctrld](https://github.com/Control-D-Inc/ctrld) — DNS forwarding proxy
+- [Alta Labs](https://alta.inc) — Route 10 router
 
 ## License
 

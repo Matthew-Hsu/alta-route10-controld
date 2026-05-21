@@ -89,6 +89,49 @@ scp ctrld ctrld.toml post-cfg.sh root@<router-ip>:/cfg/
 ssh root@<router-ip> "chmod +x /cfg/ctrld /cfg/post-cfg.sh && /cfg/post-cfg.sh"
 ```
 
+## QUIC / DoQ / DoH3 not connecting
+
+**Symptom:** ctrld starts but DNS resolution fails, or ctrld logs connection errors.
+
+**Check:**
+
+1. Verify the protocol type matches the endpoint format:
+   ```sh
+   grep -E '(endpoint|type)' /cfg/ctrld.toml
+   ```
+   - DoQ: `type = "doq"` with `endpoint = "<ID>.dns.controld.com"` (no https://)
+   - DoH/DoH3: `type = "doh"` or `doh3` with `endpoint = "https://dns.controld.com/<ID>"`
+
+2. Check if UDP port 443 (DoH3) or 853 (DoQ) is blocked outbound:
+   ```sh
+   # Test connectivity to ControlD
+   ping -c3 76.76.2.22
+   ```
+
+3. Switch to DoH as a fallback test:
+   ```sh
+   sed -i 's/type = "doq"/type = "doh"/' /cfg/ctrld.toml
+   sed -i 's/endpoint = ".*"/endpoint = "https:\/\/dns.controld.com\/<YOUR_RESOLVER_ID>"/' /cfg/ctrld.toml
+   kill $(pidof ctrld); sleep 1
+   /cfg/ctrld run -c /cfg/ctrld.toml -d &
+   ```
+
+4. If DoH works but QUIC doesn't, your ISP may be blocking UDP. Stick with DoH or DoH3 which can fall back to TCP.
+
+## How to switch protocols
+
+Edit `/cfg/ctrld.env` and `/cfg/ctrld.toml`, then restart:
+
+```sh
+# Change protocol in env
+vi /cfg/controld.env  # Edit DNS_TYPE=doq|doh3|doh
+
+# Regenerate config from env
+kill $(pidof ctrld)
+rm /cfg/ctrld.toml
+/cfg/post-cfg.sh
+```
+
 ## How to uninstall
 
 ```sh

@@ -5,105 +5,213 @@
 #   sh /tmp/setup.sh
 #
 # Supports: DoH (HTTP/2), DoH3 (HTTP/3), DoQ (QUIC)
-# All prompts have defaults in [brackets] — press Enter to accept.
+# All prompts have defaults in [brackets] -- press Enter to accept.
 
 set -e
 
-VERSION="1.5.0"
+# ── Source shared library ──
 
-echo ""
-echo "  ╔══════════════════════════════════════════════════════════╗"
-echo "  ║   Alta Labs Route 10 + ControlD DNS Setup               ║"
-echo "  ║   Encrypted DNS with per-device visibility               ║"
-echo "  ║   Supports DoH / DoH3 (HTTP/3) / DoQ (QUIC)             ║"
-echo "  ╚══════════════════════════════════════════════════════════╝"
-echo ""
+LIB_DIR="$(dirname "$0")"
+if [ -f "${LIB_DIR}/lib.sh" ]; then
+    # shellcheck source=lib.sh
+    . "${LIB_DIR}/lib.sh"
+elif [ -f /cfg/lib.sh ]; then
+    # Running on a router where lib.sh was installed to /cfg/
+    # shellcheck source=/dev/null
+    . /cfg/lib.sh
+else
+    echo "  [!!] lib.sh not found in ${LIB_DIR} or /cfg/" >&2
+    exit 1
+fi
+
+# ── Usage ──
+
+show_help() {
+    print_banner
+    cat << 'HELPEOF'
+
+  Usage: setup.sh [OPTIONS]
+
+  Interactive installer for ControlD encrypted DNS on Alta Labs Route 10.
+  When run without flags, walks you through each step with prompts.
+
+  Options:
+    --protocol <type>   DNS protocol: doh3, doq, doh, dot
+                        (skips interactive protocol prompt)
+    --resolver <id>     ControlD resolver ID from your dashboard
+                        (skips interactive resolver prompt)
+    --help              Show this help message and exit
+    --version           Show version and exit
+
+  Non-interactive mode:
+    Use --protocol and --resolver together to run without any prompts.
+    Both flags are required for fully non-interactive operation.
+
+  Examples:
+    sh setup.sh                                  # full interactive
+    sh setup.sh --resolver abc123 --protocol doh3  # non-interactive
+    sh setup.sh --help                           # show this help
+
+  Installed files (on router):
+    /cfg/controld.env         Recovery config (self-healing)
+    /cfg/ctrld                DNS proxy binary
+    /cfg/ctrld.toml           DNS proxy configuration
+    /cfg/post-cfg.sh          Self-healing boot script
+    /cfg/controld-update.sh   Weekly auto-update
+    /cfg/watchdog.sh          5-min health check + protocol fallback
+
+  More info: https://controld.com -> Dashboard -> Endpoint Resolvers
+HELPEOF
+}
+
+# ── Parse flags ──
+
+FLAG_PROTOCOL=""
+FLAG_RESOLVER=""
+FLAG_HELP=""
+FLAG_VERSION=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --protocol)
+            [ -z "${2:-}" ] && die "--protocol requires an argument (doh3, doq, doh, dot)"
+            FLAG_PROTOCOL="$2"
+            shift 2
+            ;;
+        --resolver)
+            [ -z "${2:-}" ] && die "--resolver requires an argument (your resolver ID)"
+            FLAG_RESOLVER="$2"
+            shift 2
+            ;;
+        --help|-h)
+            FLAG_HELP=1
+            shift
+            ;;
+        --version|-v)
+            FLAG_VERSION=1
+            shift
+            ;;
+        *)
+            die "Unknown option: $1  (try --help)"
+            ;;
+    esac
+done
+
+# Handle --version early
+if [ -n "$FLAG_VERSION" ]; then
+    show_version
+    exit 0
+fi
+
+# Handle --help early
+if [ -n "$FLAG_HELP" ]; then
+    show_help
+    exit 0
+fi
+
+print_banner
 
 # ── Preflight checks ──
 
-ARCH=$(uname -m)
+ARCH="$(uname -m)"
 if [ "$ARCH" != "aarch64" ]; then
-    echo "  [!] Expected aarch64, got $ARCH. This may not work."
+    print_warn "Expected aarch64, got ${ARCH}. This may not work."
     printf "  Continue? [y/N]: "
     read -r CONTINUE
     [ "$CONTINUE" = "y" ] || [ "$CONTINUE" = "Y" ] || exit 1
 fi
 
-if [ ! -d /cfg ]; then
-    echo "  [!] /cfg/ not found. Is this an Alta Labs router?"
-    exit 1
+if ! is_alta_router; then
+    if [ ! -d /cfg ]; then
+        die "/cfg/ not found. Is this an Alta Labs router?"
+    fi
 fi
 
 # ── Step 1: Get resolver ID ──
 
-echo "  Step 1: ControlD Configuration"
-echo "  Get your resolver ID from: https://controld.com -> Dashboard -> Endpoint Resolvers"
-echo ""
+print_step "Step 1: ControlD Configuration"
 
-printf "  Resolver ID: "
-read -r RESOLVER_ID
+RESOLVER_ID="${FLAG_RESOLVER}"
 if [ -z "$RESOLVER_ID" ]; then
-    echo "  [!] Resolver ID is required."
-    exit 1
-fi
-if [ ${#RESOLVER_ID} -lt 5 ]; then
-    echo "  [!] Resolver ID seems too short. Check your ControlD dashboard."
-    exit 1
+    print_info "Get your resolver ID from: https://controld.com -> Dashboard -> Endpoint Resolvers"
+    printf "  Resolver ID: "
+    read -r RESOLVER_ID
 fi
 
-printf "  Bootstrap IP [76.76.2.22]: "
-read -r BOOTSTRAP_IP
-BOOTSTRAP_IP=${BOOTSTRAP_IP:-76.76.2.22}
+if [ -z "$RESOLVER_ID" ]; then
+    die "Resolver ID is required."
+fi
 
-echo ""
-echo "  DNS Protocol:"
-echo "    1) DoH3 (HTTP/3)  — fastest, uses QUIC transport [default]"
-echo "    2) DoQ   (QUIC)   — native QUIC, lower overhead"
-echo "    3) DoH   (HTTP/2) — most compatible"
-echo ""
-printf "  Protocol [1]: "
-read -r PROTO_CHOICE
-PROTO_CHOICE=${PROTO_CHOICE:-1}
-case "$PROTO_CHOICE" in
-    1) DNS_TYPE="doh3"; PROTO_LABEL="DoH3 (HTTP/3)" ;;
-    2) DNS_TYPE="doq";  PROTO_LABEL="DoQ (QUIC)" ;;
-    3) DNS_TYPE="doh";  PROTO_LABEL="DoH (HTTP/2)" ;;
-    *)  echo "  [!] Invalid choice, defaulting to DoH3"
-        DNS_TYPE="doh3"; PROTO_LABEL="DoH3 (HTTP/3)" ;;
-esac
+if ! valid_resolver "$RESOLVER_ID"; then
+    die "Resolver ID seems invalid (must be 5+ lowercase alphanumeric characters)."
+fi
 
-echo ""
+if [ -z "$FLAG_RESOLVER" ]; then
+    printf "  Bootstrap IP [76.76.2.22]: "
+    read -r BOOTSTRAP_IP
+fi
+BOOTSTRAP_IP="${BOOTSTRAP_IP:-76.76.2.22}"
+
+# ── Step 1b: Protocol selection ──
+
+DNS_TYPE="${FLAG_PROTOCOL}"
+if [ -z "$DNS_TYPE" ]; then
+    printf "\n  ${BOLD}DNS Protocol:${RESET}\n"
+    printf "    1) DoH3 (HTTP/3)  -- fastest, uses QUIC transport [default]\n"
+    printf "    2) DoQ   (QUIC)   -- native QUIC, lower overhead\n"
+    printf "    3) DoH   (HTTP/2) -- most compatible\n\n"
+    printf "  Protocol [1]: "
+    read -r PROTO_CHOICE
+    PROTO_CHOICE="${PROTO_CHOICE:-1}"
+    case "$PROTO_CHOICE" in
+        1) DNS_TYPE="doh3" ;;
+        2) DNS_TYPE="doq"  ;;
+        3) DNS_TYPE="doh"  ;;
+        *)  print_warn "Invalid choice, defaulting to DoH3"
+            DNS_TYPE="doh3" ;;
+    esac
+fi
+
+if ! valid_proto "$DNS_TYPE"; then
+    die "Invalid protocol '${DNS_TYPE}'. Must be one of: doh3, doq, doh, dot"
+fi
+
+PLABEL="$(proto_label "$DNS_TYPE")"
+
+printf "\n"
 
 # ── Step 2: Check for existing config ──
 
 if [ -f /cfg/post-cfg.sh ] || [ -f /cfg/ctrld ]; then
-    echo "  [!] Existing ControlD configuration found."
-    printf "  Overwrite? [Y/n]: "
-    read -r OVERWRITE
-    OVERWRITE=${OVERWRITE:-Y}
-    if [ "$OVERWRITE" = "n" ] || [ "$OVERWRITE" = "N" ]; then
-        echo "  Aborting."
-        exit 0
+    print_warn "Existing ControlD configuration found."
+    if [ -z "$FLAG_RESOLVER" ]; then
+        printf "  Overwrite? [Y/n]: "
+        read -r OVERWRITE
+        OVERWRITE="${OVERWRITE:-Y}"
+        if [ "$OVERWRITE" = "n" ] || [ "$OVERWRITE" = "N" ]; then
+            print_info "Aborting."
+            exit 0
+        fi
     fi
-    kill $(pidof ctrld) 2>/dev/null || true
+    stop_ctrld
 fi
 
 # ── Step 3: Download ctrld ──
 
-echo "  Step 2: Installing ctrld v${VERSION}..."
+print_step "Step 2: Installing ctrld v${VERSION}..."
+
 wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${VERSION}/ctrld_${VERSION}_linux_arm64.tar.gz" || {
-    echo "  [!] Download failed. Check internet connectivity."
-    exit 1
+    die "Download failed. Check internet connectivity."
 }
 tar xzf /tmp/ctrld.tar.gz -C /tmp
-mv /tmp/dist/ctrld_${VERSION}_linux_arm64/ctrld /cfg/ctrld
+mv "/tmp/dist/ctrld_${VERSION}_linux_arm64/ctrld" /cfg/ctrld
 chmod +x /cfg/ctrld
 rm -rf /tmp/dist /tmp/ctrld.tar.gz
-echo "  [OK] ctrld binary installed to /cfg/ctrld"
+print_ok "ctrld binary installed to /cfg/ctrld"
 
 # ── Step 4: Write recovery config ──
 
-echo "  Step 3: Writing configuration files..."
+print_step "Step 3: Writing configuration files..."
 
 cat > /cfg/controld.env << EOF
 RESOLVER_ID=${RESOLVER_ID}
@@ -111,57 +219,15 @@ BOOTSTRAP_IP=${BOOTSTRAP_IP}
 CURLD_VERSION=${VERSION}
 DNS_TYPE=${DNS_TYPE}
 EOF
-echo "  [OK] /cfg/controld.env written"
+print_ok "/cfg/controld.env written"
 
 # ── Step 5: Write ctrld.toml ──
 
-# Build upstream endpoint based on protocol
-case "${DNS_TYPE}" in
-    doq)
-        UPSTREAM_ENDPOINT="${RESOLVER_ID}.dns.controld.com"
-        ;;
-    *)
-        UPSTREAM_ENDPOINT="https://dns.controld.com/${RESOLVER_ID}"
-        ;;
-esac
-
-cat > /cfg/ctrld.toml << EOF
-[service]
-    log_level = "notice"
-    cache_enable = true
-    cache_size = 4096
-    discover_dhcp = true
-    discover_ptr = true
-    discover_mdns = false
-    discover_arp = true
-    discover_hosts = true
-    discover_refresh_interval = 60
-    dhcp_lease_file_path = "/cfg/dhcp.leases"
-    dhcp_lease_file_format = "dnsmasq"
-[network.0]
-    cidrs = ["0.0.0.0/0"]
-    name = "Everyone"
-[network.1]
-    cidrs = ["192.168.1.0/24"]
-    name = "LAN"
-[network.2]
-    cidrs = ["192.168.2.0/24"]
-    name = "LAN2"
-[upstream.0]
-    bootstrap_ip = "${BOOTSTRAP_IP}"
-    endpoint = "${UPSTREAM_ENDPOINT}"
-    name = "ControlD"
-    timeout = 5000
-    type = "${DNS_TYPE}"
-    send_client_info = true
-[listener.0]
-    ip = "0.0.0.0"
-    port = 5354
-EOF
-echo "  [OK] /cfg/ctrld.toml written (${PROTO_LABEL})"
+write_ctrld_config /cfg/ctrld.toml "$RESOLVER_ID" "$BOOTSTRAP_IP" "$DNS_TYPE"
+print_ok "/cfg/ctrld.toml written (${PLABEL})"
 
 # ── Step 6: Write self-healing post-cfg.sh ──
-# NOTE: Single-quoted heredoc prevents variable expansion —
+# NOTE: Single-quoted heredoc prevents variable expansion --
 # ${RESOLVER_ID} etc are resolved at runtime when the script sources controld.env
 
 cat > /cfg/post-cfg.sh << 'BOOTSCRIPT'
@@ -172,32 +238,23 @@ cat > /cfg/post-cfg.sh << 'BOOTSCRIPT'
 [ -f /cfg/controld.env ] || { logger -t post-cfg 'controld.env missing, skipping'; exit 0; }
 . /cfg/controld.env
 
-# Default to doh3 for legacy installs without DNS_TYPE
-DNS_TYPE=${DNS_TYPE:-doh3}
-
-# Build endpoint from protocol type
-case "${DNS_TYPE}" in
-    doq) UPSTREAM_ENDPOINT="${RESOLVER_ID}.dns.controld.com" ;;
-    *)   UPSTREAM_ENDPOINT="https://dns.controld.com/${RESOLVER_ID}" ;;
-esac
-
-logger -t post-cfg "starting with resolver=${RESOLVER_ID} type=${DNS_TYPE}"
-
-# Self-heal: download ctrld binary if missing
-if [ ! -x /cfg/ctrld ]; then
-    logger -t post-cfg 'ctrld binary missing, downloading...'
-    wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${CURLD_VERSION}/ctrld_${CURLD_VERSION}_linux_arm64.tar.gz" || { logger -t post-cfg 'ctrld download failed'; exit 1; }
-    tar xzf /tmp/ctrld.tar.gz -C /tmp
-    mv /tmp/dist/ctrld_${CURLD_VERSION}_linux_arm64/ctrld /cfg/ctrld
-    chmod +x /cfg/ctrld
-    rm -rf /tmp/dist /tmp/ctrld.tar.gz
-    logger -t post-cfg 'ctrld binary restored'
-fi
-
-# Self-heal: generate ctrld.toml if missing
-if [ ! -f /cfg/ctrld.toml ]; then
-    logger -t post-cfg 'ctrld.toml missing, generating from controld.env'
-    cat > /cfg/ctrld.toml << TOMLEOF
+# Source lib.sh if available (provides helper functions)
+if [ -f /cfg/lib.sh ]; then
+    # shellcheck source=/dev/null
+    . /cfg/lib.sh
+else
+    # Inline minimal helpers when lib.sh is absent
+    DNS_PORT=5354
+    get_endpoint() {
+        case "$1" in
+            doq|dot) printf "%s.dns.controld.com" "$2" ;;
+            *)       printf "https://dns.controld.com/%s" "$2" ;;
+        esac
+    }
+    write_ctrld_config() {
+        _outfile="$1"; _resolver="$2"; _bootstrap="$3"; _type="$4"
+        _endpoint="$(get_endpoint "$_type" "$_resolver")"
+        cat > "$_outfile" << TOMLINNER
 [service]
     log_level = "notice"
     cache_enable = true
@@ -210,26 +267,91 @@ if [ ! -f /cfg/ctrld.toml ]; then
     discover_refresh_interval = 60
     dhcp_lease_file_path = "/cfg/dhcp.leases"
     dhcp_lease_file_format = "dnsmasq"
+
 [network.0]
     cidrs = ["0.0.0.0/0"]
     name = "Everyone"
+
 [network.1]
     cidrs = ["192.168.1.0/24"]
     name = "LAN"
+
 [network.2]
     cidrs = ["192.168.2.0/24"]
     name = "LAN2"
+
 [upstream.0]
-    bootstrap_ip = "${BOOTSTRAP_IP}"
-    endpoint = "${UPSTREAM_ENDPOINT}"
+    bootstrap_ip = "${_bootstrap}"
+    endpoint = "${_endpoint}"
     name = "ControlD"
     timeout = 5000
-    type = "${DNS_TYPE}"
+    type = "${_type}"
     send_client_info = true
+
 [listener.0]
     ip = "0.0.0.0"
-    port = 5354
-TOMLEOF
+    port = ${DNS_PORT}
+TOMLINNER
+    }
+    check_dns() {
+        if [ -n "${1:-}" ]; then
+            nslookup google.com "$1" >/dev/null 2>&1
+        else
+            nslookup google.com >/dev/null 2>&1
+        fi
+    }
+    stop_ctrld() {
+        kill "$(pidof ctrld 2>/dev/null)" 2>/dev/null || true
+        sleep 1
+    }
+    start_ctrld() {
+        _config="${1:-/cfg/ctrld.toml}"
+        _timeout="${2:-15}"
+        nohup /cfg/ctrld run -c "$_config" -d >/dev/null 2>&1 &
+        _n=0
+        while [ "$_n" -lt "$_timeout" ]; do
+            check_dns "127.0.0.1#${DNS_PORT}" && return 0
+            sleep 1; _n=$((_n + 1))
+        done
+        return 1
+    }
+    restart_ctrld() { stop_ctrld; start_ctrld "$@"; }
+    ensure_iptables() {
+        _port="${1:-$DNS_PORT}"
+        _cnt="$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c "$_port")"
+        if [ "$_cnt" -eq 0 ]; then
+            iptables -t nat -A PREROUTING -i br-lan   -p udp --dport 53 -j REDIRECT --to-port "$_port"
+            iptables -t nat -A PREROUTING -i br-lan   -p tcp --dport 53 -j REDIRECT --to-port "$_port"
+            iptables -t nat -A PREROUTING -i br-lan_2 -p udp --dport 53 -j REDIRECT --to-port "$_port"
+            iptables -t nat -A PREROUTING -i br-lan_2 -p tcp --dport 53 -j REDIRECT --to-port "$_port"
+            return 0
+        fi
+        return 1
+    }
+fi
+
+# Default to doh3 for legacy installs without DNS_TYPE
+DNS_TYPE="${DNS_TYPE:-doh3}"
+
+UPSTREAM_ENDPOINT="$(get_endpoint "$DNS_TYPE" "$RESOLVER_ID")"
+
+logger -t post-cfg "starting with resolver=${RESOLVER_ID} type=${DNS_TYPE}"
+
+# Self-heal: download ctrld binary if missing
+if [ ! -x /cfg/ctrld ]; then
+    logger -t post-cfg 'ctrld binary missing, downloading...'
+    wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${CURLD_VERSION}/ctrld_${CURLD_VERSION}_linux_arm64.tar.gz" || { logger -t post-cfg 'ctrld download failed'; exit 1; }
+    tar xzf /tmp/ctrld.tar.gz -C /tmp
+    mv "/tmp/dist/ctrld_${CURLD_VERSION}_linux_arm64/ctrld" /cfg/ctrld
+    chmod +x /cfg/ctrld
+    rm -rf /tmp/dist /tmp/ctrld.tar.gz
+    logger -t post-cfg 'ctrld binary restored'
+fi
+
+# Self-heal: generate ctrld.toml if missing
+if [ ! -f /cfg/ctrld.toml ]; then
+    logger -t post-cfg 'ctrld.toml missing, generating from controld.env'
+    write_ctrld_config /cfg/ctrld.toml "$RESOLVER_ID" "$BOOTSTRAP_IP" "$DNS_TYPE"
     logger -t post-cfg 'ctrld.toml generated'
 fi
 
@@ -259,70 +381,62 @@ uci commit dhcp
 while ! ping -c1 "${BOOTSTRAP_IP}" >/dev/null 2>&1; do sleep 2; done
 
 # Kill any orphaned ctrld from previous boot
-kill $(pidof ctrld) 2>/dev/null
-sleep 1
+stop_ctrld
 
 # Start ctrld as daemon with config file
-nohup /cfg/ctrld run -c /cfg/ctrld.toml -d >/dev/null 2>&1 &
-
-# Wait for ctrld to be ready (up to 15s)
-n=0
-while [ $n -lt 15 ]; do
-    if nslookup google.com 127.0.0.1#5354 >/dev/null 2>&1; then
-        break
-    fi
-    sleep 1
-    n=`expr $n + 1`
-done
+start_ctrld /cfg/ctrld.toml
 
 # Only redirect DNS if ctrld is confirmed working
-if nslookup google.com 127.0.0.1#5354 >/dev/null 2>&1; then
-    iptables -t nat -A PREROUTING -i br-lan -p udp --dport 53 -j REDIRECT --to-port 5354
-    iptables -t nat -A PREROUTING -i br-lan -p tcp --dport 53 -j REDIRECT --to-port 5354
-    iptables -t nat -A PREROUTING -i br-lan_2 -p udp --dport 53 -j REDIRECT --to-port 5354
-    iptables -t nat -A PREROUTING -i br-lan_2 -p tcp --dport 53 -j REDIRECT --to-port 5354
-    logger -t post-cfg "ctrld started (${DNS_TYPE}) with device discovery, DNS redirected to port 5354"
+if check_dns "127.0.0.1#${DNS_PORT}"; then
+    ensure_iptables "$DNS_PORT"
+    logger -t post-cfg "ctrld started (${DNS_TYPE}) with device discovery, DNS redirected to port ${DNS_PORT}"
 else
     logger -t post-cfg 'ctrld failed health check, using https-dns-proxy fallback'
 fi
 BOOTSCRIPT
 
 chmod +x /cfg/post-cfg.sh
-echo "  [OK] /cfg/post-cfg.sh written (self-healing)"
+print_ok "/cfg/post-cfg.sh written (self-healing)"
 
 # ── Step 6b: Advanced DNS Policy (optional) ──
 
-echo ""
-echo "  ── Advanced DNS Policy (optional) ──"
-echo "  Route specific devices or networks to different ControlD profiles."
-echo "  Requires multiple resolver IDs from your ControlD dashboard."
-echo ""
-printf "  Configure split DNS policies? [y/N]: "
-read -r DO_SPLIT
+printf "\n"
+print_header "Advanced DNS Policy (optional)"
+print_info "Route specific devices or networks to different ControlD profiles."
+print_info "Requires multiple resolver IDs from your ControlD dashboard."
+printf "\n"
+
+DO_SPLIT=""
+if [ -z "$FLAG_RESOLVER" ]; then
+    printf "  Configure split DNS policies? [y/N]: "
+    read -r DO_SPLIT
+fi
+
+POLICY_UPSTREAMS=""
+POLICY_NETWORKS=""
+POLICY_MACS=""
 POLICY_CONF=""
+UPSTREAM_IDX=1
+NETWORK_IDX=3
 
 if [ "$DO_SPLIT" = "y" ] || [ "$DO_SPLIT" = "Y" ]; then
-    POLICY_UPSTREAMS=""
-    POLICY_NETWORKS=""
-    POLICY_MACS=""
-    UPSTREAM_IDX=1
-    NETWORK_IDX=3
-
     while true; do
-        echo ""
-        echo "  Adding DNS policy upstream..."
+        printf "\n"
+        print_info "Adding DNS policy upstream..."
         printf "    Resolver ID (or empty to finish): "
         read -r POLICY_RESOLVER
         [ -z "$POLICY_RESOLVER" ] && break
 
+        if ! valid_resolver "$POLICY_RESOLVER"; then
+            print_warn "Invalid resolver ID, skipping."
+            continue
+        fi
+
         printf "    Policy name (e.g. Kids, IoT, Guest): "
         read -r POLICY_NAME
-        POLICY_NAME=${POLICY_NAME:-"Policy-${UPSTREAM_IDX}"}
+        POLICY_NAME="${POLICY_NAME:-Policy-${UPSTREAM_IDX}}"
 
-        case "${DNS_TYPE}" in
-            doq) POLICY_EP="${POLICY_RESOLVER}.dns.controld.com" ;;
-            *)   POLICY_EP="https://dns.controld.com/${POLICY_RESOLVER}" ;;
-        esac
+        POLICY_EP="$(get_endpoint "$DNS_TYPE" "$POLICY_RESOLVER")"
 
         POLICY_UPSTREAMS="${POLICY_UPSTREAMS}
 [upstream.${UPSTREAM_IDX}]
@@ -334,37 +448,43 @@ if [ "$DO_SPLIT" = "y" ] || [ "$DO_SPLIT" = "Y" ]; then
     send_client_info = true
 "
 
-        echo ""
-        echo "    Route to this policy by:"
-        echo "      1) Network/subnet (e.g. 192.168.1.200/32)"
-        echo "      2) Device MAC address (e.g. AA:BB:CC:DD:EE:FF)"
-        echo "      3) Both"
+        printf "\n"
+        printf "    Route to this policy by:\n"
+        printf "      1) Network/subnet (e.g. 192.168.1.200/32)\n"
+        printf "      2) Device MAC address (e.g. AA:BB:CC:DD:EE:FF)\n"
+        printf "      3) Both\n"
         printf "    Route type [1]: "
         read -r ROUTE_TYPE
-        ROUTE_TYPE=${ROUTE_TYPE:-1}
+        ROUTE_TYPE="${ROUTE_TYPE:-1}"
 
         case "$ROUTE_TYPE" in
             1|3)
-                echo ""
-                echo "    Enter CIDRs (space-separated). Examples:"
-                echo "      192.168.1.200/32       (single device)"
-                echo "      192.168.2.0/24         (entire subnet)"
+                printf "\n"
+                printf "    Enter CIDRs (space-separated). Examples:\n"
+                printf "      192.168.1.200/32       (single device)\n"
+                printf "      192.168.2.0/24         (entire subnet)\n"
                 printf "    CIDRs: "
                 read -r CIDR_LIST
                 if [ -n "$CIDR_LIST" ]; then
                     CIDR_ARRAY=""
                     for cidr in $CIDR_LIST; do
-                        CIDR_ARRAY="${CIDR_ARRAY}\"${cidr}\", "
+                        if valid_cidr "$cidr"; then
+                            CIDR_ARRAY="${CIDR_ARRAY}\"${cidr}\", "
+                        else
+                            print_warn "Invalid CIDR skipped: ${cidr}"
+                        fi
                     done
-                    CIDR_ARRAY=$(echo "$CIDR_ARRAY" | sed 's/, $//')
-                    POLICY_NETWORKS="${POLICY_NETWORKS}
+                    CIDR_ARRAY="$(printf "%s" "$CIDR_ARRAY" | sed 's/, $//')"
+                    if [ -n "$CIDR_ARRAY" ]; then
+                        POLICY_NETWORKS="${POLICY_NETWORKS}
 [network.${NETWORK_IDX}]
     cidrs = [${CIDR_ARRAY}]
     name = \"${POLICY_NAME}\"
 "
-                    POLICY_CONF="${POLICY_CONF}
+                        POLICY_CONF="${POLICY_CONF}
     {\"network.${NETWORK_IDX}\" = [\"upstream.${UPSTREAM_IDX}\"]},"
-                    NETWORK_IDX=$(expr $NETWORK_IDX + 1)
+                        NETWORK_IDX=$((NETWORK_IDX + 1))
+                    fi
                 fi
                 ;;
         esac
@@ -375,45 +495,49 @@ if [ "$DO_SPLIT" = "y" ] || [ "$DO_SPLIT" = "Y" ]; then
                 read -r MAC_LIST
                 if [ -n "$MAC_LIST" ]; then
                     for mac in $MAC_LIST; do
-                        POLICY_MACS="${POLICY_MACS}
+                        if valid_mac "$mac"; then
+                            POLICY_MACS="${POLICY_MACS}
     {\"${mac}\" = [\"upstream.${UPSTREAM_IDX}\"]},"
+                        else
+                            print_warn "Invalid MAC skipped: ${mac}"
+                        fi
                     done
                 fi
                 ;;
         esac
 
-        UPSTREAM_IDX=$(expr $UPSTREAM_IDX + 1)
+        UPSTREAM_IDX=$((UPSTREAM_IDX + 1))
     done
 
     # Append policy config to ctrld.toml
     if [ -n "$POLICY_UPSTREAMS" ] || [ -n "$POLICY_NETWORKS" ]; then
-        echo "" >> /cfg/ctrld.toml
-        echo "# Policy upstreams" >> /cfg/ctrld.toml
-        echo "$POLICY_UPSTREAMS" >> /cfg/ctrld.toml
-        echo "# Policy networks" >> /cfg/ctrld.toml
-        echo "$POLICY_NETWORKS" >> /cfg/ctrld.toml
+        printf "" >> /cfg/ctrld.toml
+        printf "\n# Policy upstreams\n" >> /cfg/ctrld.toml
+        printf "%s\n" "$POLICY_UPSTREAMS" >> /cfg/ctrld.toml
+        printf "# Policy networks\n" >> /cfg/ctrld.toml
+        printf "%s\n" "$POLICY_NETWORKS" >> /cfg/ctrld.toml
 
         if [ -n "$POLICY_CONF" ] || [ -n "$POLICY_MACS" ]; then
-            POLICY_CONF=$(echo "$POLICY_CONF" | sed '$ s/,$//')
-            POLICY_MACS=$(echo "$POLICY_MACS" | sed '$ s/,$//')
+            POLICY_CONF="$(printf "%s" "$POLICY_CONF" | sed '$ s/,$//')"
+            POLICY_MACS="$(printf "%s" "$POLICY_MACS" | sed '$ s/,$//')"
 
-            echo "" >> /cfg/ctrld.toml
-            echo "[listener.0.policy]" >> /cfg/ctrld.toml
-            echo "    name = \"Split DNS Policy\"" >> /cfg/ctrld.toml
+            printf "\n" >> /cfg/ctrld.toml
+            printf "[listener.0.policy]\n" >> /cfg/ctrld.toml
+            printf "    name = \"Split DNS Policy\"\n" >> /cfg/ctrld.toml
             if [ -n "$POLICY_CONF" ]; then
-                echo "    networks = [" >> /cfg/ctrld.toml
-                echo "$POLICY_CONF" >> /cfg/ctrld.toml
-                echo "    ]" >> /cfg/ctrld.toml
+                printf "    networks = [\n" >> /cfg/ctrld.toml
+                printf "%s\n" "$POLICY_CONF" >> /cfg/ctrld.toml
+                printf "    ]\n" >> /cfg/ctrld.toml
             fi
             if [ -n "$POLICY_MACS" ]; then
-                echo "    macs = [" >> /cfg/ctrld.toml
-                echo "$POLICY_MACS" >> /cfg/ctrld.toml
-                echo "    ]" >> /cfg/ctrld.toml
+                printf "    macs = [\n" >> /cfg/ctrld.toml
+                printf "%s\n" "$POLICY_MACS" >> /cfg/ctrld.toml
+                printf "    ]\n" >> /cfg/ctrld.toml
             fi
         fi
 
-        echo "POLICY_UPSTREAMS=${UPSTREAM_IDX}" >> /cfg/controld.env
-        echo "  [OK] Split DNS policy configured"
+        printf "POLICY_UPSTREAMS=%s\n" "$UPSTREAM_IDX" >> /cfg/controld.env
+        print_ok "Split DNS policy configured"
     fi
 fi
 
@@ -423,87 +547,118 @@ cat > /cfg/watchdog.sh << 'WATCHDOG'
 #!/bin/sh
 # ControlD watchdog with automatic protocol fallback
 # Runs via cron every 5 minutes
+# 1. Checks ctrld is alive and DNS resolves
+# 2. If failing, tries next protocol in fallback chain
+# 3. Logs all actions via syslog
+
 [ -f /cfg/controld.env ] || exit 0
 . /cfg/controld.env
-DNS_TYPE=${DNS_TYPE:-doh3}
-FALLBACK_CHAIN="doq doh3 doh"
-DNS_PORT=5354
 
-get_endpoint() {
-    case "$1" in
-        doq) echo "${RESOLVER_ID}.dns.controld.com" ;;
-        *)   echo "https://dns.controld.com/${RESOLVER_ID}" ;;
-    esac
-}
+# Source lib.sh if available, otherwise inline helpers
+if [ -f /cfg/lib.sh ]; then
+    # shellcheck source=/dev/null
+    . /cfg/lib.sh
+else
+    DNS_PORT=5354
+    FALLBACK_CHAIN="doq doh3 doh"
 
-next_protocol() {
-    current="$1"; found=0
-    for proto in $FALLBACK_CHAIN; do
-        if [ "$found" = "1" ]; then echo "$proto"; return; fi
-        [ "$proto" = "$current" ] && found=1
-    done
-    echo "$FALLBACK_CHAIN" | awk '{print $1}'
-}
+    get_endpoint() {
+        case "$1" in
+            doq|dot) printf "%s.dns.controld.com" "$2" ;;
+            *)       printf "https://dns.controld.com/%s" "$2" ;;
+        esac
+    }
+    next_proto() {
+        _current="$1"; _found=0
+        for _proto in $FALLBACK_CHAIN; do
+            if [ "$_found" = "1" ]; then printf "%s" "$_proto"; return; fi
+            [ "$_proto" = "$_current" ] && _found=1
+        done
+        printf "%s" "$(echo "$FALLBACK_CHAIN" | awk '{print $1}')"
+    }
+    check_dns() {
+        if [ -n "${1:-}" ]; then
+            nslookup google.com "$1" >/dev/null 2>&1
+        else
+            nslookup google.com >/dev/null 2>&1
+        fi
+    }
+    stop_ctrld() {
+        kill "$(pidof ctrld 2>/dev/null)" 2>/dev/null || true
+        sleep 1
+    }
+    start_ctrld() {
+        _config="${1:-/cfg/ctrld.toml}"
+        _timeout="${2:-10}"
+        nohup /cfg/ctrld run -c "$_config" -d >/dev/null 2>&1 &
+        _n=0
+        while [ "$_n" -lt "$_timeout" ]; do
+            check_dns "127.0.0.1#${DNS_PORT}" && return 0
+            sleep 1; _n=$((_n + 1))
+        done
+        return 1
+    }
+    restart_ctrld() { stop_ctrld; start_ctrld "$@"; }
+    ensure_iptables() {
+        _port="${1:-$DNS_PORT}"
+        _cnt="$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c "$_port")"
+        if [ "$_cnt" -eq 0 ]; then
+            iptables -t nat -A PREROUTING -i br-lan   -p udp --dport 53 -j REDIRECT --to-port "$_port"
+            iptables -t nat -A PREROUTING -i br-lan   -p tcp --dport 53 -j REDIRECT --to-port "$_port"
+            iptables -t nat -A PREROUTING -i br-lan_2 -p udp --dport 53 -j REDIRECT --to-port "$_port"
+            iptables -t nat -A PREROUTING -i br-lan_2 -p tcp --dport 53 -j REDIRECT --to-port "$_port"
+            return 0
+        fi
+        return 1
+    }
+fi
 
-restart_ctrld() {
-    kill $(pidof ctrld) 2>/dev/null; sleep 1
-    nohup /cfg/ctrld run -c /cfg/ctrld.toml -d >/dev/null 2>&1 &
-    n=0
-    while [ $n -lt 10 ]; do
-        nslookup google.com 127.0.0.1#${DNS_PORT} >/dev/null 2>&1 && return 0
-        sleep 1; n=$(expr $n + 1)
-    done
-    return 1
-}
+DNS_TYPE="${DNS_TYPE:-doh3}"
+MAX_RESTART_ATTEMPTS=3
 
 # Check if ctrld is running
 if ! pidof ctrld >/dev/null 2>&1; then
     logger -t watchdog "ctrld not running, restarting"
-    restart_ctrld && logger -t watchdog "ctrld restarted (${DNS_TYPE})"
+    restart_ctrld /cfg/ctrld.toml && logger -t watchdog "ctrld restarted (${DNS_TYPE})"
     exit 0
 fi
 
 # Check DNS resolution
-if nslookup google.com 127.0.0.1#${DNS_PORT} >/dev/null 2>&1; then
+if check_dns "127.0.0.1#${DNS_PORT}"; then
     exit 0
 fi
 
-# DNS failing — try protocol fallback
+# DNS failing -- try protocol fallback
 logger -t watchdog "DNS failed on ${DNS_TYPE}, starting fallback"
 
 # Restore iptables if missing
-RULES=$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c ${DNS_PORT})
-if [ "$RULES" -eq 0 ]; then
-    iptables -t nat -A PREROUTING -i br-lan -p udp --dport 53 -j REDIRECT --to-port ${DNS_PORT}
-    iptables -t nat -A PREROUTING -i br-lan -p tcp --dport 53 -j REDIRECT --to-port ${DNS_PORT}
-    iptables -t nat -A PREROUTING -i br-lan_2 -p udp --dport 53 -j REDIRECT --to-port ${DNS_PORT}
-    iptables -t nat -A PREROUTING -i br-lan_2 -p tcp --dport 53 -j REDIRECT --to-port ${DNS_PORT}
-    logger -t watchdog "restored iptables rules"
-fi
+ensure_iptables "$DNS_PORT"
+logger -t watchdog "restored iptables rules"
 
-proto="$DNS_TYPE"; attempt=0
-while [ $attempt -lt 3 ]; do
-    proto=$(next_protocol "$proto"); attempt=$(expr $attempt + 1)
-    logger -t watchdog "trying ${proto} (attempt ${attempt}/3)"
-    endpoint=$(get_endpoint "$proto")
-    sed -i "s/endpoint = \".*\"/endpoint = \"${endpoint}\"/" /cfg/ctrld.toml
-    sed -i "s/type = \"[a-z0-9]*\"/type = \"${proto}\"/" /cfg/ctrld.toml
-    if restart_ctrld; then
-        sed -i "s/DNS_TYPE=.*/DNS_TYPE=${proto}/" /cfg/controld.env
-        logger -t watchdog "fallback to ${proto} succeeded"
+_proto="$DNS_TYPE"; _attempt=0
+while [ "$_attempt" -lt "$MAX_RESTART_ATTEMPTS" ]; do
+    _proto="$(next_proto "$_proto")"; _attempt=$((_attempt + 1))
+    logger -t watchdog "trying ${_proto} (attempt ${_attempt}/${MAX_RESTART_ATTEMPTS})"
+    _endpoint="$(get_endpoint "$_proto" "$RESOLVER_ID")"
+    sed -i "s|endpoint = \".*\"|endpoint = \"${_endpoint}\"|" /cfg/ctrld.toml
+    sed -i "s|type = \"[a-z0-9]*\"|type = \"${_proto}\"|" /cfg/ctrld.toml
+    if restart_ctrld /cfg/ctrld.toml; then
+        sed -i "s|DNS_TYPE=.*|DNS_TYPE=${_proto}|" /cfg/controld.env
+        logger -t watchdog "fallback to ${_proto} succeeded"
         exit 0
     fi
 done
 logger -t watchdog "all protocols failed"
 WATCHDOG
+
 chmod +x /cfg/watchdog.sh
 
 # Install watchdog cron (every 5 minutes)
 crontab -l 2>/dev/null | grep -v watchdog | crontab -
-(crontab -l 2>/dev/null; echo '*/5 * * * * /cfg/watchdog.sh') | crontab - 2>/dev/null || {
-    echo "  [!] Could not install watchdog cron"
+(crontab -l 2>/dev/null; printf '*/5 * * * * /cfg/watchdog.sh\n') | crontab - 2>/dev/null || {
+    print_warn "Could not install watchdog cron"
 }
-echo "  [OK] Watchdog installed (5-min health check + protocol fallback)"
+print_ok "Watchdog installed (5-min health check + protocol fallback)"
 
 # ── Step 7: Write auto-update script ──
 
@@ -513,97 +668,99 @@ cat > /cfg/controld-update.sh << 'UPDATESCRIPT'
 [ -f /cfg/controld.env ] || exit 0
 . /cfg/controld.env
 
-LATEST=$(wget -qO- 'https://api.github.com/repos/Control-D-Inc/ctrld/releases/latest' | grep '"tag_name"' | grep -o 'v[0-9.]*')
+LATEST="$(wget -qO- 'https://api.github.com/repos/Control-D-Inc/ctrld/releases/latest' | grep '"tag_name"' | grep -o 'v[0-9.]*')"
 [ -z "$LATEST" ] && exit 0
 CURRENT="v${CURLD_VERSION}"
 
 if [ "$LATEST" != "$CURRENT" ]; then
-    VER=${LATEST#v}
+    VER="${LATEST#v}"
     logger -t controld-update "Updating ctrld from ${CURRENT} to ${LATEST}"
     wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/${LATEST}/ctrld_${VER}_linux_arm64.tar.gz" || exit 1
     tar xzf /tmp/ctrld.tar.gz -C /tmp || exit 1
-    kill $(pidof ctrld) 2>/dev/null
-    mv /tmp/dist/ctrld_${VER}_linux_arm64/ctrld /cfg/ctrld
+    kill "$(pidof ctrld 2>/dev/null)" 2>/dev/null
+    mv "/tmp/dist/ctrld_${VER}_linux_arm64/ctrld" /cfg/ctrld
     chmod +x /cfg/ctrld
     rm -rf /tmp/dist /tmp/ctrld.tar.gz
-    sed -i "s/CURLD_VERSION=.*/CURLD_VERSION=${VER}/" /cfg/controld.env
+    sed -i "s|CURLD_VERSION=.*|CURLD_VERSION=${VER}|" /cfg/controld.env
     /cfg/ctrld run -c /cfg/ctrld.toml -d >/dev/null 2>&1 &
     logger -t controld-update "ctrld updated to ${LATEST}"
 fi
 UPDATESCRIPT
 
 chmod +x /cfg/controld-update.sh
-echo "  [OK] /cfg/controld-update.sh written"
+print_ok "/cfg/controld-update.sh written"
 
 # ── Step 8: Install cron job for weekly updates ──
 
 crontab -l 2>/dev/null | grep -v controld-update | crontab -
-(crontab -l 2>/dev/null; echo '0 3 * * 1 /cfg/controld-update.sh') | crontab - 2>/dev/null || {
-    echo "  [!] Could not install cron job (non-fatal, auto-update won't run)"
+(crontab -l 2>/dev/null; printf '0 3 * * 1 /cfg/controld-update.sh\n') | crontab - 2>/dev/null || {
+    print_warn "Could not install cron job (non-fatal, auto-update won't run)"
 }
-echo "  [OK] Weekly auto-update cron installed"
+print_ok "Weekly auto-update cron installed"
 
-# ── Step 9: Apply configuration ──
+# ── Step 9: Copy lib.sh to router for runtime use ──
 
-echo ""
-echo "  Step 3: Applying configuration..."
+if [ -f "${LIB_DIR}/lib.sh" ] && [ ! -f /cfg/lib.sh ]; then
+    cp "${LIB_DIR}/lib.sh" /cfg/lib.sh
+    print_ok "lib.sh copied to /cfg/ for runtime use"
+fi
+
+# ── Step 10: Apply configuration ──
+
+print_step "Step 4: Applying configuration..."
 
 /cfg/post-cfg.sh || {
-    echo "  [!] post-cfg.sh reported errors. DNS may still be stabilizing."
+    print_warn "post-cfg.sh reported errors. DNS may still be stabilizing."
 }
 
-# ── Step 10: Verify ──
+# ── Step 11: Verify ──
 
-echo ""
-echo "  Step 4: Verification..."
-echo ""
+print_step "Step 5: Verification"
+printf "\n"
 
 if pidof ctrld >/dev/null; then
-    echo "  [OK] ctrld is running (PID $(pidof ctrld))"
+    print_ok "ctrld is running (PID $(pidof ctrld))"
 else
-    echo "  [!] ctrld is NOT running"
+    print_fail "ctrld is NOT running"
 fi
 
-if nslookup google.com 127.0.0.1#5354 >/dev/null 2>&1; then
-    echo "  [OK] ctrld DNS responding on port 5354"
+if check_dns "127.0.0.1#${DNS_PORT}"; then
+    print_ok "ctrld DNS responding on port ${DNS_PORT}"
 else
-    echo "  [!] ctrld not responding on port 5354 (may need a moment)"
+    print_warn "ctrld not responding on port ${DNS_PORT} (may need a moment)"
 fi
 
-RULES=$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c 5354)
+RULES="$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c "${DNS_PORT}")"
 if [ "$RULES" -gt 0 ]; then
-    echo "  [OK] iptables redirect rules active (${RULES} rules)"
+    print_ok "iptables redirect rules active (${RULES} rules)"
 else
-    echo "  [!] No iptables redirect rules"
+    print_warn "No iptables redirect rules"
 fi
 
-if nslookup google.com >/dev/null 2>&1; then
-    echo "  [OK] System DNS working"
+if check_dns; then
+    print_ok "System DNS working"
 else
-    echo "  [!] System DNS not working"
+    print_fail "System DNS not working"
 fi
 
 # ── Done ──
 
-echo ""
-echo "  ╔══════════════════════════════════════════════════════════╗"
-echo "  ║                    Setup Complete!                       ║"
-echo "  ╚══════════════════════════════════════════════════════════╝"
-echo ""
-echo "  Your DNS is now routed through ControlD via ${PROTO_LABEL}."
-echo ""
-echo "  Check your dashboard: https://controld.com"
-echo "  Individual devices should appear within a few minutes."
-echo ""
-echo "  Installed on router:"
-echo "    /cfg/controld.env         Recovery config (self-healing)"
-echo "    /cfg/ctrld                DNS proxy binary"
-echo "    /cfg/ctrld.toml           DNS proxy configuration"
-echo "    /cfg/post-cfg.sh          Self-healing boot script"
-echo "    /cfg/controld-update.sh   Weekly auto-update"
-echo "    /cfg/watchdog.sh          5-min health check + protocol fallback"
-echo ""
-echo "  To check:      sh status.sh"
-echo "  To benchmark:  sh benchmark.sh"
-echo "  To uninstall:  sh uninstall.sh"
-echo ""
+printf "\n"
+printf "  ${BOLD}${GREEN}╔══════════════════════════════════════════════════════════╗${RESET}\n"
+printf "  ${BOLD}${GREEN}║                    Setup Complete!                       ║${RESET}\n"
+printf "  ${BOLD}${GREEN}╚══════════════════════════════════════════════════════════╝${RESET}\n"
+printf "\n"
+printf "  Your DNS is now routed through ControlD via ${PLABEL}.\n\n"
+printf "  Check your dashboard: ${BOLD}https://controld.com${RESET}\n"
+printf "  Individual devices should appear within a few minutes.\n\n"
+printf "  ${BOLD}Installed on router:${RESET}\n"
+printf "    /cfg/controld.env         Recovery config (self-healing)\n"
+printf "    /cfg/ctrld                DNS proxy binary\n"
+printf "    /cfg/ctrld.toml           DNS proxy configuration\n"
+printf "    /cfg/post-cfg.sh          Self-healing boot script\n"
+printf "    /cfg/controld-update.sh   Weekly auto-update\n"
+printf "    /cfg/watchdog.sh          5-min health check + protocol fallback\n"
+printf "    /cfg/lib.sh               Shared function library\n\n"
+printf "  To check:      sh status.sh\n"
+printf "  To benchmark:  sh benchmark.sh\n"
+printf "  To uninstall:  sh uninstall.sh\n\n"

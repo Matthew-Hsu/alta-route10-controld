@@ -1,46 +1,90 @@
 #!/bin/sh
-# DNS Protocol Benchmark for Alta Labs Route 10
-# Tests query latency for DoQ, DoH3, and DoH
-# Uses a separate port (5360) to avoid disrupting live DNS
+# DNS Protocol Benchmark for Alta Labs Route 10 + ControlD
+# Tests query latency for DoQ, DoH3, and DoH using a separate port (5360)
+# so live DNS on port 5354 is not disrupted.
+#
+# Usage: benchmark.sh [--queries N] [--help]
 
 set -e
 
-[ -f /cfg/controld.env ] || { echo "Run setup.sh first."; exit 1; }
-. /cfg/controld.env
+# ── Source lib.sh ──
 
-DNS_TYPE=${DNS_TYPE:-doh3}
-BOOTSTRAP_IP=${BOOTSTRAP_IP:-76.76.2.22}
-TEST_PORT=5360
+LIB_DIR="$(dirname "$0")"
+# shellcheck source=lib.sh
+. "$LIB_DIR/lib.sh" 2>/dev/null || {
+    if [ -f /cfg/lib.sh ]; then
+        # shellcheck source=/dev/null
+        . /cfg/lib.sh
+    else
+        echo "Error: lib.sh not found." >&2
+        exit 1
+    fi
+}
+
+# ── Defaults ──
+
 QUERIES=15
-DOMAINS="google.com cloudflare.com amazon.com wikipedia.org github.com"
 PROTOCOLS="doq doh3 doh"
+TEST_PORT=5360
+DOMAINS="google.com cloudflare.com amazon.com wikipedia.org github.com"
+DOMAIN_COUNT=5
+TMP_CONF="/tmp/ctrld-bench.toml"
 
-echo ""
-echo "  DNS Protocol Benchmark"
-echo "  ======================"
-echo "  Resolver: ${RESOLVER_ID}"
-echo "  Queries per protocol: ${QUERIES}"
-echo "  Test domains: $(echo $DOMAINS | wc -w)"
-echo ""
+# ── Help ──
 
-# Cleanup on exit
-cleanup() {
-    kill $(pidof ctrld) 2>/dev/null || true
-    rm -f /tmp/ctrld-bench.toml
+usage() {
+    printf "  ${BOLD}Usage:${RESET}  benchmark.sh [OPTIONS]
+
+  ${BOLD}Options:${RESET}
+    --queries N   Number of queries per protocol (default: 15)
+    --help        Show this help message
+
+  ${BOLD}Description:${RESET}
+    Benchmarks DNS query latency across DoQ, DoH3, and DoH protocols
+    using a temporary ctrld instance on port ${TEST_PORT}.
+    Live DNS on port ${DNS_PORT} is not affected.
+
+  ${BOLD}Examples:${RESET}
+    benchmark.sh
+    benchmark.sh --queries 30
+"
+    exit 0
 }
-trap cleanup EXIT
 
-get_endpoint() {
+# ── Parse arguments ──
+
+while [ $# -gt 0 ]; do
     case "$1" in
-        doq) echo "${RESOLVER_ID}.dns.controld.com" ;;
-        *)   echo "https://dns.controld.com/${RESOLVER_ID}" ;;
+        --queries)
+            [ -n "$2" ] || die "--queries requires a number"
+            QUERIES="$2"
+            shift 2
+            ;;
+        --help|-h)
+            usage
+            ;;
+        *)
+            die "Unknown option: $1  (try --help)"
+            ;;
     esac
-}
+done
+
+# ── Validate ──
+
+[ "$QUERIES" -gt 0 ] 2>/dev/null || die "--queries must be a positive number"
+
+load_env || die "Run setup.sh first.  (/cfg/controld.env not found)"
+
+if [ -z "$RESOLVER_ID" ]; then
+    die "RESOLVER_ID is empty.  Check /cfg/controld.env"
+fi
+
+# ── Helpers ──
 
 write_bench_config() {
-    proto="$1"
-    endpoint=$(get_endpoint "$proto")
-    cat > /tmp/ctrld-bench.toml << EOF
+    _proto="$1"
+    _endpoint=$(get_endpoint "$_proto" "$RESOLVER_ID")
+    cat > "$TMP_CONF" << EOF
 [service]
     log_level = "error"
     cache_enable = false
@@ -49,10 +93,10 @@ write_bench_config() {
     name = "bench"
 [upstream.0]
     bootstrap_ip = "${BOOTSTRAP_IP}"
-    endpoint = "${endpoint}"
+    endpoint = "${_endpoint}"
     name = "bench"
     timeout = 5000
-    type = "${proto}"
+    type = "${_proto}"
     send_client_info = false
 [listener.0]
     ip = "127.0.0.1"
@@ -61,120 +105,165 @@ EOF
 }
 
 bench_protocol() {
-    proto="$1"
-    label="$2"
+    _proto="$1"
 
-    # Kill any leftover ctrld
-    kill $(pidof ctrld) 2>/dev/null || true
-    sleep 1
+    # Kill any leftover test ctrld (avoid killing the production one)
+    _bench_pid="$(pidof ctrld 2>/dev/null)" || true
+    # Only kill if ctrld is listening on our test port
+    if [ -n "$_bench_pid" ]; then
+        for _p in $_bench_pid; do
+            if netstat -tlnp 2>/dev/null | grep -q "${_p}.*${TEST_PORT}" \
+               || ss -tlnp 2>/dev/null | grep -q "pid=${_p}.*:${TEST_PORT}"; then
+                kill "$_p" 2>/dev/null || true
+            fi
+        done
+        sleep 1
+    fi
 
-    write_bench_config "$proto"
+    write_bench_config "$_proto"
 
     # Start ctrld on test port
-    /cfg/ctrld run -c /tmp/ctrld-bench.toml -d >/dev/null 2>&1 &
+    /cfg/ctrld run -c "$TMP_CONF" -d >/dev/null 2>&1 &
+    _started_pid=$!
 
     # Wait for it to be ready
-    n=0
-    while [ $n -lt 10 ]; do
-        if nslookup google.com 127.0.0.1#${TEST_PORT} >/dev/null 2>&1; then
+    _n=0
+    while [ "$_n" -lt 10 ]; do
+        if nslookup google.com "127.0.0.1#${TEST_PORT}" >/dev/null 2>&1; then
             break
         fi
         sleep 1
-        n=$(expr $n + 1)
+        _n=$((_n + 1))
     done
 
-    if [ $n -eq 10 ]; then
-        echo "  ${label}    FAILED (could not start)"
-        kill $(pidof ctrld) 2>/dev/null || true
+    if [ "$_n" -eq 10 ]; then
+        kill "$_started_pid" 2>/dev/null || true
+        BENCH_AVG="FAIL"
+        BENCH_OK=0
+        BENCH_FAIL="$QUERIES"
         return
     fi
 
     # Run queries and measure total time
-    total_ms=0
-    success=0
-    fail=0
-    for i in $(seq 1 $QUERIES); do
-        domain=$(echo "$DOMAINS" | awk "{print \$$(( (i - 1) % 5 + 1 ))}")
-        start=$(date +%s%N 2>/dev/null || date +%s)
+    _total_ms=0
+    _success=0
+    _fail=0
+    for _i in $(seq 1 "$QUERIES"); do
+        _domain=$(echo "$DOMAINS" | awk "{print \$(((_i - 1) % DOMAIN_COUNT + 1))}")
+        _start=$(date +%s%N 2>/dev/null || date +%s)
 
-        if nslookup "$domain" 127.0.0.1#${TEST_PORT} >/dev/null 2>&1; then
-            end=$(date +%s%N 2>/dev/null || date +%s)
-            if [ -n "$start" ] && [ ${#start} -gt 9 ]; then
-                # Nanosecond precision available
-                elapsed=$(( (end - start) / 1000000 ))
+        if nslookup "$_domain" "127.0.0.1#${TEST_PORT}" >/dev/null 2>&1; then
+            _end=$(date +%s%N 2>/dev/null || date +%s)
+            if [ -n "$_start" ] && [ "${#_start}" -gt 9 ]; then
+                _elapsed=$(( (_end - _start) / 1000000 ))
             else
-                # Second precision only
-                elapsed=$(( (end - start) * 1000 ))
-                [ $elapsed -eq 0 ] && elapsed=1
+                _elapsed=$(( (_end - _start) * 1000 ))
+                [ "$_elapsed" -eq 0 ] && _elapsed=1
             fi
-            total_ms=$((total_ms + elapsed))
-            success=$((success + 1))
+            _total_ms=$((_total_ms + _elapsed))
+            _success=$((_success + 1))
         else
-            fail=$((fail + 1))
+            _fail=$((_fail + 1))
         fi
     done
 
-    kill $(pidof ctrld) 2>/dev/null || true
+    kill "$_started_pid" 2>/dev/null || true
     sleep 1
 
-    if [ $success -eq 0 ]; then
-        echo "  ${label}    FAILED (0/${QUERIES} queries succeeded)"
-        return
+    if [ "$_success" -eq 0 ]; then
+        BENCH_AVG="FAIL"
+        BENCH_OK=0
+        BENCH_FAIL="$QUERIES"
+    else
+        BENCH_AVG=$((_total_ms / _success))
+        BENCH_OK="$_success"
+        BENCH_FAIL="$_fail"
     fi
-
-    avg_ms=$((total_ms / success))
-    echo "  ${label}    ${avg_ms}ms avg   ${success}/${QUERIES} ok   ${fail} failed"
 }
+
+# ── Cleanup ──
+
+cleanup() {
+    # Only kill ctrld processes on test port, not production
+    _pids="$(pidof ctrld 2>/dev/null)" || true
+    for _p in $_pids; do
+        if netstat -tlnp 2>/dev/null | grep -q "${_p}.*${TEST_PORT}" \
+           || ss -tlnp 2>/dev/null | grep -q "pid=${_p}.*:${TEST_PORT}"; then
+            kill "$_p" 2>/dev/null || true
+        fi
+    done
+    rm -f "$TMP_CONF"
+}
+trap cleanup EXIT
+
+# ── Banner ──
+
+print_banner
+print_header "DNS Protocol Benchmark"
+printf "  Resolver:       ${BOLD}%s${RESET}\n" "$RESOLVER_ID"
+printf "  Current proto:  %s\n" "$(proto_label "$DNS_TYPE")"
+printf "  Queries/protc:  %d\n" "$QUERIES"
+printf "  Test domains:   %d\n" "$DOMAIN_COUNT"
+printf "  Test port:      %d  (production on %d)\n" "$TEST_PORT" "$DNS_PORT"
+printf "  Version:        %s\n" "$VERSION"
+printf "\n"
 
 # ── Run benchmarks ──
 
-echo "  Protocol      Latency      Success"
-echo "  --------      -------      -------"
+# Table header
+printf "  ${BOLD}%-14s %-10s %-12s %-10s${RESET}\n" "Protocol" "Avg (ms)" "Success" "Failed"
+printf "  ${DIM}%-14s %-10s %-12s %-10s${RESET}\n" \
+    "----------" "---------" "----------" "---------"
 
-results=""
 fastest_ms=999999
 fastest_proto=""
+results_found=0
 
 for proto in $PROTOCOLS; do
-    case "$proto" in
-        doq)  label="DoQ  (QUIC)" ;;
-        doh3) label="DoH3 (H/3) " ;;
-        doh)  label="DoH  (H/2) " ;;
-    esac
+    label=$(proto_label "$proto")
 
-    # Capture output
-    output=$(bench_protocol "$proto" "$label" 2>&1)
-    echo "$output"
+    bench_protocol "$proto"
 
-    # Parse average ms for ranking
-    avg=$(echo "$output" | grep -o '[0-9]*ms' | head -1 | sed 's/ms//')
-    if [ -n "$avg" ] && [ "$avg" -lt "$fastest_ms" ] 2>/dev/null; then
-        fastest_ms=$avg
-        fastest_proto=$proto
+    if [ "$BENCH_AVG" = "FAIL" ]; then
+        printf "  %-14s ${RED}%-10s${RESET} %-12s %-10s\n" \
+            "$label" "FAILED" "${BENCH_OK}/${QUERIES}" "${BENCH_FAIL}"
+    else
+        results_found=$((results_found + 1))
+
+        # Highlight fastest so far
+        if [ "$BENCH_AVG" -lt "$fastest_ms" ]; then
+            fastest_ms=$BENCH_AVG
+            fastest_proto=$proto
+            printf "  %-14s ${GREEN}%-10s${RESET} %-12s %-10s  ${DIM}<-- fastest${RESET}\n" \
+                "$label" "${BENCH_AVG}ms" "${BENCH_OK}/${QUERIES}" "${BENCH_FAIL}"
+        else
+            printf "  %-14s ${BOLD}%-10s${RESET} %-12s %-10s\n" \
+                "$label" "${BENCH_AVG}ms" "${BENCH_OK}/${QUERIES}" "${BENCH_FAIL}"
+        fi
     fi
 done
 
-echo ""
+printf "\n"
 
-if [ -n "$fastest_proto" ]; then
-    case "$fastest_proto" in
-        doq)  rec_label="DoQ (QUIC)" ;;
-        doh3) rec_label="DoH3 (HTTP/3)" ;;
-        doh)  rec_label="DoH (HTTP/2)" ;;
-    esac
-    echo "  Recommended: ${rec_label} (${fastest_ms}ms avg)"
+# ── Recommendation ──
 
-    if [ "$fastest_proto" != "$DNS_TYPE" ]; then
-        echo ""
-        echo "  Current protocol is ${DNS_TYPE}. To switch:"
-        echo "    sed -i 's/DNS_TYPE=.*/DNS_TYPE=${fastest_proto}/' /cfg/controld.env"
-        echo "    rm /cfg/ctrld.toml"
-        echo "    kill \$(pidof ctrld); sleep 1; /cfg/post-cfg.sh"
-    else
-        echo "  (already active)"
-    fi
-else
-    echo "  [!] All protocols failed. Check network connectivity."
+if [ "$results_found" -eq 0 ]; then
+    print_fail "All protocols failed. Check network connectivity."
+    exit 1
 fi
 
-echo ""
+rec_label=$(proto_label "$fastest_proto")
+print_ok "Recommended: ${rec_label}  (${fastest_ms}ms avg)"
+
+if [ "$fastest_proto" != "$DNS_TYPE" ]; then
+    printf "\n"
+    print_warn "Current protocol is $(proto_label "$DNS_TYPE")."
+    printf "  To switch to ${GREEN}${rec_label}${RESET}:\n\n"
+    printf "    ${BOLD}sed -i 's/DNS_TYPE=.*/DNS_TYPE=${fastest_proto}/' /cfg/controld.env${RESET}\n"
+    printf "    ${BOLD}rm /cfg/ctrld.toml${RESET}\n"
+    printf "    ${BOLD}kill \\\$(pidof ctrld); sleep 1; /cfg/post-cfg.sh${RESET}\n"
+else
+    printf "  ${DIM}(already active)${RESET}\n"
+fi
+
+printf "\n"

@@ -1,139 +1,180 @@
 #!/bin/sh
-# Check ControlD status on Alta Labs Route 10
-# Run on the router: sh status.sh
+# status.sh — report ControlD status on Alta Labs Route 10
+# Uses lib.sh for output helpers and shared state.
+# shellcheck source=lib.sh
 
-echo ""
-echo "  ControlD Status - Alta Labs Route 10"
-echo "  ====================================="
-echo ""
+# ── Bootstrap lib.sh ─────────────────────────────────────────────────────────
+LIB_DIR="$(dirname "$0")"
+# shellcheck source=lib.sh
+. "$LIB_DIR/lib.sh"
 
-# Check config files
-echo "  -- Configuration Files --"
+# ── Usage ────────────────────────────────────────────────────────────────────
+
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") [OPTIONS]
+
+Report ControlD DNS status on an Alta Labs Route 10 router.
+
+Options:
+  --help      Show this help message and exit
+
+Sections displayed:
+  config      Config files (/cfg/controld.env, ctrld binary, etc.)
+  services    ctrld and https-dns-proxy process status
+  dns         DNS resolution through ctrld and system resolver
+  iptables    NAT redirect rules for per-device visibility
+  upstreams   Upstream count and policy status from ctrld.toml
+  cron        Auto-update and watchdog cron entries
+  watchdog    Last few watchdog log entries
+EOF
+}
+
+# ── Parse arguments ──────────────────────────────────────────────────────────
+
+for arg in "$@"; do
+    case "$arg" in
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            printf "Unknown option: %s\n" "$arg" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+# ── Banner ───────────────────────────────────────────────────────────────────
+
+print_banner
+
+# ── Config Files ─────────────────────────────────────────────────────────────
+
+print_header "Configuration Files"
+
 for f in /cfg/controld.env /cfg/ctrld /cfg/ctrld.toml /cfg/post-cfg.sh /cfg/controld-update.sh /cfg/watchdog.sh; do
     if [ -f "$f" ]; then
-        echo "  [OK] $f exists"
+        print_ok "$f exists"
     else
-        echo "  [!!] $f missing"
+        print_fail "$f missing"
     fi
 done
 
-echo ""
+# ── Services ─────────────────────────────────────────────────────────────────
 
-# Check services
-echo "  -- Services --"
-if pidof ctrld >/dev/null 2>&1; then
-    echo "  [OK] ctrld is running (PID $(pidof ctrld))"
+print_header "Services"
+
+ctrld_pid=$(pidof ctrld 2>/dev/null)
+if [ -n "$ctrld_pid" ]; then
+    print_ok "ctrld is running (PID ${ctrld_pid})"
 else
-    echo "  [!!] ctrld is NOT running"
+    print_fail "ctrld is NOT running"
 fi
 
-HTTPS_STATUS=$(/etc/init.d/https-dns-proxy status 2>&1)
-if [ "$HTTPS_STATUS" = "running" ]; then
-    echo "  [OK] https-dns-proxy is running (fallback)"
+https_status=$(/etc/init.d/https-dns-proxy status 2>&1)
+if [ "$https_status" = "running" ]; then
+    print_ok "https-dns-proxy is running (fallback)"
 else
-    echo "  [!!] https-dns-proxy is not running"
+    print_fail "https-dns-proxy is not running"
 fi
 
-echo ""
+# ── DNS Resolution ───────────────────────────────────────────────────────────
 
-# Check DNS resolution
-echo "  -- DNS Resolution --"
-if nslookup google.com 127.0.0.1#5354 >/dev/null 2>&1; then
-    echo "  [OK] ctrld DNS responding on port 5354"
+print_header "DNS Resolution"
+
+if check_dns "127.0.0.1#${DNS_PORT}"; then
+    print_ok "ctrld DNS responding on port ${DNS_PORT}"
 else
-    echo "  [!!] ctrld not responding on port 5354"
+    print_fail "ctrld not responding on port ${DNS_PORT}"
 fi
 
-if nslookup google.com >/dev/null 2>&1; then
-    echo "  [OK] System DNS working"
+if check_dns; then
+    print_ok "System DNS working"
 else
-    echo "  [!!] System DNS not working"
+    print_fail "System DNS not working"
 fi
 
-echo ""
+# ── iptables ─────────────────────────────────────────────────────────────────
 
-# Check iptables
-echo "  -- iptables Redirect Rules --"
-RULES=$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c 5354)
-if [ "$RULES" -gt 0 ]; then
-    echo "  [OK] ${RULES} redirect rules active (per-device visibility enabled)"
+print_header "iptables Redirect Rules"
+
+rules=$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c "$DNS_PORT")
+if [ "$rules" -gt 0 ]; then
+    print_ok "${rules} redirect rule(s) active (per-device visibility enabled)"
 else
-    echo "  [!!] No redirect rules (per-device visibility disabled)"
+    print_fail "No redirect rules (per-device visibility disabled)"
 fi
 
-echo ""
+# ── Upstreams & Policies ────────────────────────────────────────────────────
 
-# Check ControlD endpoint
-echo "  -- ControlD Endpoint --"
-RESOLVER=$(uci show https-dns-proxy.@https-dns-proxy[0].resolver_url 2>/dev/null | grep -o 'https://dns.controld.com/[a-z0-9]*')
-if [ -n "$RESOLVER" ]; then
-    echo "  [OK] https-dns-proxy -> $RESOLVER"
-else
-    echo "  [!!] https-dns-proxy not pointing to ControlD"
-fi
+print_header "Upstreams & Policies"
 
-if [ -f /cfg/controld.env ]; then
-    . /cfg/controld.env
-    DNS_TYPE=${DNS_TYPE:-doh}
-    case "${DNS_TYPE}" in
-        doh3) PROTO_LABEL="DoH3 (HTTP/3)" ;;
-        doq)  PROTO_LABEL="DoQ (QUIC)" ;;
-        doh)  PROTO_LABEL="DoH (HTTP/2)" ;;
-        dot)  PROTO_LABEL="DoT (TLS)" ;;
-        *)    PROTO_LABEL="${DNS_TYPE}" ;;
-    esac
-    echo "  [OK] Resolver ID: ${RESOLVER_ID}"
-    echo "  [OK] Protocol: ${PROTO_LABEL}"
-    echo "  [OK] Version: ${CURLD_VERSION}"
-fi
-
-echo ""
-
-# Check upstreams and policies
-echo "  -- Upstreams & Policies --"
 if [ -f /cfg/ctrld.toml ]; then
-    UPSTREAM_COUNT=$(grep -c '^\[upstream\.' /cfg/ctrld.toml 2>/dev/null || echo 0)
-    echo "  [OK] ${UPSTREAM_COUNT} upstream(s) configured"
+    upstream_count=$(grep -c '^\[upstream\.' /cfg/ctrld.toml 2>/dev/null || echo 0)
+    print_ok "${upstream_count} upstream(s) configured"
+
     grep '^\[upstream\.' /cfg/ctrld.toml 2>/dev/null | while read -r line; do
         idx=$(echo "$line" | grep -o '[0-9]*')
-        name=$(grep -A1 "\[upstream.${idx}\]" /cfg/ctrld.toml | grep 'name' | sed 's/.*= "//;s/"//')
-        proto=$(grep -A5 "\[upstream.${idx}\]" /cfg/ctrld.toml | grep 'type' | sed 's/.*= "//;s/"//')
-        echo "    upstream.${idx}: ${name} (${proto})"
+        name=$(grep -A1 "\\[upstream.${idx}\\]" /cfg/ctrld.toml | grep 'name' | sed 's/.*= "//;s/"//')
+        proto=$(grep -A5 "\\[upstream.${idx}\\]" /cfg/ctrld.toml | grep 'type' | sed 's/.*= "//;s/"//')
+        printf "         upstream.%s: %s (%s)\n" "$idx" "$name" "$(proto_label "$proto")"
     done
+
     if grep -q '\[listener.0.policy\]' /cfg/ctrld.toml 2>/dev/null; then
-        echo "  [OK] Split DNS policy active"
-        MAC_COUNT=$(grep -c '="' /cfg/ctrld.toml 2>/dev/null || echo 0)
-        if [ "$MAC_COUNT" -gt 0 ]; then
-            echo "       MAC rules: ${MAC_COUNT} device(s)"
+        print_ok "Split DNS policy active"
+        mac_count=$(grep -c '="' /cfg/ctrld.toml 2>/dev/null || echo 0)
+        if [ "$mac_count" -gt 0 ]; then
+            print_ok "MAC rules: ${mac_count} device(s)"
         fi
+    else
+        print_info "No split DNS policy configured"
     fi
-fi
-
-echo ""
-
-# Check cron
-echo "  -- Cron Jobs --"
-if crontab -l 2>/dev/null | grep -q controld-update; then
-    echo "  [OK] Weekly auto-update cron installed"
 else
-    echo "  [!!] No auto-update cron job"
-fi
-if crontab -l 2>/dev/null | grep -q watchdog; then
-    echo "  [OK] Watchdog cron installed (5-min health check)"
-else
-    echo "  [!!] No watchdog cron job"
+    print_fail "/cfg/ctrld.toml not found"
 fi
 
-# Show recent watchdog logs
+# ── ControlD Endpoint (from env) ────────────────────────────────────────────
+
+print_header "ControlD Endpoint"
+
+if load_env; then
+    print_ok "Resolver ID: ${RESOLVER_ID}"
+    print_ok "Protocol: $(proto_label "${DNS_TYPE}")"
+    if [ -n "${CURLD_VERSION:-}" ]; then
+        print_ok "Version: ${CURLD_VERSION}"
+    fi
+else
+    print_fail "/cfg/controld.env not found or unreadable"
+fi
+
+# ── Cron Jobs ────────────────────────────────────────────────────────────────
+
+print_header "Cron Jobs"
+
+if crontab -l 2>/dev/null | grep -q 'controld-update'; then
+    print_ok "Weekly auto-update cron installed"
+else
+    print_fail "No auto-update cron job"
+fi
+
+if crontab -l 2>/dev/null | grep -q 'watchdog'; then
+    print_ok "Watchdog cron installed (5-min health check)"
+else
+    print_fail "No watchdog cron job"
+fi
+
+# ── Watchdog Logs ────────────────────────────────────────────────────────────
+
 if [ -f /cfg/watchdog.sh ]; then
-    LOG_ENTRIES=$(logread 2>/dev/null | grep watchdog | tail -3)
-    if [ -n "$LOG_ENTRIES" ]; then
-        echo ""
-        echo "  -- Recent Watchdog Activity --"
-        echo "$LOG_ENTRIES" | while read -r line; do
-            echo "  $(echo "$line" | sed 's/.*watchdog:/  watchdog:/')"
+    log_entries=$(logread 2>/dev/null | grep watchdog | tail -3)
+    if [ -n "$log_entries" ]; then
+        print_header "Recent Watchdog Activity"
+        echo "$log_entries" | while read -r line; do
+            printf "         %s\n" "$(echo "$line" | sed 's/.*watchdog:/watchdog:/')"
         done
     fi
 fi
 
-echo ""
+printf "\n"

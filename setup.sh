@@ -1,9 +1,10 @@
 #!/bin/sh
-# ControlD DoH installer for Alta Labs Route 10
+# ControlD DNS installer for Alta Labs Route 10
 # Run this script ON the router:
 #   wget -O /tmp/setup.sh https://codeberg.org/CookieTyrant/alta-route10-controld/raw/branch/master/setup.sh
 #   sh /tmp/setup.sh
 #
+# Supports: DoH (HTTP/2), DoH3 (HTTP/3), DoQ (QUIC)
 # All prompts have defaults in [brackets] — press Enter to accept.
 
 set -e
@@ -14,6 +15,7 @@ echo ""
 echo "  ╔══════════════════════════════════════════════════════════╗"
 echo "  ║   Alta Labs Route 10 + ControlD DNS Setup               ║"
 echo "  ║   Encrypted DNS with per-device visibility               ║"
+echo "  ║   Supports DoH / DoH3 (HTTP/3) / DoQ (QUIC)             ║"
 echo "  ╚══════════════════════════════════════════════════════════╝"
 echo ""
 
@@ -54,6 +56,23 @@ read -r BOOTSTRAP_IP
 BOOTSTRAP_IP=${BOOTSTRAP_IP:-76.76.2.22}
 
 echo ""
+echo "  DNS Protocol:"
+echo "    1) DoH3 (HTTP/3)  — fastest, uses QUIC transport [default]"
+echo "    2) DoQ   (QUIC)   — native QUIC, lower overhead"
+echo "    3) DoH   (HTTP/2) — most compatible"
+echo ""
+printf "  Protocol [1]: "
+read -r PROTO_CHOICE
+PROTO_CHOICE=${PROTO_CHOICE:-1}
+case "$PROTO_CHOICE" in
+    1) DNS_TYPE="doh3"; PROTO_LABEL="DoH3 (HTTP/3)" ;;
+    2) DNS_TYPE="doq";  PROTO_LABEL="DoQ (QUIC)" ;;
+    3) DNS_TYPE="doh";  PROTO_LABEL="DoH (HTTP/2)" ;;
+    *)  echo "  [!] Invalid choice, defaulting to DoH3"
+        DNS_TYPE="doh3"; PROTO_LABEL="DoH3 (HTTP/3)" ;;
+esac
+
+echo ""
 
 # ── Step 2: Check for existing config ──
 
@@ -90,10 +109,21 @@ cat > /cfg/controld.env << EOF
 RESOLVER_ID=${RESOLVER_ID}
 BOOTSTRAP_IP=${BOOTSTRAP_IP}
 CURLD_VERSION=${VERSION}
+DNS_TYPE=${DNS_TYPE}
 EOF
 echo "  [OK] /cfg/controld.env written"
 
 # ── Step 5: Write ctrld.toml ──
+
+# Build upstream endpoint based on protocol
+case "${DNS_TYPE}" in
+    doq)
+        UPSTREAM_ENDPOINT="${RESOLVER_ID}.dns.controld.com"
+        ;;
+    *)
+        UPSTREAM_ENDPOINT="https://dns.controld.com/${RESOLVER_ID}"
+        ;;
+esac
 
 cat > /cfg/ctrld.toml << EOF
 [service]
@@ -119,16 +149,16 @@ cat > /cfg/ctrld.toml << EOF
     name = "LAN2"
 [upstream.0]
     bootstrap_ip = "${BOOTSTRAP_IP}"
-    endpoint = "https://dns.controld.com/${RESOLVER_ID}"
+    endpoint = "${UPSTREAM_ENDPOINT}"
     name = "ControlD"
     timeout = 5000
-    type = "doh"
+    type = "${DNS_TYPE}"
     send_client_info = true
 [listener.0]
     ip = "0.0.0.0"
     port = 5354
 EOF
-echo "  [OK] /cfg/ctrld.toml written"
+echo "  [OK] /cfg/ctrld.toml written (${PROTO_LABEL})"
 
 # ── Step 6: Write self-healing post-cfg.sh ──
 # NOTE: Single-quoted heredoc prevents variable expansion —
@@ -142,7 +172,16 @@ cat > /cfg/post-cfg.sh << 'BOOTSCRIPT'
 [ -f /cfg/controld.env ] || { logger -t post-cfg 'controld.env missing, skipping'; exit 0; }
 . /cfg/controld.env
 
-logger -t post-cfg "starting with resolver=${RESOLVER_ID}"
+# Default to doh3 for legacy installs without DNS_TYPE
+DNS_TYPE=${DNS_TYPE:-doh3}
+
+# Build endpoint from protocol type
+case "${DNS_TYPE}" in
+    doq) UPSTREAM_ENDPOINT="${RESOLVER_ID}.dns.controld.com" ;;
+    *)   UPSTREAM_ENDPOINT="https://dns.controld.com/${RESOLVER_ID}" ;;
+esac
+
+logger -t post-cfg "starting with resolver=${RESOLVER_ID} type=${DNS_TYPE}"
 
 # Self-heal: download ctrld binary if missing
 if [ ! -x /cfg/ctrld ]; then
@@ -182,10 +221,10 @@ if [ ! -f /cfg/ctrld.toml ]; then
     name = "LAN2"
 [upstream.0]
     bootstrap_ip = "${BOOTSTRAP_IP}"
-    endpoint = "https://dns.controld.com/${RESOLVER_ID}"
+    endpoint = "${UPSTREAM_ENDPOINT}"
     name = "ControlD"
     timeout = 5000
-    type = "doh"
+    type = "${DNS_TYPE}"
     send_client_info = true
 [listener.0]
     ip = "0.0.0.0"
@@ -242,7 +281,7 @@ if nslookup google.com 127.0.0.1#5354 >/dev/null 2>&1; then
     iptables -t nat -A PREROUTING -i br-lan -p tcp --dport 53 -j REDIRECT --to-port 5354
     iptables -t nat -A PREROUTING -i br-lan_2 -p udp --dport 53 -j REDIRECT --to-port 5354
     iptables -t nat -A PREROUTING -i br-lan_2 -p tcp --dport 53 -j REDIRECT --to-port 5354
-    logger -t post-cfg 'ctrld started with device discovery, DNS redirected to port 5354'
+    logger -t post-cfg "ctrld started (${DNS_TYPE}) with device discovery, DNS redirected to port 5354"
 else
     logger -t post-cfg 'ctrld failed health check, using https-dns-proxy fallback'
 fi
@@ -336,7 +375,7 @@ echo "  ╔═══════════════════════
 echo "  ║                    Setup Complete!                       ║"
 echo "  ╚══════════════════════════════════════════════════════════╝"
 echo ""
-echo "  Your DNS is now routed through ControlD with per-device visibility."
+echo "  Your DNS is now routed through ControlD via ${PROTO_LABEL}."
 echo ""
 echo "  Check your dashboard: https://controld.com"
 echo "  Individual devices should appear within a few minutes."

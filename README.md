@@ -1,13 +1,25 @@
 # Alta Labs Route 10 + ControlD DNS
 
-Encrypted DNS-over-HTTPS with per-device visibility on the Alta Labs Route 10 router using [ControlD](https://controld.com) and the [ctrld](https://github.com/Control-D-Inc/ctrld) daemon.
+Encrypted DNS with per-device visibility on the Alta Labs Route 10 router using [ControlD](https://controld.com) and the [ctrld](https://github.com/Control-D-Inc/ctrld) daemon.
 
 ## What This Does
 
-- Routes all DNS traffic through ControlD via encrypted DoH
+- Routes all DNS traffic through ControlD via encrypted DNS (DoH, DoH3, or DoQ)
+- **DoH3 (HTTP/3)** default — uses QUIC transport for faster handshakes and lower latency
 - Shows individual device hostnames and IPs in the ControlD dashboard
 - Self-healing: survives reboots, auto-downloads missing binaries
 - Falls back to `https-dns-proxy` if `ctrld` fails to start
+
+## Supported Protocols
+
+| Type | Protocol | Transport | Default |
+|------|----------|-----------|---------|
+| `doh3` | DNS-over-HTTPS/3 | HTTP/3 (QUIC) | Yes |
+| `doq` | DNS-over-QUIC | QUIC | |
+| `doh` | DNS-over-HTTPS/2 | HTTP/2 | |
+| `dot` | DNS-over-TLS | TCP+TLS | |
+
+DoH3 and DoQ use the QUIC protocol (UDP-based) which eliminates TCP head-of-line blocking and reduces connection setup latency compared to DoH over HTTP/2.
 
 ## Architecture
 
@@ -18,10 +30,10 @@ LAN Devices
 iptables REDIRECT
     |
     v (port 5354)
-+----------+     DoH      +-----------+
-|  ctrld   | -----------> | ControlD  |
-|  :5354   |              |  DoH API  |
-+----------+              +-----------+
++----------+  DoH3/DoQ/DoH  +-----------+
+|  ctrld   | --------------> | ControlD  |
+|  :5354   |    (QUIC)       |  DoH API  |
++----------+                 +-----------+
     ^ sends client
     | IP/hostname/MAC
     |
@@ -60,7 +72,7 @@ The installer will prompt for your resolver ID (from the ControlD dashboard) and
 
 | File | Purpose |
 |---|---|
-| `/cfg/controld.env` | Resolver ID, version, bootstrap IP |
+| `/cfg/controld.env` | Resolver ID, version, bootstrap IP, protocol type |
 | `/cfg/ctrld` | DNS proxy binary (arm64) |
 | `/cfg/ctrld.toml` | DNS proxy config |
 | `/cfg/post-cfg.sh` | Self-healing boot script |

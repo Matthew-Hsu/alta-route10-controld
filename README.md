@@ -58,7 +58,12 @@ wget -O /tmp/setup.sh https://codeberg.org/CookieTyrant/alta-route10-controld/ra
 sh /tmp/setup.sh
 ```
 
-The installer will prompt for your resolver ID (from the ControlD dashboard) and handle everything else: downloading the binary, writing configs, setting up iptables redirects, and installing a weekly auto-update cron job.
+The installer will prompt for:
+- **Resolver ID** — from your ControlD dashboard
+- **Bootstrap IP** — defaults to `76.76.2.22`
+- **Protocol** — choose DoH3 (HTTP/3), DoQ (QUIC), or DoH (HTTP/2)
+
+It handles everything else: downloading the binary, writing configs, setting up iptables redirects, and installing a weekly auto-update cron job.
 
 ## Scripts
 

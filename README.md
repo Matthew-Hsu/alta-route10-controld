@@ -14,6 +14,7 @@ Encrypted DNS with per-device visibility on the Alta Labs Route 10 router using 
 - **Per-device policy**: assign specific MAC addresses to filtered DNS resolvers
 - **Benchmark tool**: test which protocol is fastest on your ISP
 - **Quick reconfigure**: change protocol, resolver, or policies without re-running setup
+- **Forced DNS**: hijack all outbound DNS (port 53 + 853) so smart TVs and IoT devices can't bypass ControlD
 - **Built-in test suite**: 70+ tests covering all functions, run locally or on-router
 
 ## Supported Protocols
@@ -32,8 +33,8 @@ DoH3 and DoQ use the QUIC protocol (UDP-based) which eliminates TCP head-of-line
 ```
 LAN Devices
     |
-    v (port 53)
-iptables REDIRECT
+    v (port 53 / port 853)
+iptables REDIRECT (forced DNS)
     |
     v (port 5354)
 +----------+  DoH3/DoQ/DoH  +-----------+
@@ -82,7 +83,7 @@ sh setup.sh --resolver abc123 --protocol doh3
 |---|---|---|
 | `setup.sh` | Interactive installer with guided protocol selection and inline benchmark | `--help` `--version` `--protocol <type>` `--resolver <id>` |
 | `status.sh` | Health check: services, upstreams, policies, watchdog activity | `--help` |
-| `reconfigure.sh` | Change protocol, resolver, or policies without re-running setup | `--help` `--show` `--protocol` `--resolver` `--benchmark` `--policy` `--to <value>` `--force` |
+| `reconfigure.sh` | Change protocol, resolver, or policies without re-running setup | `--help` `--show` `--protocol` `--resolver` `--benchmark` `--policy` `--force-dns` `--to <value>` `--force` |
 | `benchmark.sh` | Test DNS query latency across DoQ, DoH3, and DoH | `--help` `--queries N` |
 | `watchdog.sh` | 5-min health monitor with automatic protocol fallback | `--help` `--dry-run` |
 | `uninstall.sh` | Removes everything, restores default DNS | `--help` `--force` |
@@ -142,6 +143,9 @@ sh reconfigure.sh --benchmark --force
 
 # Manage split DNS policies
 sh reconfigure.sh --policy
+
+# Toggle forced DNS hijacking
+sh reconfigure.sh --force-dns
 
 # Interactive menu (no flags)
 sh reconfigure.sh
@@ -207,6 +211,29 @@ Example config with per-device routing:
         {"AA:BB:CC:DD:EE:02" = ["upstream.1"]},
     ]
 ```
+
+### Forced DNS Hijacking
+
+Smart TVs (Panasonic, Samsung, LG), IoT devices, and some browsers can bypass the router's DHCP DNS setting by using hardcoded DNS servers or DNS-over-TLS (DoT, port 853). Forced DNS intercepts all outbound DNS and redirects it through ControlD.
+
+```sh
+# Enable (interactive prompt)
+sh reconfigure.sh --force-dns
+
+# Enable non-interactively
+sh reconfigure.sh --force-dns --force
+
+# Check current state
+sh status.sh   # shows forced DNS status and DoT hijack rules
+```
+
+When enabled:
+- **Port 53** (plain DNS) — redirected to ControlD via iptables
+- **Port 853** (DoT) — redirected to ControlD via iptables
+- Rules are persisted in `/etc/firewall.user` and survive reboots
+- `status.sh` reports the forced DNS state and active hijack rules
+
+**Note:** DNS-over-HTTPS (DoH, port 443) cannot be redirected without breaking all HTTPS traffic. Most TVs and IoT devices use DoT rather than DoH, so forced DNS catches the majority of bypass attempts.
 
 ### Benchmark
 

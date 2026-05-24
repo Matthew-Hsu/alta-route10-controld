@@ -108,6 +108,20 @@ else
     print_fail "No redirect rules (per-device visibility disabled)"
 fi
 
+force_dns=$(uci -q get https-dns-proxy.config.force_dns 2>/dev/null || echo "0")
+if [ "$force_dns" = "1" ]; then
+    print_ok "Forced DNS: enabled (port 53 + 853 hijacked)"
+else
+    print_warn "Forced DNS: disabled (devices may bypass ControlD)"
+fi
+
+dot_rules=$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c 'dpt:853')
+if [ "$dot_rules" -gt 0 ]; then
+    print_ok "DoT hijack: ${dot_rules} rule(s) for port 853"
+else
+    print_warn "DoT hijack: no port 853 rules (DoT devices can bypass)"
+fi
+
 # ── Upstreams & Policies ────────────────────────────────────────────────────
 
 print_header "Upstreams & Policies"

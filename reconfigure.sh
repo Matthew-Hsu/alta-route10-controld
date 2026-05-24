@@ -7,6 +7,7 @@
 #   --resolver      Change resolver ID (interactive or --to <id>)
 #   --policy        Manage split DNS policies
 #   --benchmark     Run benchmark and apply fastest
+#   --force-dns     Toggle forced DNS (hijack port 53 + 853 for all clients)
 #   --show          Display current config
 
 set -e
@@ -29,6 +30,7 @@ usage() {
     --resolver      Change resolver ID (prompts, or use --to <id>)
     --benchmark     Benchmark all protocols, apply fastest
     --policy        Manage split DNS policies (add/remove/list)
+    --force-dns     Toggle forced DNS (hijack all outbound DNS)
     --help          Show this help
 
   ${BOLD}Options:${RESET}
@@ -44,6 +46,7 @@ usage() {
     reconfigure.sh --resolver --to xyz789   # change resolver ID
     reconfigure.sh --benchmark              # find fastest, apply it
     reconfigure.sh --policy                 # manage split DNS rules
+    reconfigure.sh --force-dns              # toggle forced DNS hijacking
 EOF
     exit 0
 }
@@ -62,6 +65,7 @@ while [ $# -gt 0 ]; do
         --resolver)      ACTION="resolver" ;;
         --benchmark)     ACTION="benchmark" ;;
         --policy)        ACTION="policy" ;;
+        --force-dns)     ACTION="force_dns" ;;
         --to)            [ -z "${2:-}" ] && die "--to requires a value"; TARGET="$2"; shift ;;
         --force|-f)      FORCE=1 ;;
         *)               die "Unknown option: $1 (try --help)" ;;
@@ -499,6 +503,72 @@ EOF
     done
 }
 
+# ── Action: Force DNS ──
+
+do_force_dns() {
+    print_header "Forced DNS Hijacking"
+    printf "  Ensures all LAN clients use ControlD DNS by intercepting\n"
+    printf "  outbound DNS on port 53 (plain) and port 853 (DoT).\n\n"
+
+    local current
+    current=$(uci -q get https-dns-proxy.config.force_dns 2>/dev/null || echo "0")
+
+    if [ "$current" = "1" ]; then
+        printf "  Current: ${GREEN}ENABLED${RESET} — all outbound DNS is intercepted\n\n"
+        if [ "$FORCE" -eq 1 ]; then
+            confirm="y"
+        else
+            printf "  ${RED}Disable forced DNS?${RESET} [y/N]: "
+            read -r confirm
+        fi
+        if [[ "${confirm,,}" != "y" ]]; then
+            print_info "No changes made."
+            return
+        fi
+        uci set https-dns-proxy.config.force_dns='0'
+        uci delete https-dns-proxy.config.force_dns_port 2>/dev/null || true
+        uci commit https-dns-proxy
+        # Remove 853 redirect rules
+        iptables -t nat -D PREROUTING -i br-lan -p tcp --dport 853 -j REDIRECT --to-port "$DNS_PORT" 2>/dev/null || true
+        iptables -t nat -D PREROUTING -i br-lan_2 -p tcp --dport 853 -j REDIRECT --to-port "$DNS_PORT" 2>/dev/null || true
+        iptables -t nat -D PREROUTING -i br-lan -p udp --dport 853 -j REDIRECT --to-port "$DNS_PORT" 2>/dev/null || true
+        iptables -t nat -D PREROUTING -i br-lan_2 -p udp --dport 853 -j REDIRECT --to-port "$DNS_PORT" 2>/dev/null || true
+        /etc/init.d/https-dns-proxy restart
+        print_ok "Forced DNS disabled. Devices may use their own DNS."
+    else
+        printf "  Current: ${RED}DISABLED${RESET} — devices can bypass ControlD DNS\n\n"
+        printf "  Smart TVs (Panasonic, Samsung), IoT devices, and browsers\n"
+        printf "  with DoH/DoT can ignore the DHCP DNS setting.\n\n"
+        if [ "$FORCE" -eq 1 ]; then
+            confirm="y"
+        else
+            printf "  Enable forced DNS hijacking? [Y/n]: "
+            read -r confirm
+        fi
+        if [[ "${confirm,,}" == "n" ]]; then
+            print_info "No changes made."
+            return
+        fi
+        uci set https-dns-proxy.config.force_dns='1'
+        uci add_list https-dns-proxy.config.force_dns_port='53'
+        uci add_list https-dns-proxy.config.force_dns_port='853'
+        uci commit https-dns-proxy
+        /etc/init.d/https-dns-proxy restart
+        # Ensure 853 redirect rules exist (some OpenWrt builds don't add them)
+        sleep 2
+        if ! iptables -t nat -L PREROUTING -n 2>/dev/null | grep -q 'dpt:853'; then
+            iptables -t nat -I PREROUTING 1 -i br-lan -p tcp --dport 853 -j REDIRECT --to-port "$DNS_PORT"
+            iptables -t nat -I PREROUTING 2 -i br-lan -p udp --dport 853 -j REDIRECT --to-port "$DNS_PORT"
+            iptables -t nat -I PREROUTING 3 -i br-lan_2 -p tcp --dport 853 -j REDIRECT --to-port "$DNS_PORT"
+            iptables -t nat -I PREROUTING 4 -i br-lan_2 -p udp --dport 853 -j REDIRECT --to-port "$DNS_PORT"
+            print_ok "Added port 853 (DoT) redirect rules"
+        fi
+        print_ok "Forced DNS enabled. All outbound DNS is now hijacked."
+        print_info "Note: DNS-over-HTTPS (port 443) cannot be redirected without"
+        print_info "breaking HTTPS. Most TVs and IoT devices use DoT, not DoH."
+    fi
+}
+
 # ── Interactive menu ──
 
 if [ -z "$ACTION" ]; then
@@ -508,6 +578,7 @@ if [ -z "$ACTION" ]; then
     printf "    ${BOLD}2)${RESET} Change resolver ID\n"
     printf "    ${BOLD}3)${RESET} Run benchmark, apply fastest\n"
     printf "    ${BOLD}4)${RESET} Manage split DNS policies\n"
+    printf "    ${BOLD}5)${RESET} Toggle forced DNS hijacking\n"
     printf "    ${BOLD}q)${RESET} Exit\n\n"
     printf "  Choice: "
     read -r menu_choice
@@ -517,6 +588,7 @@ if [ -z "$ACTION" ]; then
         2) do_resolver ;;
         3) do_benchmark ;;
         4) do_policy ;;
+        5) do_force_dns ;;
         q|Q) print_info "Done."; exit 0 ;;
         *)  die "Cancelled" ;;
     esac
@@ -527,6 +599,7 @@ else
         resolver)  do_resolver ;;
         benchmark) do_benchmark ;;
         policy)    do_policy ;;
+        force_dns) do_force_dns ;;
         *)         die "Unknown action: $ACTION" ;;
     esac
 fi

@@ -798,7 +798,7 @@ cat > /cfg/controld-update.sh << 'UPDATESCRIPT'
 [ -f /cfg/controld.env ] || exit 0
 . /cfg/controld.env
 
-LATEST="$(wget -qO- 'https://api.github.com/repos/Control-D-Inc/ctrld/releases/latest' | grep '"tag_name"' | grep -o 'v[0-9.]*')"
+LATEST="$(wget -qO- 'https://api.github.com/repos/Control-D-Inc/ctrld/releases/latest' | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\(v[0-9.]*\)".*/\1/')"
 [ -z "$LATEST" ] && exit 0
 CURRENT="v${CURLD_VERSION}"
 

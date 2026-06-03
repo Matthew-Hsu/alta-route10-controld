@@ -99,6 +99,7 @@ Every script supports `--help` with full usage documentation.
 | `/cfg/ctrld` | DNS proxy binary (arm64) |
 | `/cfg/ctrld.toml` | DNS proxy config (upstreams, policies, routing rules) |
 | `/cfg/lib.sh` | Shared function library used by all scripts |
+| `/cfg/rc.local` | Boot persistence hook (sourced by `/etc/rc.local`) |
 | `/cfg/post-cfg.sh` | Self-healing boot script |
 | `/cfg/controld-update.sh` | Weekly auto-update script |
 | `/cfg/watchdog.sh` | 5-min health check with protocol fallback |
@@ -150,6 +151,16 @@ sh reconfigure.sh --force-dns
 # Interactive menu (no flags)
 sh reconfigure.sh
 ```
+
+### Boot Persistence
+
+`/cfg/` is a persistent ext4 partition on the Alta Labs Route 10 that survives firmware updates and reboots. The router's built-in `/etc/rc.local` sources `/cfg/rc.local` on every boot, which:
+
+1. Runs `post-cfg.sh` — starts ctrld, restores iptables redirect rules, configures fallback DNS
+2. Reinstalls cron jobs — adds watchdog (5-min) and auto-update (weekly) to crontab, since crontab lives in `/etc/` and may be wiped by firmware updates
+3. Writes `firewall.user` rules — ensures iptables redirects survive mid-session firewall restarts
+
+After a firmware update or reboot, ControlD is fully operational within ~30 seconds. No manual intervention required.
 
 ### Self-Healing
 
@@ -296,7 +307,9 @@ If you prefer not to use the automated installer, see `config/ctrld.toml.example
 
 ## Firmware Updates
 
-Firmware updates may wipe `/cfg/`. After updating, re-run `setup.sh` or restore your backed-up files:
+**Automatic recovery:** Firmware updates typically preserve `/cfg/` (persistent ext4 partition). The boot persistence layer (`/cfg/rc.local`) automatically restores all services, cron jobs, and iptables rules on reboot. No manual intervention needed.
+
+**If `/cfg/` is wiped** (rare, but possible on major updates), restore from backup:
 
 ```sh
 scp controld.env ctrld ctrld.toml post-cfg.sh root@<router-ip>:/cfg/

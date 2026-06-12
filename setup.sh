@@ -4,10 +4,16 @@
 #   wget -O /tmp/setup.sh https://codeberg.org/CookieTyrant/alta-route10-controld/raw/branch/master/setup.sh
 #   sh /tmp/setup.sh
 #
+# lib.sh is auto-downloaded if not present — no need to wget it separately.
+#
 # Supports: DoH (HTTP/2), DoH3 (HTTP/3), DoQ (QUIC)
 # All prompts have defaults in [brackets] -- press Enter to accept.
 
 set -e
+
+# ── Repository base URL for auto-downloading supplementary files ──
+
+REPO_BASE="https://codeberg.org/CookieTyrant/alta-route10-controld/raw/branch/master"
 
 # ── Source shared library ──
 
@@ -20,8 +26,20 @@ elif [ -f /cfg/lib.sh ]; then
     # shellcheck source=/dev/null
     . /cfg/lib.sh
 else
-    echo "  [!!] lib.sh not found in ${LIB_DIR} or /cfg/" >&2
-    exit 1
+    # Auto-download lib.sh from the repository (single-file wget scenario)
+    printf "  Downloading lib.sh from repository... "
+    if wget -O "${LIB_DIR}/lib.sh" "${REPO_BASE}/lib.sh" >/dev/null 2>&1; then
+        printf "OK\n"
+        # shellcheck source=lib.sh
+        . "${LIB_DIR}/lib.sh"
+    else
+        rm -f "${LIB_DIR}/lib.sh"
+        printf "FAILED\n"
+        echo "  [!!] Could not auto-download lib.sh." >&2
+        echo "  [!!] Download it manually and re-run setup:" >&2
+        echo "  [!!]   wget -O /tmp/lib.sh ${REPO_BASE}/lib.sh" >&2
+        exit 1
+    fi
 fi
 
 # ── Usage ──
@@ -833,6 +851,74 @@ print_ok "Weekly auto-update cron installed"
 if [ -f "${LIB_DIR}/lib.sh" ] && [ ! -f /cfg/lib.sh ]; then
     cp "${LIB_DIR}/lib.sh" /cfg/lib.sh
     print_ok "lib.sh copied to /cfg/ for runtime use"
+elif [ ! -f /cfg/lib.sh ]; then
+    wget -O /cfg/lib.sh "${REPO_BASE}/lib.sh" >/dev/null 2>&1 && \
+        print_ok "lib.sh downloaded to /cfg/"
+fi
+
+# ── Step 9b: Install utility scripts ──
+
+UTILITY_SCRIPTS="status.sh benchmark.sh reconfigure.sh uninstall.sh"
+_installed=""
+for _uscript in $UTILITY_SCRIPTS; do
+    if [ -f "${LIB_DIR}/${_uscript}" ]; then
+        cp "${LIB_DIR}/${_uscript}" "/cfg/${_uscript}"
+    else
+        wget -O "/cfg/${_uscript}" "${REPO_BASE}/${_uscript}" >/dev/null 2>&1 || continue
+    fi
+    chmod +x "/cfg/${_uscript}"
+    _installed="${_installed} ${_uscript}"
+done
+if [ -n "$_installed" ]; then
+    print_ok "Utility scripts installed:${_installed}"
+else
+    print_warn "Could not install utility scripts (non-fatal)"
+fi
+
+# ── Step 9c: Port conflict detection ──
+
+_port_in_use() {
+    netstat -tulnp 2>/dev/null | grep -q ":${1} " && return 0
+    if command -v ss >/dev/null 2>&1; then
+        ss -tulnp 2>/dev/null | grep -q ":${1} " && return 0
+    fi
+    return 1
+}
+
+if _port_in_use "$DNS_PORT"; then
+    # Check if it's our own ctrld from a previous install
+    if pidof ctrld >/dev/null 2>&1; then
+        print_warn "Port ${DNS_PORT} is occupied by an existing ctrld process"
+        print_info "Stopping old ctrld process..."
+        stop_ctrld
+        sleep 1
+    else
+        print_warn "Port ${DNS_PORT} is already in use by another process"
+        # Try to find a free port
+        _alt_port=$((DNS_PORT + 1))
+        while [ "$_alt_port" -lt $((DNS_PORT + 100)) ]; do
+            _port_in_use "$_alt_port" || break
+            _alt_port=$((_alt_port + 1))
+        done
+        if [ -z "$FLAG_RESOLVER" ]; then
+            printf "  Use port ${_alt_port} instead? [Y/n]: "
+            read -r _use_alt
+            _use_alt="${_use_alt:-Y}"
+        else
+            _use_alt="Y"
+        fi
+        if [ "$_use_alt" = "Y" ] || [ "$_use_alt" = "y" ]; then
+            DNS_PORT="$_alt_port"
+            print_info "Using port ${DNS_PORT}"
+            # Rewrite ctrld.toml with new port
+            sed -i "s/port = [0-9]*/port = ${DNS_PORT}/" /cfg/ctrld.toml
+            sed -i "s/DNS_PORT=.*/DNS_PORT=${DNS_PORT}/" /cfg/controld.env 2>/dev/null || true
+            # Update the env file with the custom port
+            grep -q "^DNS_PORT=" /cfg/controld.env || echo "DNS_PORT=${DNS_PORT}" >> /cfg/controld.env
+        else
+            die "Cannot proceed — port ${DNS_PORT} is occupied."
+        fi
+    fi
 fi
 
 # ── Step 10: Apply configuration ──
@@ -890,7 +976,15 @@ printf "    /cfg/ctrld.toml           DNS proxy configuration\n"
 printf "    /cfg/post-cfg.sh          Self-healing boot script\n"
 printf "    /cfg/controld-update.sh   Weekly auto-update\n"
 printf "    /cfg/watchdog.sh          5-min health check + protocol fallback\n"
-printf "    /cfg/lib.sh               Shared function library\n\n"
-printf "  To check:      sh status.sh\n"
-printf "  To benchmark:  sh benchmark.sh\n"
-printf "  To uninstall:  sh uninstall.sh\n\n"
+printf "    /cfg/lib.sh               Shared function library\n"
+printf "    /cfg/status.sh            Status reporting tool\n"
+printf "    /cfg/benchmark.sh         Protocol benchmark tool\n"
+printf "    /cfg/reconfigure.sh       Quick reconfiguration tool\n"
+printf "    /cfg/uninstall.sh         Uninstaller\n\n"
+printf "  ${BOLD}Quick commands:${RESET}\n"
+printf "    sh /cfg/status.sh         Check DNS health\n"
+printf "    sh /cfg/benchmark.sh      Test protocol speeds\n"
+printf "    sh /cfg/reconfigure.sh    Change protocol/resolver/policy\n"
+printf "    sh /cfg/uninstall.sh      Remove ControlD\n\n"
+printf "  ${DIM}Note: Use the scripts above instead of running /cfg/ctrld directly.${RESET}\n"
+printf "  ${DIM}The ctrld 'start'/'status' commands expect a different config format.${RESET}\n\n"

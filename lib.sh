@@ -61,6 +61,7 @@ load_env() {
     . "$env_file"
     DNS_TYPE="${DNS_TYPE:-doh3}"
     BOOTSTRAP_IP="${BOOTSTRAP_IP:-76.76.2.22}"
+    DNS_PORT="${DNS_PORT:-5354}"
     return 0
 }
 
@@ -183,6 +184,19 @@ start_ctrld() {
 restart_ctrld() {
     stop_ctrld
     start_ctrld "$@"
+}
+
+# ── Port Detection ──
+
+# Check if a TCP/UDP port is already in use
+# Usage: check_port_in_use <port>
+check_port_in_use() {
+    local port="${1:-$DNS_PORT}"
+    netstat -tulnp 2>/dev/null | grep -q ":${port} " && return 0
+    if command -v ss >/dev/null 2>&1; then
+        ss -tulnp 2>/dev/null | grep -q ":${port} " && return 0
+    fi
+    return 1
 }
 
 # ── Health Checks ──

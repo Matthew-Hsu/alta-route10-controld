@@ -150,15 +150,36 @@ if [ -z "$ctrld_pid" ]; then
 fi
 
 # ── Health Check 2: Does DNS resolve through ctrld? ──────────────────────────
+# Debounce: only fall back / restart ctrld after FAIL_THRESHOLD consecutive
+# failed cycles, so a single transient nslookup blip does NOT restart ctrld or
+# churn the DNS protocol — both of which cause re-registration bursts that
+# duplicate devices in the ControlD device-clients list.
+FAIL_COUNT_FILE="/tmp/controld-dns-fail.count"
+FAIL_THRESHOLD="${FAIL_THRESHOLD:-2}"
 
 if check_dns "127.0.0.1#${DNS_PORT}"; then
-    # DNS is working — nothing to do
+    # DNS healthy — self-heal forced-DNS state (drift only) + check discovery inputs
+    command -v ensure_forced_dns >/dev/null 2>&1 && ensure_forced_dns
+    if [ -f /cfg/dhcp.leases ] && find /cfg/dhcp.leases -mmin +120 2>/dev/null | grep -q .; then
+        do_log "dhcp.leases stale (>2h) — device discovery may degrade"
+    fi
+    rm -f "$FAIL_COUNT_FILE"
     exit 0
 fi
 
-# ── DNS is failing — attempt recovery ────────────────────────────────────────
+# DNS failed — increment the consecutive-failure counter and wait unless threshold reached
+fails=$(cat "$FAIL_COUNT_FILE" 2>/dev/null || echo 0)
+fails=$((fails + 1))
+echo "$fails" > "$FAIL_COUNT_FILE"
+if [ "$fails" -lt "$FAIL_THRESHOLD" ]; then
+    do_log "DNS check failed (${fails}/${FAIL_THRESHOLD}) — waiting before restart to avoid churn"
+    exit 0
+fi
+rm -f "$FAIL_COUNT_FILE"
 
-do_log "DNS resolution failed on $(proto_label "$DNS_TYPE"), starting protocol fallback"
+# ── Sustained DNS failure — attempt recovery ─────────────────────────────────
+
+do_log "DNS resolution failed on $(proto_label "$DNS_TYPE") after ${FAIL_THRESHOLD} consecutive checks — starting protocol fallback"
 
 # ── Health Check 3: Are iptables rules present? ─────────────────────────────
 

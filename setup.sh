@@ -366,6 +366,7 @@ RESOLVER_ID=${RESOLVER_ID}
 BOOTSTRAP_IP=${BOOTSTRAP_IP}
 CURLD_VERSION=${VERSION}
 DNS_TYPE=${DNS_TYPE}
+FORCED_DNS=0
 EOF
 print_ok "/cfg/controld.env written"
 
@@ -409,7 +410,7 @@ else
     cache_size = 4096
     discover_dhcp = true
     discover_ptr = true
-    discover_mdns = false
+    discover_mdns = true
     discover_arp = true
     discover_hosts = true
     discover_refresh_interval = 60
@@ -522,6 +523,7 @@ uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5053'
 uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5054'
 uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5055'
 uci set dhcp.@dnsmasq[0].noresolv='0'
+uci set dhcp.@dnsmasq[0].leasetime='24h'
 uci commit dhcp
 /etc/init.d/dnsmasq restart
 
@@ -537,6 +539,8 @@ start_ctrld /cfg/ctrld.toml
 # Only redirect DNS if ctrld is confirmed working
 if check_dns "127.0.0.1#${DNS_PORT}"; then
     ensure_iptables "$DNS_PORT"
+    # Restore forced-DNS state (port 853 + uci) if enabled — survives reboot/firmware
+    command -v ensure_forced_dns >/dev/null 2>&1 && ensure_forced_dns
     logger -t post-cfg "ctrld started (${DNS_TYPE}) with device discovery, DNS redirected to port ${DNS_PORT}"
 else
     logger -t post-cfg 'ctrld failed health check, using https-dns-proxy fallback'
@@ -772,12 +776,35 @@ if ! pidof ctrld >/dev/null 2>&1; then
 fi
 
 # Check DNS resolution
+# Debounce: only fall back / restart ctrld after FAIL_THRESHOLD consecutive
+# failed cycles, so a single transient nslookup blip does NOT restart ctrld or
+# churn the DNS protocol (both cause re-registration bursts that duplicate
+# devices in the ControlD device-clients list).
+FAIL_COUNT_FILE="/tmp/controld-dns-fail.count"
+FAIL_THRESHOLD="${FAIL_THRESHOLD:-2}"
+
 if check_dns "127.0.0.1#${DNS_PORT}"; then
+    # DNS healthy — self-heal forced-DNS state (drift only) + check discovery inputs
+    command -v ensure_forced_dns >/dev/null 2>&1 && ensure_forced_dns
+    if [ -f /cfg/dhcp.leases ] && find /cfg/dhcp.leases -mmin +120 2>/dev/null | grep -q .; then
+        logger -t watchdog "dhcp.leases stale (>2h) — device discovery may degrade"
+    fi
+    rm -f "$FAIL_COUNT_FILE"
     exit 0
 fi
 
-# DNS failing -- try protocol fallback
-logger -t watchdog "DNS failed on ${DNS_TYPE}, starting fallback"
+# DNS failed — increment counter, wait unless threshold reached
+fails=$(cat "$FAIL_COUNT_FILE" 2>/dev/null || echo 0)
+fails=$((fails + 1))
+echo "$fails" > "$FAIL_COUNT_FILE"
+if [ "$fails" -lt "$FAIL_THRESHOLD" ]; then
+    logger -t watchdog "DNS check failed (${fails}/${FAIL_THRESHOLD}) — waiting before restart to avoid churn"
+    exit 0
+fi
+rm -f "$FAIL_COUNT_FILE"
+
+# Sustained DNS failure -- try protocol fallback
+logger -t watchdog "DNS failed on ${DNS_TYPE} after ${FAIL_THRESHOLD} consecutive checks, starting fallback"
 
 # Restore iptables if missing
 ensure_iptables "$DNS_PORT"
@@ -807,6 +834,59 @@ crontab -l 2>/dev/null | grep -v watchdog | crontab -
     print_warn "Could not install watchdog cron"
 }
 print_ok "Watchdog installed (5-min health check + protocol fallback)"
+
+# ── Step 6c: Write /cfg/rc.local (boot persistence hook) ──
+# Sourced by the router's /etc/rc.local at every boot: runs post-cfg.sh,
+# reinstalls cron jobs (crontab lives in /etc and may be wiped by firmware
+# updates), and reasserts port-53 iptables redirects so they survive firewall
+# restarts. (Port-853 forced-DNS persistence is handled by ensure_forced_dns,
+# which post-cfg.sh and the watchdog call at boot / every 5 min.)
+
+cat > /cfg/rc.local << 'RCLOCAL'
+#!/bin/sh
+# /cfg/rc.local — sourced by /etc/rc.local at every boot
+# Restores ControlD DNS, iptables rules, cron jobs, and firewall persistence
+
+logger -t rc.local "ControlD boot hook starting"
+
+# 1. Run the main setup (starts ctrld, sets iptables, configures fallback DNS)
+[ -x /cfg/post-cfg.sh ] && /cfg/post-cfg.sh &
+
+# 2. Reinstall cron jobs (crontab lives in /etc which may not survive firmware updates)
+(
+    while ! pidof crond >/dev/null 2>&1; do sleep 1; done
+    CRONTAB="$(crontab -l 2>/dev/null)"
+    echo "$CRONTAB" | grep -q "watchdog" || {
+        (crontab -l 2>/dev/null; echo "*/5 * * * * /cfg/watchdog.sh") | crontab -
+        logger -t rc.local "watchdog cron installed"
+    }
+    echo "$CRONTAB" | grep -q "controld-update" || {
+        (crontab -l 2>/dev/null; echo "0 3 * * 1 /cfg/controld-update.sh") | crontab -
+        logger -t rc.local "auto-update cron installed"
+    }
+) &
+
+# 3. Ensure iptables redirect rules survive firewall restarts
+(
+    sleep 10
+    if ! grep -q "to-port 5354" /etc/firewall.user 2>/dev/null; then
+        cat >> /etc/firewall.user << 'FW'
+
+# ControlD per-device DNS redirect (restored by /cfg/rc.local)
+iptables -t nat -A PREROUTING -i br-lan   -p udp --dport 53 -j REDIRECT --to-port 5354
+iptables -t nat -A PREROUTING -i br-lan   -p tcp --dport 53 -j REDIRECT --to-port 5354
+iptables -t nat -A PREROUTING -i br-lan_2 -p udp --dport 53 -j REDIRECT --to-port 5354
+iptables -t nat -A PREROUTING -i br-lan_2 -p tcp --dport 53 -j REDIRECT --to-port 5354
+FW
+        logger -t rc.local "firewall.user rules installed"
+    fi
+) &
+
+logger -t rc.local "ControlD boot hook scheduled"
+RCLOCAL
+
+chmod +x /cfg/rc.local
+print_ok "/cfg/rc.local written (boot persistence: post-cfg + cron + firewall)"
 
 # ── Step 7: Write auto-update script ──
 

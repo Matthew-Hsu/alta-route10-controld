@@ -178,23 +178,24 @@ if [ -z "$DNS_TYPE" ]; then
     printf "  ${BOLD}Choose Your DNS Protocol${RESET}\n"
     printf "  ${BOLD}${BLUE}════════════════════════════════════════════════════════════${RESET}\n\n"
 
-    printf "  ${BOLD}1) DoH3 — DNS-over-HTTPS/3  (HTTP/3 + QUIC)${RESET}  ${GREEN}[recommended]${RESET}\n"
-    printf "     ${DIM}Port 443 | Looks like normal HTTPS traffic\n"
-    printf "     Fastest for most ISPs. Hard to block or identify as DNS.${RESET}\n\n"
+    printf "  ${DIM}All protocols encrypt your DNS. The key tradeoff is the port:${RESET}\n"
+    printf "  ${DIM}• Port 443 (DoH3/DoH) blends with HTTPS — robust, almost never blocked.${RESET}\n"
+    printf "  ${DIM}• Port 853 (DoQ/DoT) is a dedicated DNS port — ${BOLD}some ISPs/mobile networks block it${RESET}${DIM}.${RESET}\n\n"
 
-    printf "  ${BOLD}2) DoQ — DNS-over-QUIC${RESET}\n"
-    printf "     ${DIM}Port 853 | Purpose-built DNS over QUIC\n"
-    printf "     Lowest protocol overhead. ISPs can see it's DNS traffic.${RESET}\n\n"
+    printf "  ${BOLD}1) DoH3 — DNS-over-HTTPS/3  (HTTP/3 + QUIC)${RESET}  ${GREEN}[recommended]${RESET}\n"
+    printf "     ${DIM}Port 443 | Looks like normal HTTPS. Fastest for most ISPs.${RESET}\n\n"
+
+    printf "  ${BOLD}2) DoQ — DNS-over-QUIC${RESET}  ${YELLOW}(may be blocked on some networks)${RESET}\n"
+    printf "     ${DIM}Port 853 | Lowest overhead, but ISPs can identify AND block it.${RESET}\n\n"
 
     printf "  ${BOLD}3) DoH — DNS-over-HTTPS/2  (HTTP/2 + TCP)${RESET}\n"
-    printf "     ${DIM}Port 443 | Most widely compatible\n"
-    printf "     No QUIC — higher latency but works everywhere.${RESET}\n\n"
+    printf "     ${DIM}Port 443 | Most compatible. No QUIC — slightly higher latency.${RESET}\n\n"
 
-    printf "  ${BOLD}4) Benchmark — test all three and pick the fastest${RESET}\n"
-    printf "     ${DIM}Runs 10 queries per protocol, takes about 30 seconds.${RESET}\n\n"
+    printf "  ${BOLD}4) Benchmark — test all three and pick the fastest for your network${RESET}  ${GREEN}[if unsure]${RESET}\n"
+    printf "     ${DIM}Runs 10 queries per protocol, ~30 seconds.${RESET}\n\n"
 
-    printf "  ${DIM}All protocols encrypt your DNS. The difference is speed and stealth.${RESET}\n"
-    printf "  ${DIM}The watchdog will auto-fallback (DoQ -> DoH3 -> DoH) if one fails.${RESET}\n\n"
+    printf "  ${DIM}Watchdog: if your protocol fails, it falls back to DoH3/DoH (port 443)${RESET}\n"
+    printf "  ${DIM}and automatically returns to your preferred protocol once it recovers.${RESET}\n\n"
 
     printf "  Choice [1]: "
     read -r PROTO_CHOICE
@@ -366,6 +367,7 @@ RESOLVER_ID=${RESOLVER_ID}
 BOOTSTRAP_IP=${BOOTSTRAP_IP}
 CURLD_VERSION=${VERSION}
 DNS_TYPE=${DNS_TYPE}
+PREFERRED_PROTOCOL=${DNS_TYPE}
 FORCED_DNS=0
 EOF
 print_ok "/cfg/controld.env written"
@@ -712,7 +714,7 @@ if [ -f /cfg/lib.sh ]; then
     . /cfg/lib.sh
 else
     DNS_PORT=5354
-    FALLBACK_CHAIN="doq doh3 doh"
+    FALLBACK_CHAIN="doh3 doh"
 
     get_endpoint() {
         case "$1" in
@@ -790,10 +792,9 @@ if check_dns "127.0.0.1#${DNS_PORT}"; then
         logger -t watchdog "dhcp.leases stale (>2h) — device discovery may degrade"
     fi
     rm -f "$FAIL_COUNT_FILE"
+    command -v do_upgrade_check >/dev/null 2>&1 && do_upgrade_check
     exit 0
 fi
-
-# DNS failed — increment counter, wait unless threshold reached
 fails=$(cat "$FAIL_COUNT_FILE" 2>/dev/null || echo 0)
 fails=$((fails + 1))
 echo "$fails" > "$FAIL_COUNT_FILE"

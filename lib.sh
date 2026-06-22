@@ -4,7 +4,10 @@
 
 VERSION="1.5.0"
 DNS_PORT=5354
-FALLBACK_CHAIN="doq doh3 doh"
+# 443-only fallback targets (DoH3/DoH). DoQ/DoT use port 853 which ISPs/mobile
+# networks can block, so they are never automatic fallback *targets* — they can
+# still be the user's primary protocol. See watchdog self-upgrade for recovery.
+FALLBACK_CHAIN="doh3 doh"
 
 # ── Colors ──
 
@@ -60,6 +63,7 @@ load_env() {
     # shellcheck source=/dev/null
     . "$env_file"
     DNS_TYPE="${DNS_TYPE:-doh3}"
+    PREFERRED_PROTOCOL="${PREFERRED_PROTOCOL:-$DNS_TYPE}"
     BOOTSTRAP_IP="${BOOTSTRAP_IP:-76.76.2.22}"
     DNS_PORT="${DNS_PORT:-5354}"
     return 0
@@ -86,6 +90,16 @@ proto_label() {
         doh)  printf "DoH (HTTP/2)" ;;
         dot)  printf "DoT (TLS)" ;;
         *)    printf "%s" "$1" ;;
+    esac
+}
+
+# Port used by a protocol (443 = robust/HTTPS; 853 = blockable DNS port)
+# Usage: proto_port <type>
+proto_port() {
+    case "$1" in
+        doh3|doh) printf "443" ;;
+        doq|dot)  printf "853" ;;
+        *)        printf "?" ;;
     esac
 }
 
@@ -312,6 +326,86 @@ disable_forced_dns() {
     uci commit https-dns-proxy
     /etc/init.d/https-dns-proxy restart >/dev/null 2>&1 || true
     logger -t forced-dns "forced DNS disabled"
+}
+
+# ── Protocol self-upgrade ──
+
+# If running on a fallback protocol, periodically test the user's
+# PREFERRED_PROTOCOL on a throwaway loopback port (5360) and switch production
+# back only if it resolves. Production DNS is never disrupted during the test
+# (separate port + loopback listener); production is switched only on success.
+# Rate-limited by UPGRADE_INTERVAL healthy cycles. Honors DRY_RUN.
+# Requires load_env first (DNS_TYPE, PREFERRED_PROTOCOL, RESOLVER_ID, BOOTSTRAP_IP).
+do_upgrade_check() {
+    _ucf="/tmp/controld-upgrade.count"
+    _uint="${UPGRADE_INTERVAL:-6}"   # ~30 min at 5-min cron
+    _uport=5360
+
+    # Already on the preferred protocol — nothing to do; clear any stale counter
+    [ "${PREFERRED_PROTOCOL:-$DNS_TYPE}" != "$DNS_TYPE" ] || { rm -f "$_ucf"; return 0; }
+
+    _u=$(cat "$_ucf" 2>/dev/null || echo 0)
+    _u=$((_u + 1))
+    if [ "$_u" -lt "$_uint" ]; then
+        [ "${DRY_RUN:-0}" = "1" ] || echo "$_u" > "$_ucf"
+        return 0
+    fi
+    [ "${DRY_RUN:-0}" = "1" ] || echo 0 > "$_ucf"
+
+    if [ "${DRY_RUN:-0}" = "1" ]; then
+        logger -t watchdog "DRY-RUN: would test + upgrade back to $(proto_label "$PREFERRED_PROTOCOL")"
+        return 0
+    fi
+
+    # Probe the preferred protocol on a throwaway ctrld on the loopback test port
+    _ep="$(get_endpoint "$PREFERRED_PROTOCOL" "$RESOLVER_ID")"
+    cat > /tmp/ctrld-upgrade.toml << EOF
+[service]
+    log_level = "error"
+    cache_enable = false
+[network.0]
+    cidrs = ["0.0.0.0/0"]
+    name = "upgrade-test"
+[upstream.0]
+    bootstrap_ip = "${BOOTSTRAP_IP}"
+    endpoint = "${_ep}"
+    name = "upgrade-test"
+    timeout = 5000
+    type = "${PREFERRED_PROTOCOL}"
+    send_client_info = false
+[listener.0]
+    ip = "127.0.0.1"
+    port = ${_uport}
+EOF
+    /cfg/ctrld run -c /tmp/ctrld-upgrade.toml -d >/dev/null 2>&1 &
+    _tpid=$!
+    _un=0
+    while [ "$_un" -lt 8 ]; do
+        nslookup google.com "127.0.0.1#${_uport}" >/dev/null 2>&1 && break
+        sleep 1; _un=$((_un + 1))
+    done
+    # Kill ONLY the test ctrld (matched by its config path) — never production
+    _killed=0
+    for _p in $(ps w 2>/dev/null | grep '[c]trld run -c /tmp/ctrld-upgrade.toml' | awk '{print $1}'); do
+        kill "$_p" 2>/dev/null; _killed=1
+    done
+    [ "$_killed" = "1" ] || kill "$_tpid" 2>/dev/null
+    rm -f /tmp/ctrld-upgrade.toml
+
+    if [ "$_un" -ge 8 ]; then
+        logger -t watchdog "preferred $(proto_label "$PREFERRED_PROTOCOL") still failing on test — staying on $(proto_label "$DNS_TYPE")"
+        return 1
+    fi
+
+    logger -t watchdog "preferred $(proto_label "$PREFERRED_PROTOCOL") healthy — upgrading back"
+    write_ctrld_config /cfg/ctrld.toml "$RESOLVER_ID" "$BOOTSTRAP_IP" "$PREFERRED_PROTOCOL"
+    if restart_ctrld /cfg/ctrld.toml; then
+        sed -i "s/^DNS_TYPE=.*/DNS_TYPE=${PREFERRED_PROTOCOL}/" /cfg/controld.env
+        logger -t watchdog "upgraded to $(proto_label "$PREFERRED_PROTOCOL")"
+        return 0
+    fi
+    logger -t watchdog "upgrade to $(proto_label "$PREFERRED_PROTOCOL") failed after switch — watchdog will retry"
+    return 1
 }
 
 # ── Input Validation ──

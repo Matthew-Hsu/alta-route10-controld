@@ -102,6 +102,7 @@ RESOLVER_ID=${RESOLVER_ID}
 BOOTSTRAP_IP=${BOOTSTRAP_IP}
 CURLD_VERSION=${CURLD_VERSION}
 DNS_TYPE=${DNS_TYPE}
+PREFERRED_PROTOCOL=${PREFERRED_PROTOCOL:-$DNS_TYPE}
 FORCED_DNS=${FORCED_DNS:-0}
 EOF
 
@@ -125,6 +126,8 @@ do_show() {
     print_header "Current Configuration"
     printf "  %-20s %s\n" "Resolver ID:" "${RESOLVER_ID}"
     printf "  %-20s %s\n" "Protocol:"    "$(proto_label "$DNS_TYPE")"
+    _pref="${PREFERRED_PROTOCOL:-$DNS_TYPE}"
+    [ "$_pref" = "$DNS_TYPE" ] || printf "  %-20s %s ${DIM}(watchdog will return to it)${RESET}\n" "Preferred:" "$(proto_label "$_pref")"
     printf "  %-20s %s\n" "Bootstrap IP:" "${BOOTSTRAP_IP}"
     printf "  %-20s %s\n" "ctrld version:" "${CURLD_VERSION}"
     printf "  %-20s %s\n" "ctrld running:" "$(pidof ctrld 2>/dev/null && echo 'yes (PID above)' || echo 'no')"
@@ -191,6 +194,7 @@ do_protocol() {
 
     cp /cfg/ctrld.toml /cfg/ctrld.toml.bak
     DNS_TYPE="$new_type"
+    PREFERRED_PROTOCOL="$new_type"
     apply_and_restart "Switched to $(proto_label "$DNS_TYPE")"
 }
 
@@ -335,6 +339,7 @@ EOF
 
     cp /cfg/ctrld.toml /cfg/ctrld.toml.bak
     DNS_TYPE="$fastest"
+    PREFERRED_PROTOCOL="$fastest"
     apply_and_restart "Switched to $(proto_label "$DNS_TYPE") (${fastest_ms}ms avg)"
 }
 

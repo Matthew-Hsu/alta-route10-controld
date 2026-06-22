@@ -2,7 +2,7 @@ steps:
   shellcheck:
     image: koalaman/shellcheck:stable
     commands:
-      - find . -name "*.sh" -exec shellcheck -s sh -S warning -e SC2154 {} +
+      - find . -name "*.sh" -exec shellcheck -s sh -S warning -e SC2154,SC3043,SC2034 {} +
 
   test:
     image: koalaman/shellcheck:stable

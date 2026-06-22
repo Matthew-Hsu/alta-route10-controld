@@ -15,8 +15,9 @@ controld.env
 # Personal device data
 alta-cd-matches.json
 
-# Node.js
+# Node.js (dev tooling for the gitignored cleanup script)
 node_modules/
+package.json
 package-lock.json
 
 # Cleanup utility (contains API key — use env vars instead)

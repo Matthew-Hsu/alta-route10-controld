@@ -157,6 +157,9 @@ print_header "ControlD Endpoint"
 if load_env; then
     print_ok "Resolver ID: ${RESOLVER_ID}"
     print_ok "Protocol: $(proto_label "${DNS_TYPE}")"
+    if [ "${PREFERRED_PROTOCOL:-${DNS_TYPE}}" != "${DNS_TYPE}" ]; then
+        print_warn "Preferred: $(proto_label "${PREFERRED_PROTOCOL}") — on fallback; watchdog will return to it"
+    fi
     if [ -n "${CURLD_VERSION:-}" ]; then
         print_ok "Version: ${CURLD_VERSION}"
     fi

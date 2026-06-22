@@ -254,6 +254,7 @@ for script in setup.sh status.sh watchdog.sh benchmark.sh uninstall.sh reconfigu
 done
 
 describe "--version flags"
+# shellcheck disable=SC2043  # only setup.sh supports --version; single-item loop is intentional
 for script in setup.sh; do
     if [ -f "$SCRIPT_DIR/$script" ]; then
         VER_OUT=$(sh "$SCRIPT_DIR/$script" --version 2>&1 || true)
@@ -268,8 +269,11 @@ done
 # ══════════════════════════════════════════════════════════════════
 
 describe "Protocol fallback chain completeness"
-assert_eq "doq -> doh3 -> doh -> doh3 (443-only cycle)" "doh3" "$(next_proto $(next_proto $(next_proto doq)))"
-assert_eq "doh3 -> doh -> doh3 (cycle)" "doh3" "$(next_proto $(next_proto doh3))"
+# Walk the chain with intermediate vars (clearer; avoids nested-command-substitution warnings)
+_a=$(next_proto doq);  _b=$(next_proto "$_a"); _c=$(next_proto "$_b")
+assert_eq "doq -> doh3 -> doh -> doh3 (443-only cycle)" "doh3" "$_c"
+_a=$(next_proto doh3); _b=$(next_proto "$_a")
+assert_eq "doh3 -> doh -> doh3 (cycle)" "doh3" "$_b"
 
 # ══════════════════════════════════════════════════════════════════
 # INTEGRATION TESTS — only run on actual router

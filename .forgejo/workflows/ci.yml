@@ -1,7 +1,9 @@
 name: ci
 
 # Full CI coverage: shellcheck + test suite + gitleaks. Secret scanning is
-# additionally covered by secrets-scan.yml (betterleaks).
+# additionally covered by secrets-scan.yml (betterleaks). Uses a git-capable
+# base image (the dedicated shellcheck/gitleaks images lack git, so checkout
+# fails) and installs each tool inline — same pattern as secrets-scan.yml.
 on:
   push:
     branches: [master]
@@ -12,27 +14,32 @@ jobs:
   shellcheck:
     runs-on: docker
     container:
-      image: koalaman/shellcheck:stable
+      image: node:20-bookworm
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
-      - name: shellcheck (all scripts)
-        run: find . -name "*.sh" -exec shellcheck -s sh -S warning -e SC2154,SC3043,SC2034 {} +
+      - name: shellcheck
+        run: |
+          apt-get update -qq && apt-get install -y -qq shellcheck >/dev/null
+          find . -name "*.sh" -exec shellcheck -s sh -S warning -e SC2154,SC3043,SC2034 {} +
 
   test:
     runs-on: docker
     container:
-      image: koalaman/shellcheck:stable
+      image: node:20-bookworm
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
-      - name: unit test suite
+      - name: unit tests
         # Integration tests auto-skip off-router; unit tests cover the logic.
         run: sh test.sh
 
   gitleaks:
     runs-on: docker
     container:
-      image: zricethezav/gitleaks:latest
+      image: node:20-bookworm
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
-      - name: secret scan
-        run: gitleaks detect --source . --verbose
+      - name: gitleaks
+        run: |
+          GL_VER=$(curl -s https://api.github.com/repos/gitleaks/gitleaks/releases/latest | grep -o '"tag_name":"v[^"]*"' | head -1 | cut -d'"' -f4)
+          curl -sL "https://github.com/gitleaks/gitleaks/releases/download/v${GL_VER}/gitleaks_${GL_VER}_linux_x64.tar.gz" | tar xz -C /usr/local/bin
+          gitleaks detect --source . --verbose

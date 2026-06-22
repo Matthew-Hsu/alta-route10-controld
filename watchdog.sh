@@ -134,6 +134,9 @@ do_stop_ctrld() {
     stop_ctrld
 }
 
+# (do_upgrade_check lives in lib.sh — sourced above — so this watchdog and the
+# setup.sh-generated one share a single implementation.)
+
 # ── Health Check 1: Is ctrld running? ────────────────────────────────────────
 
 ctrld_pid=$(pidof ctrld 2>/dev/null)
@@ -164,10 +167,9 @@ if check_dns "127.0.0.1#${DNS_PORT}"; then
         do_log "dhcp.leases stale (>2h) — device discovery may degrade"
     fi
     rm -f "$FAIL_COUNT_FILE"
+    command -v do_upgrade_check >/dev/null 2>&1 && do_upgrade_check
     exit 0
 fi
-
-# DNS failed — increment the consecutive-failure counter and wait unless threshold reached
 fails=$(cat "$FAIL_COUNT_FILE" 2>/dev/null || echo 0)
 fails=$((fails + 1))
 echo "$fails" > "$FAIL_COUNT_FILE"

@@ -142,7 +142,7 @@ assert_eq "DoT label"   "DoT (TLS)"      "$(proto_label dot)"
 describe "next_proto() — fallback chain"
 assert_eq "doq next"    "doh3" "$(next_proto doq)"
 assert_eq "doh3 next"   "doh"  "$(next_proto doh3)"
-assert_eq "doh wraps"   "doq"  "$(next_proto doh)"
+assert_eq "doh wraps"   "doh3" "$(next_proto doh)"
 
 describe "valid_resolver() — input validation"
 assert_true  "valid short resolver"  valid_resolver "abc123"
@@ -220,9 +220,11 @@ assert_eq "resolver from env"     "test123" "$RESOLVER_ID"
 assert_eq "bootstrap from env"    "1.2.3.4" "$BOOTSTRAP_IP"
 assert_eq "version from env"      "1.5.0"   "$CURLD_VERSION"
 assert_eq "type from env"         "doq"     "$DNS_TYPE"
+assert_eq "PREFERRED_PROTOCOL defaults to DNS_TYPE" "doq" "$PREFERRED_PROTOCOL"
 
 # Test defaults for missing values (reset variables first)
 DNS_TYPE=""
+PREFERRED_PROTOCOL=""
 BOOTSTRAP_IP=""
 cat > "$TMPDIR/test-minimal.env" << 'EOF'
 RESOLVER_ID=abc
@@ -230,6 +232,7 @@ CURLD_VERSION=1.5.0
 EOF
 load_env "$TMPDIR/test-minimal.env"
 assert_eq "default DNS_TYPE is doh3"      "doh3"        "$DNS_TYPE"
+assert_eq "default PREFERRED_PROTOCOL follows DNS_TYPE" "doh3" "$PREFERRED_PROTOCOL"
 assert_eq "default bootstrap IP"          "76.76.2.22"  "$BOOTSTRAP_IP"
 
 # Test load_env failure on missing file
@@ -265,8 +268,8 @@ done
 # ══════════════════════════════════════════════════════════════════
 
 describe "Protocol fallback chain completeness"
-assert_eq "doq -> doh3 -> doh -> doq (full cycle)" "doq" "$(next_proto $(next_proto $(next_proto doq)))"
-assert_eq "doh3 -> doh -> doq (3 steps)" "doq" "$(next_proto $(next_proto doh3))"
+assert_eq "doq -> doh3 -> doh -> doh3 (443-only cycle)" "doh3" "$(next_proto $(next_proto $(next_proto doq)))"
+assert_eq "doh3 -> doh -> doh3 (cycle)" "doh3" "$(next_proto $(next_proto doh3))"
 
 # ══════════════════════════════════════════════════════════════════
 # INTEGRATION TESTS — only run on actual router
@@ -294,9 +297,10 @@ else
     RULES=$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c 5354)
     assert_true "iptables rules active ($RULES)" [ "$RULES" -gt 0 ]
 
-    # Integration: cron jobs
-    assert_true "watchdog cron installed"     crontab -l 2>/dev/null | grep -q watchdog
-    assert_true "update cron installed"       crontab -l 2>/dev/null | grep -q controld-update
+    # Integration: cron jobs (wrap pipeline in sh -c so assert_true runs the
+    # whole check in-process — not in a pipeline subshell, which set -e aborts on)
+    assert_true "watchdog cron installed"     sh -c 'crontab -l 2>/dev/null | grep -q watchdog'
+    assert_true "update cron installed"       sh -c 'crontab -l 2>/dev/null | grep -q controld-update'
 
     # Integration: config files exist
     for f in /cfg/controld.env /cfg/ctrld /cfg/ctrld.toml /cfg/post-cfg.sh /cfg/watchdog.sh /cfg/controld-update.sh; do
@@ -312,10 +316,10 @@ else
     # Restore original in case self-heal used different proto
     printf "%s" "$BACKUP_TOML" > /cfg/ctrld.toml
 
-    # Integration: watchdog dry-run
+    # Integration: watchdog dry-run (the healthy path is silent — it logs to
+    # syslog, not stdout — so assert it exits clean rather than prints a string)
     if grep -q dry-run /cfg/watchdog.sh 2>/dev/null; then
-        DRY_OUT=$(sh /cfg/watchdog.sh --dry-run 2>&1)
-        assert_contains "watchdog dry-run reports status" "$DRY_OUT" "ctrld"
+        assert_true "watchdog dry-run exits clean" sh -c 'sh /cfg/watchdog.sh --dry-run >/dev/null 2>&1'
     else
         skip "watchdog --dry-run not available (old version)"
     fi

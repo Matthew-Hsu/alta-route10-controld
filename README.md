@@ -19,14 +19,14 @@ Encrypted DNS with per-device visibility on the Alta Labs Route 10 router using 
 
 ## Supported Protocols
 
-| Type | Protocol | Transport | Default |
-|------|----------|-----------|---------|
-| `doh3` | DNS-over-HTTPS/3 | HTTP/3 (QUIC) | Yes |
-| `doq` | DNS-over-QUIC | QUIC | |
-| `doh` | DNS-over-HTTPS/2 | HTTP/2 | |
-| `dot` | DNS-over-TLS | TCP+TLS | |
+| Type | Protocol | Transport | Port | ISP-blockable? | Default |
+|------|----------|-----------|------|----------------|---------|
+| `doh3` | DNS-over-HTTPS/3 | HTTP/3 (QUIC) | 443 | No (looks like HTTPS) | Yes |
+| `doq` | DNS-over-QUIC | QUIC | 853 | **Yes** (some ISPs/mobile nets) | |
+| `doh` | DNS-over-HTTPS/2 | HTTP/2 | 443 | No (looks like HTTPS) | |
+| `dot` | DNS-over-TLS | TCP+TLS | 853 | **Yes** (some ISPs/mobile nets) | |
 
-DoH3 and DoQ use the QUIC protocol (UDP-based) which eliminates TCP head-of-line blocking and reduces connection setup latency compared to DoH over HTTP/2.
+DoH3 and DoQ use the QUIC protocol (UDP-based) which eliminates TCP head-of-line blocking and reduces connection setup latency compared to DoH over HTTP/2. **Port matters for reliability:** 443 (DoH3/DoH) blends with normal HTTPS and is almost never blocked, while 853 (DoQ/DoT) is a dedicated DNS port that some networks block — so the automatic fallback chain only ever targets 443 protocols (DoH3 ↔ DoH).
 
 ## Architecture
 
@@ -95,7 +95,7 @@ Every script supports `--help` with full usage documentation.
 
 | File | Purpose |
 |---|---|
-| `/cfg/controld.env` | Resolver ID, version, bootstrap IP, protocol type, forced-DNS flag |
+| `/cfg/controld.env` | Resolver ID, version, bootstrap IP, protocol type, preferred protocol, forced-DNS flag |
 | `/cfg/ctrld` | DNS proxy binary (arm64) |
 | `/cfg/ctrld.toml` | DNS proxy config (upstreams, policies, routing rules) |
 | `/cfg/lib.sh` | Shared function library used by all scripts |
@@ -184,12 +184,14 @@ A cron job runs weekly (Monday 3 AM) to check for new `ctrld` releases and updat
 
 1. Checks if `ctrld` is running — restarts if dead
 2. Tests DNS resolution through `ctrld`
-3. If DNS is healthy, self-heals forced-DNS state and warns if `dhcp.leases` is stale
+3. If DNS is healthy, self-heals forced-DNS state, warns if `dhcp.leases` is stale, and **self-upgrades back to your preferred protocol** if currently on a fallback
 4. If DNS fails, **waits for a second consecutive failure** before acting (debounce — avoids restarting ctrld or churning the protocol on a single transient blip)
 5. Restores iptables redirect rules if they disappeared
 6. Logs all actions to syslog
 
-Protocol fallback is automatic but debounced — transient blips are ignored; a sustained failure (2 consecutive checks) triggers the fallback chain (DoQ -> DoH3 -> DoH). The debounce threshold is `FAIL_THRESHOLD` (default 2).
+Protocol fallback is automatic but debounced — transient blips are ignored; a sustained failure (2 consecutive checks) triggers the fallback chain. **The chain is 443-only** (`DoH3 ↔ DoH`) — it never falls *back to* the blockable 853 protocols (DoQ/DoT), though those can still be your primary. The debounce threshold is `FAIL_THRESHOLD` (default 2).
+
+**Self-upgrade / preferred protocol:** the protocol chosen at setup (or via `reconfigure.sh --protocol`/`--benchmark`) is stored as `PREFERRED_PROTOCOL`. If the watchdog ever falls back to a different protocol, it periodically (every ~30 min) re-tests the preferred one on a throwaway port and switches back automatically once it's healthy again — so a transient outage doesn't permanently leave you on a slower fallback. `status.sh` shows both the active and preferred protocol.
 
 Use `--dry-run` to check health without making changes:
 

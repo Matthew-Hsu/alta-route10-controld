@@ -95,7 +95,7 @@ Every script supports `--help` with full usage documentation.
 
 | File | Purpose |
 |---|---|
-| `/cfg/controld.env` | Resolver ID, version, bootstrap IP, protocol type |
+| `/cfg/controld.env` | Resolver ID, version, bootstrap IP, protocol type, forced-DNS flag |
 | `/cfg/ctrld` | DNS proxy binary (arm64) |
 | `/cfg/ctrld.toml` | DNS proxy config (upstreams, policies, routing rules) |
 | `/cfg/lib.sh` | Shared function library used by all scripts |
@@ -171,7 +171,8 @@ After a firmware update or reboot, ControlD is fully operational within ~30 seco
 3. Configures `https-dns-proxy` as a fallback
 4. Starts `ctrld` on port 5354
 5. Health checks before adding iptables redirect rules
-6. If `ctrld` fails, keeps `https-dns-proxy` as the DNS backend
+6. Restores forced-DNS state (uci + port-853 rules + firewall.user) if `FORCED_DNS=1`
+7. If `ctrld` fails, keeps `https-dns-proxy` as the DNS backend
 
 ### Auto-Update
 
@@ -183,11 +184,12 @@ A cron job runs weekly (Monday 3 AM) to check for new `ctrld` releases and updat
 
 1. Checks if `ctrld` is running — restarts if dead
 2. Tests DNS resolution through `ctrld`
-3. If DNS fails, tries the next protocol in the fallback chain (DoQ -> DoH3 -> DoH)
-4. Restores iptables redirect rules if they disappeared
-5. Logs all actions to syslog
+3. If DNS is healthy, self-heals forced-DNS state and warns if `dhcp.leases` is stale
+4. If DNS fails, **waits for a second consecutive failure** before acting (debounce — avoids restarting ctrld or churning the protocol on a single transient blip)
+5. Restores iptables redirect rules if they disappeared
+6. Logs all actions to syslog
 
-Protocol fallback is automatic — if your ISP blocks port 853 (DoQ), the watchdog switches to DoH3 or DoH within minutes.
+Protocol fallback is automatic but debounced — transient blips are ignored; a sustained failure (2 consecutive checks) triggers the fallback chain (DoQ -> DoH3 -> DoH). The debounce threshold is `FAIL_THRESHOLD` (default 2).
 
 Use `--dry-run` to check health without making changes:
 
@@ -241,7 +243,8 @@ sh status.sh   # shows forced DNS status and DoT hijack rules
 When enabled:
 - **Port 53** (plain DNS) — redirected to ControlD via iptables
 - **Port 853** (DoT) — redirected to ControlD via iptables
-- Rules are persisted in `/etc/firewall.user` and survive reboots
+- State is recorded as `FORCED_DNS=1` in `/cfg/controld.env` (the persistent source of truth)
+- **Self-healing persistence** — the uci config, port-853 iptables rules, and `/etc/firewall.user` entries are restored automatically: at boot by `post-cfg.sh`, every 5 minutes by `watchdog.sh`, and instantly on firewall reload via `firewall.user`. This survives reboots **and** firmware updates (which can wipe `/etc/config`).
 - `status.sh` reports the forced DNS state and active hijack rules
 
 **Note:** DNS-over-HTTPS (DoH, port 443) cannot be redirected without breaking all HTTPS traffic. Most TVs and IoT devices use DoT rather than DoH, so forced DNS catches the majority of bypass attempts.
@@ -290,7 +293,8 @@ All scripts source `lib.sh` which provides:
 - Colored output helpers (`print_ok`, `print_fail`, `print_warn`, `print_info`)
 - Config generation (`write_ctrld_config`, `get_endpoint`)
 - Process management (`start_ctrld`, `stop_ctrld`, `restart_ctrld`)
-- Health checks (`check_dns`, `ensure_iptables`)
+- Health checks (`check_dns`, `ensure_iptables`, `check_port_in_use`)
+- Forced DNS (`ensure_forced_dns`, `disable_forced_dns`, `set_forced_dns_flag`)
 - Input validation (`valid_resolver`, `valid_mac`, `valid_cidr`, `valid_proto`)
 - Protocol utilities (`proto_label`, `next_proto`)
 

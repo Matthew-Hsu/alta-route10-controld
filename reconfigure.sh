@@ -102,6 +102,7 @@ RESOLVER_ID=${RESOLVER_ID}
 BOOTSTRAP_IP=${BOOTSTRAP_IP}
 CURLD_VERSION=${CURLD_VERSION}
 DNS_TYPE=${DNS_TYPE}
+FORCED_DNS=${FORCED_DNS:-0}
 EOF
 
     print_ok "$msg"
@@ -185,7 +186,7 @@ do_protocol() {
     [ "$FORCE" -eq 1 ] || {
         printf "\n  Switch from ${BOLD}%s${RESET} to ${BOLD}%s${RESET}? [Y/n]: " "$PLABEL" "$(proto_label "$new_type")"
         read -r confirm
-        [[ "${confirm,,}" == "n" ]] && { print_info "Cancelled."; return; }
+        case "$confirm" in n|N|no|NO) print_info "Cancelled."; return ;; esac
     }
 
     cp /cfg/ctrld.toml /cfg/ctrld.toml.bak
@@ -216,7 +217,7 @@ do_resolver() {
     [ "$FORCE" -eq 1 ] || {
         printf "\n  Change resolver from ${BOLD}%s${RESET} to ${BOLD}%s${RESET}? [Y/n]: " "$RESOLVER_ID" "$new_id"
         read -r confirm
-        [[ "${confirm,,}" == "n" ]] && { print_info "Cancelled."; return; }
+        case "$confirm" in n|N|no|NO) print_info "Cancelled."; return ;; esac
     }
 
     cp /cfg/ctrld.toml /cfg/ctrld.toml.bak
@@ -330,7 +331,7 @@ EOF
         read -r confirm
     fi
 
-    [[ "${confirm,,}" == "n" ]] && { print_info "Cancelled. No changes made."; return; }
+    case "$confirm" in n|N|no|NO) print_info "Cancelled. No changes made."; return ;; esac
 
     cp /cfg/ctrld.toml /cfg/ctrld.toml.bak
     DNS_TYPE="$fastest"
@@ -386,7 +387,7 @@ do_policy() {
                 printf "\n  Adding: MAC %s -> %s (%s)\n" "$mac" "$policy_name" "$policy_resolver"
                 printf "  Confirm? [Y/n]: "
                 read -r confirm
-                [[ "${confirm,,}" == "n" ]] && continue
+                case "$confirm" in n|N|no|NO) continue ;; esac
 
                 # Append upstream
                 cat >> /cfg/ctrld.toml << EOF
@@ -445,7 +446,7 @@ EOF
                 printf "\n  Adding: %s -> %s (%s)\n" "$cidr" "$policy_name" "$policy_resolver"
                 printf "  Confirm? [Y/n]: "
                 read -r confirm
-                [[ "${confirm,,}" == "n" ]] && continue
+                case "$confirm" in n|N|no|NO) continue ;; esac
 
                 # Append network and upstream
                 cat >> /cfg/ctrld.toml << EOF
@@ -488,7 +489,7 @@ EOF
                 fi
                 printf "  ${RED}Remove ALL policy rules and extra upstreams?${RESET} [y/N]: "
                 read -r confirm
-                [[ "${confirm,,}" != "y" ]] && continue
+                case "$confirm" in y|Y|yes|YES) ;; *) continue ;; esac
 
                 # Regenerate base config (drops all policies and extra upstreams)
                 cp /cfg/ctrld.toml /cfg/ctrld.toml.bak
@@ -510,8 +511,11 @@ do_force_dns() {
     printf "  Ensures all LAN clients use ControlD DNS by intercepting\n"
     printf "  outbound DNS on port 53 (plain) and port 853 (DoT).\n\n"
 
-    local current
-    current=$(uci -q get https-dns-proxy.config.force_dns 2>/dev/null || echo "0")
+    # Source of truth is the FORCED_DNS flag; fall back to live uci state for legacy installs
+    local current="${FORCED_DNS:-0}"
+    if [ "$current" = "0" ]; then
+        current="$(uci -q get https-dns-proxy.config.force_dns 2>/dev/null || echo "0")"
+    fi
 
     if [ "$current" = "1" ]; then
         printf "  Current: ${GREEN}ENABLED${RESET} — all outbound DNS is intercepted\n\n"
@@ -521,20 +525,16 @@ do_force_dns() {
             printf "  ${RED}Disable forced DNS?${RESET} [y/N]: "
             read -r confirm
         fi
-        if [[ "${confirm,,}" != "y" ]]; then
-            print_info "No changes made."
-            return
-        fi
-        uci set https-dns-proxy.config.force_dns='0'
-        uci delete https-dns-proxy.config.force_dns_port 2>/dev/null || true
-        uci commit https-dns-proxy
-        # Remove 853 redirect rules
-        iptables -t nat -D PREROUTING -i br-lan -p tcp --dport 853 -j REDIRECT --to-port "$DNS_PORT" 2>/dev/null || true
-        iptables -t nat -D PREROUTING -i br-lan_2 -p tcp --dport 853 -j REDIRECT --to-port "$DNS_PORT" 2>/dev/null || true
-        iptables -t nat -D PREROUTING -i br-lan -p udp --dport 853 -j REDIRECT --to-port "$DNS_PORT" 2>/dev/null || true
-        iptables -t nat -D PREROUTING -i br-lan_2 -p udp --dport 853 -j REDIRECT --to-port "$DNS_PORT" 2>/dev/null || true
-        /etc/init.d/https-dns-proxy restart
-        print_ok "Forced DNS disabled. Devices may use their own DNS."
+        case "$confirm" in
+            y|Y|yes|YES)
+                set_forced_dns_flag 0
+                disable_forced_dns
+                print_ok "Forced DNS disabled. Devices may use their own DNS."
+                ;;
+            *)
+                print_info "No changes made."
+                ;;
+        esac
     else
         printf "  Current: ${RED}DISABLED${RESET} — devices can bypass ControlD DNS\n\n"
         printf "  Smart TVs (Panasonic, Samsung), IoT devices, and browsers\n"
@@ -545,27 +545,20 @@ do_force_dns() {
             printf "  Enable forced DNS hijacking? [Y/n]: "
             read -r confirm
         fi
-        if [[ "${confirm,,}" == "n" ]]; then
-            print_info "No changes made."
-            return
-        fi
-        uci set https-dns-proxy.config.force_dns='1'
-        uci add_list https-dns-proxy.config.force_dns_port='53'
-        uci add_list https-dns-proxy.config.force_dns_port='853'
-        uci commit https-dns-proxy
-        /etc/init.d/https-dns-proxy restart
-        # Ensure 853 redirect rules exist (some OpenWrt builds don't add them)
-        sleep 2
-        if ! iptables -t nat -L PREROUTING -n 2>/dev/null | grep -q 'dpt:853'; then
-            iptables -t nat -I PREROUTING 1 -i br-lan -p tcp --dport 853 -j REDIRECT --to-port "$DNS_PORT"
-            iptables -t nat -I PREROUTING 2 -i br-lan -p udp --dport 853 -j REDIRECT --to-port "$DNS_PORT"
-            iptables -t nat -I PREROUTING 3 -i br-lan_2 -p tcp --dport 853 -j REDIRECT --to-port "$DNS_PORT"
-            iptables -t nat -I PREROUTING 4 -i br-lan_2 -p udp --dport 853 -j REDIRECT --to-port "$DNS_PORT"
-            print_ok "Added port 853 (DoT) redirect rules"
-        fi
-        print_ok "Forced DNS enabled. All outbound DNS is now hijacked."
-        print_info "Note: DNS-over-HTTPS (port 443) cannot be redirected without"
-        print_info "breaking HTTPS. Most TVs and IoT devices use DoT, not DoH."
+        # [Y/n] — default Yes
+        case "$confirm" in
+            n|N|no|NO)
+                print_info "No changes made."
+                ;;
+            *)
+                set_forced_dns_flag 1
+                FORCED_DNS=1
+                ensure_forced_dns
+                print_ok "Forced DNS enabled. All outbound DNS is now hijacked."
+                print_info "Note: DNS-over-HTTPS (port 443) cannot be redirected without"
+                print_info "breaking HTTPS. Most TVs and IoT devices use DoT, not DoH."
+                ;;
+        esac
     fi
 }
 

@@ -122,7 +122,7 @@ write_ctrld_config() {
     cache_size = 4096
     discover_dhcp = true
     discover_ptr = true
-    discover_mdns = false
+    discover_mdns = true
     discover_arp = true
     discover_hosts = true
     discover_refresh_interval = 60
@@ -225,6 +225,93 @@ ensure_iptables() {
         return 0
     fi
     return 1
+}
+
+# ── Forced DNS ──
+
+# Write FORCED_DNS=<0|1> to /cfg/controld.env — update in place or append if absent.
+# Usage: set_forced_dns_flag <0|1>
+set_forced_dns_flag() {
+    _val="$1"
+    if grep -q '^FORCED_DNS=' /cfg/controld.env 2>/dev/null; then
+        sed -i "s|^FORCED_DNS=.*|FORCED_DNS=${_val}|" /cfg/controld.env
+    else
+        printf 'FORCED_DNS=%s\n' "$_val" >> /cfg/controld.env
+    fi
+}
+
+# Ensure forced-DNS state matches the FORCED_DNS env flag.
+# Restores uci config + port-853 iptables rules + firewall.user lines ONLY on drift,
+# so it is cheap to call from the 5-min watchdog (no https-dns-proxy restart in the
+# steady state). Requires FORCED_DNS and DNS_PORT (set via load_env).
+ensure_forced_dns() {
+    [ "${FORCED_DNS:-0}" = "1" ] || return 0
+
+    _port="${DNS_PORT:-5354}"
+    _changed=0
+
+    # 1. uci config — restored here so it survives firmware wipes of /etc/config
+    _cur="$(uci -q get https-dns-proxy.config.force_dns 2>/dev/null || echo "0")"
+    [ "$_cur" = "1" ] || { uci set https-dns-proxy.config.force_dns=1; _changed=1; }
+    # Ensure both 53 and 853 are in force_dns_port (rebuild cleanly if 853 missing)
+    _ports="$(uci -q get https-dns-proxy.config.force_dns_port 2>/dev/null || echo "")"
+    case "$_ports" in
+        *853*) : ;;
+        *)  uci delete https-dns-proxy.config.force_dns_port 2>/dev/null || true
+            uci add_list https-dns-proxy.config.force_dns_port=53
+            uci add_list https-dns-proxy.config.force_dns_port=853
+            _changed=1 ;;
+    esac
+    if [ "$_changed" = "1" ]; then
+        uci commit https-dns-proxy
+        /etc/init.d/https-dns-proxy restart >/dev/null 2>&1 || true
+        logger -t forced-dns "restored uci force_dns=1 (ports 53,853)"
+    fi
+
+    # 2. port-853 iptables rules — restored here so they survive reboot
+    if ! iptables -t nat -L PREROUTING -n 2>/dev/null | grep -q 'dpt:853'; then
+        iptables -t nat -I PREROUTING 1 -i br-lan   -p tcp --dport 853 -j REDIRECT --to-port "$_port"
+        iptables -t nat -I PREROUTING 2 -i br-lan   -p udp --dport 853 -j REDIRECT --to-port "$_port"
+        iptables -t nat -I PREROUTING 3 -i br-lan_2 -p tcp --dport 853 -j REDIRECT --to-port "$_port"
+        iptables -t nat -I PREROUTING 4 -i br-lan_2 -p udp --dport 853 -j REDIRECT --to-port "$_port"
+        logger -t forced-dns "restored port-853 redirect rules"
+    fi
+
+    # 3. firewall.user — persist 853 rules so a firewall reload restores them instantly
+    _fw="/etc/firewall.user"
+    if [ -f "$_fw" ] && ! grep -q 'controld-forced-dns-853' "$_fw" 2>/dev/null; then
+        cat >> "$_fw" << 'FW853'
+
+# controld-forced-dns-853 — DoT hijack, restored by ensure_forced_dns
+iptables -t nat -A PREROUTING -i br-lan   -p tcp --dport 853 -j REDIRECT --to-port 5354
+iptables -t nat -A PREROUTING -i br-lan   -p udp --dport 853 -j REDIRECT --to-port 5354
+iptables -t nat -A PREROUTING -i br-lan_2 -p tcp --dport 853 -j REDIRECT --to-port 5354
+iptables -t nat -A PREROUTING -i br-lan_2 -p udp --dport 853 -j REDIRECT --to-port 5354
+FW853
+        logger -t forced-dns "added port-853 rules to $_fw"
+    fi
+
+    return 0
+}
+
+# Disable forced DNS: remove port-853 iptables rules, firewall.user lines, uci flag.
+disable_forced_dns() {
+    _port="${DNS_PORT:-5354}"
+
+    iptables -t nat -D PREROUTING -i br-lan   -p tcp --dport 853 -j REDIRECT --to-port "$_port" 2>/dev/null || true
+    iptables -t nat -D PREROUTING -i br-lan   -p udp --dport 853 -j REDIRECT --to-port "$_port" 2>/dev/null || true
+    iptables -t nat -D PREROUTING -i br-lan_2 -p tcp --dport 853 -j REDIRECT --to-port "$_port" 2>/dev/null || true
+    iptables -t nat -D PREROUTING -i br-lan_2 -p udp --dport 853 -j REDIRECT --to-port "$_port" 2>/dev/null || true
+
+    if [ -f /etc/firewall.user ]; then
+        sed -i -e '/controld-forced-dns-853/d' -e '/--dport 853/d' /etc/firewall.user
+    fi
+
+    uci set https-dns-proxy.config.force_dns=0
+    uci delete https-dns-proxy.config.force_dns_port 2>/dev/null || true
+    uci commit https-dns-proxy
+    /etc/init.d/https-dns-proxy restart >/dev/null 2>&1 || true
+    logger -t forced-dns "forced DNS disabled"
 }
 
 # ── Input Validation ──

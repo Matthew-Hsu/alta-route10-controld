@@ -328,11 +328,11 @@ See [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ## CI
 
-The Codeberg CI pipeline runs on every push:
+CI runs via Forgejo Actions on every push/PR to `master`. (Codeberg is a backup mirror and does not run CI.)
 
-1. **shellcheck** — lints all shell scripts
-2. **test suite** — runs `test.sh`
-3. **gitleaks** — scans for leaked secrets
+1. **shellcheck** — lints all shell scripts (`.forgejo/workflows/ci.yml`)
+2. **test suite** — runs `test.sh` (unit tests; integration tests run only on-router)
+3. **gitleaks** + **betterleaks** — scan for leaked secrets (`ci.yml` + `secrets-scan.yml`)
 
 ## Credits
 

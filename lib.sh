@@ -284,6 +284,31 @@ next_toml_index() {
     ' "$_nti_file"
 }
 
+# ── Release Download Verification ──
+
+# Pull one asset's SHA-256 out of a checksums.txt body ("<sha>  <filename>")
+# Usage: checksum_for_asset <checksums-text> <asset-filename>
+checksum_for_asset() {
+    printf '%s\n' "$1" | awk -v a="$2" '$2 == a { print $1; exit }'
+}
+
+# Check a downloaded release asset against the checksums.txt published beside it.
+#   0 = verified, 1 = MISMATCH (do not use the file), 2 = could not verify
+# Callers must treat 1 and 2 differently: a mismatch is a hard stop, an
+# unverifiable download (no sha256sum, checksums.txt unreachable) is a warning.
+# Usage: verify_ctrld_download <file> <asset-filename> <version>
+verify_ctrld_download() {
+    _vcd_file="$1"; _vcd_asset="$2"; _vcd_ver="$3"
+    command -v sha256sum >/dev/null 2>&1 || return 2
+    [ -f "$_vcd_file" ] || return 2
+    _vcd_sums="$(wget -qO- "https://github.com/Control-D-Inc/ctrld/releases/download/v${_vcd_ver}/checksums.txt" 2>/dev/null)"
+    [ -n "$_vcd_sums" ] || return 2
+    _vcd_want="$(checksum_for_asset "$_vcd_sums" "$_vcd_asset")"
+    [ -n "$_vcd_want" ] || return 2
+    _vcd_got="$(sha256sum "$_vcd_file" | awk '{print $1}')"
+    [ "$_vcd_want" = "$_vcd_got" ]
+}
+
 # ── Process Management ──
 
 # Kill any running ctrld process

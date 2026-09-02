@@ -332,6 +332,25 @@ assert_true  "download URLs use the pin, not the tools version" \
 assert_false "no download URL is built from VERSION" \
     grep -q 'releases/download/v${VERSION}' "$SCRIPT_DIR/setup.sh"
 
+describe "checksum_for_asset() — release verification"
+
+SUMS="$(printf '%s\n' \
+    "3f02b8ea9665b1b0f74f4abdcb60148d249804afd604ae5fad84ad9fb3ee2e81  ctrld_1.5.7_linux_amd64.tar.gz" \
+    "f3247d562055b3dad62231ec4d7517970a6e89caf4753e7a5854e52162246d38  ctrld_1.5.7_linux_arm64.tar.gz")"
+assert_eq "picks the arm64 sum" \
+    "f3247d562055b3dad62231ec4d7517970a6e89caf4753e7a5854e52162246d38" \
+    "$(checksum_for_asset "$SUMS" ctrld_1.5.7_linux_arm64.tar.gz)"
+assert_eq "picks the amd64 sum" \
+    "3f02b8ea9665b1b0f74f4abdcb60148d249804afd604ae5fad84ad9fb3ee2e81" \
+    "$(checksum_for_asset "$SUMS" ctrld_1.5.7_linux_amd64.tar.gz)"
+assert_eq "unknown asset yields nothing" "" \
+    "$(checksum_for_asset "$SUMS" ctrld_9.9.9_linux_arm64.tar.gz)"
+# A filename that is a prefix of another must not match it
+assert_eq "no partial-name match" "" \
+    "$(checksum_for_asset "$SUMS" ctrld_1.5.7_linux_arm.tar.gz)"
+assert_eq "unverifiable download reports 2, not 0" "2" \
+    "$(rc=0; verify_ctrld_download "$TMPDIR/no-such-file" asset 1.5.7 || rc=$?; echo $rc)"
+
 describe "split-DNS config survives a rewrite"
 
 # The exact extraction apply_and_restart uses to carry policy config across a

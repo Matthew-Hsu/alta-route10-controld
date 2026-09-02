@@ -385,11 +385,11 @@ See [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ## CI
 
-CI runs via Forgejo Actions on every push/PR to `master`. (Codeberg is a backup mirror and does not run CI.)
+CI runs on every push/PR to `master` via **GitHub Actions** (`.github/workflows/ci.yml`), this fork's canonical home. The original `.forgejo/workflows/` definitions are kept in step for anyone running this on a Forgejo instance, but GitHub does not read them.
 
-1. **shellcheck** — lints all shell scripts (`.forgejo/workflows/ci.yml`)
+1. **shellcheck** — lints all shell scripts
 2. **test suite** — runs `test.sh` (unit tests; integration tests run only on-router)
-3. **gitleaks** + **betterleaks** — scan for leaked secrets (`ci.yml` + `secrets-scan.yml`)
+3. **betterleaks** — scans for leaked secrets (`.forgejo/workflows/secrets-scan.yml`)
 
 ## Credits
 

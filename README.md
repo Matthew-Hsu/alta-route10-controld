@@ -22,7 +22,7 @@ Encrypted DNS with per-device visibility on the Alta Labs Route 10 router using 
 - **Benchmark tool**: test which protocol is fastest on your ISP
 - **Quick reconfigure**: change protocol, resolver, or policies without re-running setup
 - **Forced DNS**: hijack all outbound DNS (port 53 + 853) so smart TVs and IoT devices can't bypass ControlD
-- **Built-in test suite**: 150+ tests covering all functions, run locally or on-router
+- **Built-in test suite**: 170+ tests covering all functions, run locally and on-router under both GNU and BusyBox awk
 
 ## Supported Protocols
 
@@ -93,7 +93,7 @@ sh setup.sh --resolver abc123 --protocol doh3
 | `reconfigure.sh` | Change protocol, resolver, or policies without re-running setup | `--help` `--show` `--protocol` `--resolver` `--benchmark` `--policy` `--force-dns` `--to <value>` `--force` |
 | `benchmark.sh` | Test DNS query latency across DoQ, DoH3, and DoH | `--help` `--queries N` |
 | `uninstall.sh` | Removes everything, restores default DNS | `--help` `--force` |
-| `test.sh` | Comprehensive test suite (150+ tests) | — |
+| `test.sh` | Comprehensive test suite (170+ tests) | — |
 
 Every script supports `--help` with full usage documentation.
 
@@ -170,7 +170,7 @@ VLAN added after install is picked up by the watchdog within 5 minutes.
 
 ```sh
 sh status.sh                  # per-bridge redirect coverage + subnets
-sh reconfigure.sh --repair    # re-apply redirects to every bridge now
+sh reconfigure.sh --repair    # re-apply redirects, and prune rules for bridges that no longer exist
 ```
 
 A bridge without a redirect is the usual reason a device resolves fine but never
@@ -188,7 +188,7 @@ LAN_IFACES="br-lan br-lan_10 br-lan_20"     # or pin the list exactly
 `/cfg/` is a persistent ext4 partition on the Alta Labs Route 10 that survives firmware updates and reboots. The router's built-in `/etc/rc.local` sources `/cfg/rc.local` on every boot, which:
 
 1. Runs `post-cfg.sh` — starts ctrld, restores iptables redirect rules, configures fallback DNS
-2. Reinstalls cron jobs — adds watchdog (5-min) and auto-update (weekly) to crontab, since crontab lives in `/etc/` and may be wiped by firmware updates
+2. Reinstalls cron jobs — adds watchdog (5-min) and auto-update (weekly) to crontab, since crontab lives in `/etc/` and may be wiped by firmware updates. Jobs are matched by script path, never by keyword: the router ships its own `wireguard_watchdog` entry, and matching the bare word made the reinstall skip our job after every reboot while leaving the health check silently dead
 3. Refreshes `firewall.user` rules — regenerated from the current LAN bridge list, so iptables redirects survive mid-session firewall restarts
 
 After a firmware update or reboot, ControlD is fully operational within ~30 seconds. No manual intervention required.
@@ -281,8 +281,8 @@ sh status.sh   # shows forced DNS status and DoT hijack rules
 When enabled:
 - **Port 53** (plain DNS) — redirected to ControlD via iptables
 - **Port 853** (DoT) — redirected to ControlD via iptables
-- State is recorded as `FORCED_DNS=1` in `/cfg/controld.env` (the persistent source of truth)
-- **Self-healing persistence** — the uci config, port-853 iptables rules, and `/etc/firewall.user` entries are restored automatically: at boot by `post-cfg.sh`, every 5 minutes by `watchdog.sh`, and instantly on firewall reload via `firewall.user`. This survives reboots **and** firmware updates (which can wipe `/etc/config`).
+- State is recorded as `FORCED_DNS=1` in `/cfg/controld.env` (the persistent source of truth), and re-running `setup.sh` preserves it — falling back to the live uci state for installs predating the flag
+- **Self-healing persistence** — the uci config, port-853 iptables rules, and `/etc/firewall.user` entries are restored automatically: at boot by `post-cfg.sh`, every 5 minutes by `/cfg/watchdog.sh`, and instantly on firewall reload via `firewall.user`. This survives reboots **and** firmware updates (which can wipe `/etc/config`).
 - `status.sh` reports the forced DNS state and active hijack rules
 
 **Note:** DNS-over-HTTPS (DoH, port 443) cannot be redirected without breaking all HTTPS traffic. Most TVs and IoT devices use DoT rather than DoH, so forced DNS catches the majority of bypass attempts.
@@ -322,7 +322,6 @@ sh test.sh    # works locally and on-router
 - iptables redirect rules present
 - Cron jobs installed
 - Self-healing config regeneration
-- Watchdog dry-run
 - Benchmark completion
 
 ## Versioning
@@ -354,6 +353,7 @@ All scripts source `lib.sh` which provides:
 - Input validation (`valid_resolver`, `valid_mac`, `valid_cidr`, `valid_proto`)
 - Protocol utilities (`proto_label`, `next_proto`) and per-upstream protocol switching (`retarget_upstreams`, `resolver_from_endpoint`)
 - Degraded-mode handling (`remove_dns_redirects`) and config editing (`toml_blocks`, `next_toml_index`)
+- Cron entries matched by script path (`cron_has`, `cron_remove`) and rule hygiene (`prune_stale_redirects`)
 
 ## Fallback Safety
 

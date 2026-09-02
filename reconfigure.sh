@@ -90,13 +90,23 @@ apply_and_restart() {
     local msg="$1"
     write_ctrld_config /cfg/ctrld.toml "$RESOLVER_ID" "$BOOTSTRAP_IP" "$DNS_TYPE"
 
-    # Preserve any existing policy sections from old config
-    if [ -f /cfg/ctrld.toml.bak ] && grep -q '\[listener.0.policy\]' /cfg/ctrld.toml.bak 2>/dev/null; then
-        # Extract policy section from backup and append
-        sed -n '/\[listener.0.policy\]/,$p' /cfg/ctrld.toml.bak >> /cfg/ctrld.toml
-        # Also restore extra upstreams and networks
-        grep '^\[upstream\.[1-9]' /cfg/ctrld.toml.bak >> /cfg/ctrld.toml 2>/dev/null || true
-        grep '^\[network\.[3-9]' /cfg/ctrld.toml.bak >> /cfg/ctrld.toml 2>/dev/null || true
+    # Carry split-DNS config across the rewrite: whole tables, in TOML order —
+    # the extra upstreams and networks first, then the policy that references
+    # them. (Copying just the header lines, as this used to, left ctrld with
+    # empty [upstream.N] tables and a policy pointing at nothing.)
+    if [ -f /cfg/ctrld.toml.bak ]; then
+        local extra_up extra_net policy
+        extra_up="$(toml_blocks /cfg/ctrld.toml.bak '^\[upstream\.[1-9]')"
+        extra_net="$(toml_blocks /cfg/ctrld.toml.bak '^\[network\.[1-9]')"
+        policy="$(toml_blocks /cfg/ctrld.toml.bak '^\[listener\.0\.policy\]')"
+        if [ -n "$extra_up" ] || [ -n "$extra_net" ] || [ -n "$policy" ]; then
+            {
+                if [ -n "$extra_up" ];  then printf '\n%s\n' "$extra_up";  fi
+                if [ -n "$extra_net" ]; then printf '\n%s\n' "$extra_net"; fi
+                if [ -n "$policy" ];    then printf '\n%s\n' "$policy";    fi
+            } >> /cfg/ctrld.toml
+            print_info "Split DNS policy config preserved"
+        fi
     fi
 
     # Update env file
@@ -388,7 +398,7 @@ do_policy() {
 
                 # Add upstream and MAC rule to existing config
                 local next_idx
-                next_idx=$(grep -c '^\[upstream\.' /cfg/ctrld.toml 2>/dev/null || echo 0)
+                next_idx=$(next_toml_index /cfg/ctrld.toml upstream)
                 local pol_endpoint
                 pol_endpoint=$(get_endpoint "$DNS_TYPE" "$policy_resolver")
 
@@ -449,9 +459,9 @@ EOF
                 policy_name="${policy_name:-Network}"
 
                 local next_up
-                next_up=$(grep -c '^\[upstream\.' /cfg/ctrld.toml 2>/dev/null || echo 0)
+                next_up=$(next_toml_index /cfg/ctrld.toml upstream)
                 local next_net
-                next_net=$(grep -c '^\[network\.' /cfg/ctrld.toml 2>/dev/null || echo 0)
+                next_net=$(next_toml_index /cfg/ctrld.toml network)
                 local pol_endpoint
                 pol_endpoint=$(get_endpoint "$DNS_TYPE" "$policy_resolver")
 
@@ -492,7 +502,7 @@ EOF
                 sed -i ':a;N;$!ba;s/,\n    \]/\n    \]/' /cfg/ctrld.toml
 
                 stop_ctrld; start_ctrld /cfg/ctrld.toml || die "ctrld failed to start"
-                print_ok "Network rule added. %s -> %s" "$cidr" "$policy_name"
+                print_ok "Network rule added. ${cidr} -> ${policy_name}"
                 ;;
             4)
                 if ! grep -q '\[listener.0.policy\]' /cfg/ctrld.toml 2>/dev/null; then

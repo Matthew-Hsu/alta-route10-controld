@@ -224,17 +224,12 @@ write_ctrld_config() {
     dhcp_lease_file_path = "/cfg/dhcp.leases"
     dhcp_lease_file_format = "dnsmasq"
 
+# Networks are matched against a client's source IP by split-DNS policies. Only
+# the catch-all is generated; policies add narrower blocks using this router's
+# real VLAN subnets, which "sh /cfg/status.sh" lists per bridge.
 [network.0]
     cidrs = ["0.0.0.0/0"]
     name = "Everyone"
-
-[network.1]
-    cidrs = ["192.168.1.0/24"]
-    name = "LAN"
-
-[network.2]
-    cidrs = ["192.168.2.0/24"]
-    name = "LAN2"
 
 [upstream.0]
     bootstrap_ip = "${bootstrap}"
@@ -248,6 +243,35 @@ write_ctrld_config() {
     ip = "0.0.0.0"
     port = ${DNS_PORT}
 EOF
+}
+
+# Print whole [table] blocks whose header line matches an extended regex.
+# A block runs from its header to the next line starting with "[".
+# Usage: toml_blocks <file> '^\[upstream\.[1-9]'
+toml_blocks() {
+    [ -f "$1" ] || return 0
+    awk -v re="$2" '
+        /^\[/ { keep = ($0 ~ re) }
+        keep   { print }
+    ' "$1"
+}
+
+# Lowest unused index in a [<table>.N] family, so split-DNS policies allocate
+# without overwriting an existing block. Counting blocks (the old approach) only
+# works while indices are contiguous — they are not once a policy is removed or
+# an install is upgraded.
+# Usage: next_toml_index <config> <table>   e.g. next_toml_index cfg.toml network
+next_toml_index() {
+    _nti_file="${1:-/cfg/ctrld.toml}"
+    _nti_tbl="$2"
+    [ -f "$_nti_file" ] || { printf '0'; return 0; }
+    awk -v t="$_nti_tbl" '
+        match($0, "^\\[" t "\\.[0-9]+\\]") {
+            n = substr($0, length(t) + 3, RLENGTH - length(t) - 3) + 0
+            if (n >= max) max = n + 1
+        }
+        END { printf "%d", max }
+    ' "$_nti_file"
 }
 
 # ── Process Management ──

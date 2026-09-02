@@ -22,7 +22,7 @@ Encrypted DNS with per-device visibility on the Alta Labs Route 10 router using 
 - **Benchmark tool**: test which protocol is fastest on your ISP
 - **Quick reconfigure**: change protocol, resolver, or policies without re-running setup
 - **Forced DNS**: hijack all outbound DNS (port 53 + 853) so smart TVs and IoT devices can't bypass ControlD
-- **Built-in test suite**: 70+ tests covering all functions, run locally or on-router
+- **Built-in test suite**: 150+ tests covering all functions, run locally or on-router
 
 ## Supported Protocols
 
@@ -94,7 +94,7 @@ sh setup.sh --resolver abc123 --protocol doh3
 | `benchmark.sh` | Test DNS query latency across DoQ, DoH3, and DoH | `--help` `--queries N` |
 | `watchdog.sh` | 5-min health monitor with automatic protocol fallback | `--help` `--dry-run` |
 | `uninstall.sh` | Removes everything, restores default DNS | `--help` `--force` |
-| `test.sh` | Comprehensive test suite (70+ tests) | — |
+| `test.sh` | Comprehensive test suite (150+ tests) | — |
 
 Every script supports `--help` with full usage documentation.
 
@@ -228,6 +228,8 @@ The binary it replaces is the only thing answering DNS for every client on every
 6. As a last resort, if every protocol fails and ctrld cannot be revived, **removes the DNS redirects** — otherwise port 53 points at a dead port and every client loses DNS entirely. Resolution falls back to dnsmasq → https-dns-proxy (still encrypted, no per-device visibility), and the rules go back automatically once ctrld answers again
 7. Logs all actions to syslog
 
+Protocol switches (fallback and self-upgrade alike) rewrite each upstream's transport in place, keeping every split-DNS profile pointed at its own resolver — see [Split DNS and Per-Device Policy](#split-dns-and-per-device-policy).
+
 Protocol fallback is automatic but debounced — transient blips are ignored; a sustained failure (2 consecutive checks) triggers the fallback chain. **The chain is 443-only** (`DoH3 ↔ DoH`) — it never falls *back to* the blockable 853 protocols (DoQ/DoT), though those can still be your primary. The debounce threshold is `FAIL_THRESHOLD` (default 2).
 
 **Self-upgrade / preferred protocol:** the protocol chosen at setup (or via `reconfigure.sh --protocol`/`--benchmark`) is stored as `PREFERRED_PROTOCOL`. If the watchdog ever falls back to a different protocol, it periodically (every ~30 min) re-tests the preferred one on a throwaway port and switches back automatically once it's healthy again — so a transient outage doesn't permanently leave you on a slower fallback. `status.sh` shows both the active and preferred protocol.
@@ -242,9 +244,11 @@ sh watchdog.sh --dry-run
 
 During setup or via `reconfigure.sh --policy`, configure multiple ControlD resolver profiles and route traffic by:
 
-- **Network/subnet** — e.g. route `192.168.2.0/24` to a filtered resolver
+- **Network/subnet** — e.g. route `192.168.2.0/24` to a filtered resolver (`reconfigure.sh --policy` lists your VLAN subnets to pick from)
 - **MAC address** — e.g. route a kid's device to a safe-search resolver
 - **Both** — combine network and device rules
+
+Policies survive protocol changes. Switching protocol — by hand, by benchmark, or automatically via the watchdog's fallback and self-upgrade — moves every ControlD upstream onto the new transport while each one keeps the resolver it points at. A profile's resolver is its identity: it is never rewritten to another profile's, and non-ControlD upstreams are left alone entirely.
 
 Example config with per-device routing:
 
@@ -355,7 +359,8 @@ All scripts source `lib.sh` which provides:
 - LAN bridge discovery (`lan_ifaces`, `lan_cidr`, `lan_net_name`) and redirect rules (`ensure_redirect_rule`, `ensure_firewall_user_rules`)
 - Forced DNS (`ensure_forced_dns`, `disable_forced_dns`, `set_forced_dns_flag`)
 - Input validation (`valid_resolver`, `valid_mac`, `valid_cidr`, `valid_proto`)
-- Protocol utilities (`proto_label`, `next_proto`)
+- Protocol utilities (`proto_label`, `next_proto`) and per-upstream protocol switching (`retarget_upstreams`, `resolver_from_endpoint`)
+- Degraded-mode handling (`remove_dns_redirects`) and config editing (`toml_blocks`, `next_toml_index`)
 
 ## Fallback Safety
 

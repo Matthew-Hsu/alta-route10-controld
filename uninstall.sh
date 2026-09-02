@@ -24,8 +24,18 @@ LIB_DIR="$(dirname "$0")"
 FORCE=0
 
 # Files installed by setup.sh
+# rc.local and lib.sh belong here too: the boot hook re-runs the install and the
+# library regenerates the firewall rules, so leaving either behind means an
+# uninstalled router puts the DNS redirects back on the next reboot — pointing
+# at a ctrld binary that is no longer there.
+# Everything setup.sh installs. uninstall.sh removes itself last, and lib.sh
+# goes with the rest: leaving the utility scripts behind without it would just
+# leave commands that error out.
 INSTALL_FILES="/cfg/ctrld /cfg/ctrld.toml /cfg/post-cfg.sh \
-               /cfg/controld.env /cfg/controld-update.sh /cfg/watchdog.sh"
+               /cfg/controld.env /cfg/controld-update.sh /cfg/watchdog.sh \
+               /cfg/rc.local /cfg/ctrld.prev \
+               /cfg/status.sh /cfg/benchmark.sh /cfg/reconfigure.sh \
+               /cfg/lib.sh /cfg/uninstall.sh"
 
 # ── Help ──
 
@@ -141,6 +151,9 @@ printf "\n  ${BOLD}Summary:${RESET}  %d file(s), %d cron job(s), %d iptables rul
 printf "\n  After removal, default DNS services will be restored:\n"
 printf "    - https-dns-proxy ( restarted )\n"
 printf "    - dnsmasq         ( restarted )\n"
+printf "\n  Only this project's DNS redirect rules are removed. Your port\n"
+printf "  forwards, UPnP mappings and other firewall rules are untouched,\n"
+printf "  and no reboot is needed.\n"
 
 # ── Confirm ──
 
@@ -176,8 +189,38 @@ fi
 # ── Remove iptables rules ──
 
 print_step "Removing iptables rules..."
-iptables -t nat -F PREROUTING 2>/dev/null || true
-print_ok "iptables PREROUTING chain flushed"
+
+# Delete only the rules this project added. Flushing the whole PREROUTING chain
+# (what this used to do) also removes the firewall's own zone jumps, so every
+# port forward and UPnP mapping stops working until the firewall is reloaded —
+# an unrelated outage caused by uninstalling something else.
+remove_dns_redirects "$DNS_PORT"
+
+# Sweep any strays an older install left on bridges that no longer exist
+iptables-save -t nat 2>/dev/null \
+    | grep '^-A PREROUTING' \
+    | grep -- "--to-ports ${DNS_PORT}" \
+    | while read -r _rule; do
+        # shellcheck disable=SC2086  # the saved rule spec must word-split
+        iptables -t nat -D PREROUTING ${_rule#-A PREROUTING } 2>/dev/null || true
+    done
+
+_left="$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c "$DNS_PORT")"
+if [ "$_left" -eq 0 ]; then
+    print_ok "ControlD redirect rules removed (other firewall rules untouched)"
+else
+    print_warn "${_left} redirect rule(s) still present — check: iptables -t nat -L PREROUTING -n"
+fi
+
+# The firewall.user block would re-add them on the next firewall reload
+if [ -f "$FW_USER" ]; then
+    remove_block "$FW_USER" "$FW_MARKER"
+    sed -i -e '/controld-forced-dns-853/d' \
+           -e '/ControlD per-device DNS redirect/d' \
+           -e '/^iptables -t nat -A PREROUTING -i br-lan.*--dport 53 -j REDIRECT --to-port/d' \
+           -e '/^iptables -t nat -A PREROUTING -i br-lan.*--dport 853 -j REDIRECT --to-port/d' "$FW_USER"
+    print_ok "firewall.user entries removed (rules will not return on reload)"
+fi
 
 # ── Remove files ──
 

@@ -314,6 +314,21 @@ sh test.sh    # works locally and on-router
 - Watchdog dry-run
 - Benchmark completion
 
+## Versioning
+
+Two versions live in `lib.sh` and move independently:
+
+| Variable | Means | Moves when |
+|---|---|---|
+| `VERSION` | version of these scripts | you change the scripts |
+| `CTRLD_PIN` | the `ctrld` release a fresh install gets | you deliberately adopt a newer upstream release |
+
+`VERSION` follows semver: **MAJOR** for a change an existing install cannot upgrade into (a config key or file layout that older state cannot be read into), **MINOR** for new capability that upgrades cleanly, **PATCH** for fixes that add no behavior.
+
+They used to be one variable, which meant bumping the tools version silently repointed `setup.sh` at a `ctrld` release that does not exist. `test.sh` now asserts they are distinct and that no download URL is built from `VERSION`.
+
+`CTRLD_PIN` is only the starting point. The version actually installed is recorded as `CURLD_VERSION` in `/cfg/controld.env` (the historical spelling), and the weekly updater moves it forward from there — so pinning gives reproducible installs without leaving routers stranded on an old release.
+
 ## Shared Library
 
 All scripts source `lib.sh` which provides:

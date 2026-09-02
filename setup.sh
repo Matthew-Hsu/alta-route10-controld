@@ -826,6 +826,15 @@ else
         [ "$_added" -gt 0 ] && return 0
         return 1
     }
+    remove_dns_redirects() {
+        _port="${1:-$DNS_PORT}"
+        for _if in $(lan_ifaces); do
+            for _dp in 53 853; do
+                iptables -t nat -D PREROUTING -i "$_if" -p udp --dport "$_dp" -j REDIRECT --to-port "$_port" 2>/dev/null || true
+                iptables -t nat -D PREROUTING -i "$_if" -p tcp --dport "$_dp" -j REDIRECT --to-port "$_port" 2>/dev/null || true
+            done
+        done
+    }
 fi
 
 DNS_TYPE="${DNS_TYPE:-doh3}"
@@ -892,7 +901,16 @@ while [ "$_attempt" -lt "$MAX_RESTART_ATTEMPTS" ]; do
         exit 0
     fi
 done
-logger -t watchdog "all protocols failed"
+
+# Every protocol failed and ctrld is not resolving. The redirects now point
+# port 53 at a closed port, so every client on every bridge has no DNS at all.
+# Removing them hands resolution back to dnsmasq -> https-dns-proxy: still
+# encrypted, just without per-device visibility. The healthy path above re-adds
+# the rules as soon as ctrld answers again.
+logger -t watchdog "all protocols failed — removing DNS redirects so the LAN keeps resolving"
+remove_dns_redirects "$DNS_PORT"
+/etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
+logger -t watchdog "DNS redirects removed; per-device visibility is off until ctrld recovers"
 WATCHDOG
 
 chmod +x /cfg/watchdog.sh

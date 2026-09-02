@@ -47,12 +47,39 @@
 **Fix:** Re-download the ctrld binary:
 ```sh
 cd /cfg
+. /cfg/controld.env          # CURLD_VERSION = the release this install runs
 rm ctrld
-wget -O ctrld.tar.gz 'https://github.com/Control-D-Inc/ctrld/releases/download/v1.5.0/ctrld_1.5.0_linux_arm64.tar.gz'
+wget -O ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${CURLD_VERSION}/ctrld_${CURLD_VERSION}_linux_arm64.tar.gz"
 tar xzf ctrld.tar.gz -C /tmp
 mv /tmp/dist/ctrld_*/ctrld /cfg/ctrld
 chmod +x /cfg/ctrld
 rm -rf /tmp/dist ctrld.tar.gz
+```
+
+## status.sh says the DNS redirects were removed
+
+**Symptom:** `status.sh` reports no redirect rules and a warning that ctrld was
+unrecoverable. DNS still works for everyone, but no device appears in ControlD.
+
+**Cause:** this is deliberate. When ctrld dies and the watchdog cannot revive it
+on any protocol, it removes the redirects. Leaving them in place would point
+port 53 at a closed port and take DNS down for every client on every bridge;
+removing them hands resolution back to dnsmasq → https-dns-proxy, which is still
+encrypted ControlD, just without per-device visibility.
+
+**Fix:** get ctrld running again — the rules restore themselves within 5 minutes.
+
+```sh
+logread | grep -E 'ctrld|watchdog|controld-update' | tail -30
+/cfg/ctrld --version          # is the binary intact?
+sh /cfg/watchdog.sh           # force a health cycle
+```
+
+If a bad auto-update caused it, `/cfg/ctrld.prev` is the previously working
+binary; the updater restores it automatically, but you can do it by hand:
+
+```sh
+mv /cfg/ctrld.prev /cfg/ctrld && chmod +x /cfg/ctrld && sh /cfg/post-cfg.sh
 ```
 
 ## Devices on a VLAN never appear in ControlD

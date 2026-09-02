@@ -219,7 +219,15 @@ if [ -z "$DNS_TYPE" ]; then
             # Download ctrld first if not already present (needed for benchmark)
             if [ ! -x /cfg/ctrld ]; then
                 print_info "Downloading ctrld for benchmark..."
-                wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${CTRLD_PIN}/ctrld_${CTRLD_PIN}_linux_arm64.tar.gz" >/dev/null 2>&1 || die "Download failed"
+                _asset="ctrld_${CTRLD_PIN}_linux_arm64.tar.gz"
+                wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${CTRLD_PIN}/${_asset}" >/dev/null 2>&1 || die "Download failed"
+                # set -e is on: capture the status instead of letting a
+                # non-zero return abort the script before we can act on it
+                _vrc=0; verify_ctrld_download /tmp/ctrld.tar.gz "$_asset" "$CTRLD_PIN" || _vrc=$?
+                case "$_vrc" in
+                    1) rm -f /tmp/ctrld.tar.gz; die "Checksum mismatch on ctrld download — refusing to install" ;;
+                    2) print_warn "Could not verify ctrld checksum (continuing)" ;;
+                esac
                 tar xzf /tmp/ctrld.tar.gz -C /tmp
                 mv "/tmp/dist/ctrld_${CTRLD_PIN}_linux_arm64/ctrld" /cfg/ctrld
                 chmod +x /cfg/ctrld
@@ -349,9 +357,17 @@ fi
 
 print_step "Step 2: Installing ctrld v${CTRLD_PIN}..."
 
-wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${CTRLD_PIN}/ctrld_${CTRLD_PIN}_linux_arm64.tar.gz" || {
+CTRLD_ASSET="ctrld_${CTRLD_PIN}_linux_arm64.tar.gz"
+wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${CTRLD_PIN}/${CTRLD_ASSET}" || {
     die "Download failed. Check internet connectivity."
 }
+# set -e is on: capture the status rather than aborting on a non-zero return
+VERIFY_RC=0; verify_ctrld_download /tmp/ctrld.tar.gz "$CTRLD_ASSET" "$CTRLD_PIN" || VERIFY_RC=$?
+case "$VERIFY_RC" in
+    0) print_ok "Download verified against published SHA-256" ;;
+    1) rm -f /tmp/ctrld.tar.gz; die "Checksum mismatch on ctrld download — refusing to install" ;;
+    2) print_warn "Could not verify download checksum (continuing)" ;;
+esac
 tar xzf /tmp/ctrld.tar.gz -C /tmp
 mv "/tmp/dist/ctrld_${CTRLD_PIN}_linux_arm64/ctrld" /cfg/ctrld
 chmod +x /cfg/ctrld
@@ -505,7 +521,12 @@ logger -t post-cfg "starting with resolver=${RESOLVER_ID} type=${DNS_TYPE}"
 # Self-heal: download ctrld binary if missing
 if [ ! -x /cfg/ctrld ]; then
     logger -t post-cfg 'ctrld binary missing, downloading...'
-    wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${CURLD_VERSION}/ctrld_${CURLD_VERSION}_linux_arm64.tar.gz" || { logger -t post-cfg 'ctrld download failed'; exit 1; }
+    _asset="ctrld_${CURLD_VERSION}_linux_arm64.tar.gz"
+    wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${CURLD_VERSION}/${_asset}" || { logger -t post-cfg 'ctrld download failed'; exit 1; }
+    if command -v verify_ctrld_download >/dev/null 2>&1; then
+        _vrc=0; verify_ctrld_download /tmp/ctrld.tar.gz "$_asset" "$CURLD_VERSION" || _vrc=$?
+        [ "$_vrc" = "1" ] && { rm -f /tmp/ctrld.tar.gz; logger -t post-cfg 'ctrld checksum mismatch, refusing to install'; exit 1; }
+    fi
     tar xzf /tmp/ctrld.tar.gz -C /tmp
     mv "/tmp/dist/ctrld_${CURLD_VERSION}_linux_arm64/ctrld" /cfg/ctrld
     chmod +x /cfg/ctrld
@@ -940,27 +961,97 @@ print_ok "/cfg/rc.local written (boot persistence: post-cfg + cron + firewall)"
 
 cat > /cfg/controld-update.sh << 'UPDATESCRIPT'
 #!/bin/sh
-# Weekly auto-update for ctrld
+# Weekly auto-update for ctrld.
+#
+# The binary this replaces is the only thing answering DNS for every client on
+# every LAN bridge: port 53 is redirected to it, which bypasses dnsmasq. A
+# release that will not start here would take the whole LAN offline until
+# someone noticed. So the old binary is kept, the new one has to prove it
+# resolves, and it is put back if it cannot.
 [ -f /cfg/controld.env ] || exit 0
 . /cfg/controld.env
 
-LATEST="$(wget -qO- 'https://api.github.com/repos/Control-D-Inc/ctrld/releases/latest' | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\(v[0-9.]*\)".*/\1/')"
-[ -z "$LATEST" ] && exit 0
-CURRENT="v${CURLD_VERSION}"
-
-if [ "$LATEST" != "$CURRENT" ]; then
-    VER="${LATEST#v}"
-    logger -t controld-update "Updating ctrld from ${CURRENT} to ${LATEST}"
-    wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/${LATEST}/ctrld_${VER}_linux_arm64.tar.gz" || exit 1
-    tar xzf /tmp/ctrld.tar.gz -C /tmp || exit 1
-    kill "$(pidof ctrld 2>/dev/null)" 2>/dev/null
-    mv "/tmp/dist/ctrld_${VER}_linux_arm64/ctrld" /cfg/ctrld
-    chmod +x /cfg/ctrld
-    rm -rf /tmp/dist /tmp/ctrld.tar.gz
-    sed -i "s|CURLD_VERSION=.*|CURLD_VERSION=${VER}|" /cfg/controld.env
-    /cfg/ctrld run -c /cfg/ctrld.toml -d >/dev/null 2>&1 &
-    logger -t controld-update "ctrld updated to ${LATEST}"
+if [ -f /cfg/lib.sh ]; then
+    # shellcheck source=/dev/null
+    . /cfg/lib.sh
 fi
+DNS_PORT="${DNS_PORT:-5354}"
+
+check_dns_local() { nslookup google.com "127.0.0.1#${DNS_PORT}" >/dev/null 2>&1; }
+
+start_ctrld_wait() {
+    nohup /cfg/ctrld run -c /cfg/ctrld.toml -d >/dev/null 2>&1 &
+    _n=0
+    while [ "$_n" -lt 15 ]; do
+        check_dns_local && return 0
+        sleep 1
+        _n=$((_n + 1))
+    done
+    return 1
+}
+
+LATEST="$(wget -qO- 'https://api.github.com/repos/Control-D-Inc/ctrld/releases/latest' | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\(v[0-9.]*\)".*/\1/')"
+if [ -z "$LATEST" ]; then
+    logger -t controld-update "could not determine latest release (rate limit or no network) — skipping"
+    exit 0
+fi
+CURRENT="v${CURLD_VERSION}"
+[ "$LATEST" = "$CURRENT" ] && exit 0
+
+VER="${LATEST#v}"
+ASSET="ctrld_${VER}_linux_arm64.tar.gz"
+logger -t controld-update "updating ctrld from ${CURRENT} to ${LATEST}"
+
+wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/${LATEST}/${ASSET}" || exit 1
+
+# Verify before trusting a binary we are about to run as the LAN's resolver
+if command -v verify_ctrld_download >/dev/null 2>&1; then
+    _vrc=0; verify_ctrld_download /tmp/ctrld.tar.gz "$ASSET" "$VER" || _vrc=$?
+    case "$_vrc" in
+        1) rm -f /tmp/ctrld.tar.gz
+           logger -t controld-update "checksum MISMATCH for ${LATEST} — update aborted, keeping ${CURRENT}"
+           exit 1 ;;
+        2) logger -t controld-update "could not verify ${LATEST} checksum — continuing" ;;
+    esac
+fi
+
+tar xzf /tmp/ctrld.tar.gz -C /tmp || exit 1
+[ -f "/tmp/dist/ctrld_${VER}_linux_arm64/ctrld" ] || {
+    logger -t controld-update "release layout unexpected — update aborted, keeping ${CURRENT}"
+    rm -rf /tmp/dist /tmp/ctrld.tar.gz
+    exit 1
+}
+
+# Keep the running binary so a rollback needs no network
+cp /cfg/ctrld /cfg/ctrld.prev 2>/dev/null || true
+
+kill "$(pidof ctrld 2>/dev/null)" 2>/dev/null
+sleep 1
+mv "/tmp/dist/ctrld_${VER}_linux_arm64/ctrld" /cfg/ctrld
+chmod +x /cfg/ctrld
+rm -rf /tmp/dist /tmp/ctrld.tar.gz
+
+if start_ctrld_wait; then
+    sed -i "s|CURLD_VERSION=.*|CURLD_VERSION=${VER}|" /cfg/controld.env
+    logger -t controld-update "ctrld updated to ${LATEST} and resolving"
+    exit 0
+fi
+
+# New binary will not resolve — put the old one back and leave the recorded
+# version alone so next week retries.
+logger -t controld-update "${LATEST} failed to resolve after install — rolling back to ${CURRENT}"
+kill "$(pidof ctrld 2>/dev/null)" 2>/dev/null
+sleep 1
+if [ -f /cfg/ctrld.prev ]; then
+    mv /cfg/ctrld.prev /cfg/ctrld
+    chmod +x /cfg/ctrld
+fi
+if start_ctrld_wait; then
+    logger -t controld-update "rolled back to ${CURRENT}, DNS restored"
+else
+    logger -t controld-update "rollback failed to resolve — watchdog will take over"
+fi
+exit 1
 UPDATESCRIPT
 
 chmod +x /cfg/controld-update.sh

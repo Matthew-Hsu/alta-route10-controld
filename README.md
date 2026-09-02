@@ -203,6 +203,12 @@ After a firmware update or reboot, ControlD is fully operational within ~30 seco
 
 A cron job runs weekly (Monday 3 AM) to check for new `ctrld` releases and update automatically.
 
+The binary it replaces is the only thing answering DNS for every client on every LAN bridge — port 53 is redirected to it, bypassing dnsmasq — so the update is guarded at both ends:
+
+1. **Verified** — the download is checked against the SHA-256 in the release's `checksums.txt`. A mismatch aborts before anything is swapped.
+2. **Proven** — the current binary is kept as `/cfg/ctrld.prev`, and the new one must answer a real DNS query within 15 seconds.
+3. **Rolled back** — if it does not, `ctrld.prev` is restored and `CURLD_VERSION` is left untouched, so the next run retries. Recovery needs no network, since the old binary is already on disk.
+
 ### Watchdog (Health Monitor)
 
 `watchdog.sh` runs every 5 minutes via cron and:
@@ -337,6 +343,7 @@ All scripts source `lib.sh` which provides:
 - Config generation (`write_ctrld_config`, `get_endpoint`)
 - Process management (`start_ctrld`, `stop_ctrld`, `restart_ctrld`)
 - Health checks (`check_dns`, `ensure_iptables`, `check_port_in_use`)
+- Release verification (`verify_ctrld_download`, `checksum_for_asset`)
 - LAN bridge discovery (`lan_ifaces`, `lan_cidr`, `lan_net_name`) and redirect rules (`ensure_redirect_rule`, `ensure_firewall_user_rules`)
 - Forced DNS (`ensure_forced_dns`, `disable_forced_dns`, `set_forced_dns_flag`)
 - Input validation (`valid_resolver`, `valid_mac`, `valid_cidr`, `valid_proto`)

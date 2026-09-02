@@ -218,7 +218,8 @@ The binary it replaces is the only thing answering DNS for every client on every
 3. If DNS is healthy, re-asserts redirect coverage for any LAN bridge added since install (new VLANs), self-heals forced-DNS state, warns if `dhcp.leases` is stale, and **self-upgrades back to your preferred protocol** if currently on a fallback
 4. If DNS fails, **waits for a second consecutive failure** before acting (debounce — avoids restarting ctrld or churning the protocol on a single transient blip)
 5. Restores iptables redirect rules if they disappeared
-6. Logs all actions to syslog
+6. As a last resort, if every protocol fails and ctrld cannot be revived, **removes the DNS redirects** — otherwise port 53 points at a dead port and every client loses DNS entirely. Resolution falls back to dnsmasq → https-dns-proxy (still encrypted, no per-device visibility), and the rules go back automatically once ctrld answers again
+7. Logs all actions to syslog
 
 Protocol fallback is automatic but debounced — transient blips are ignored; a sustained failure (2 consecutive checks) triggers the fallback chain. **The chain is 443-only** (`DoH3 ↔ DoH`) — it never falls *back to* the blockable 853 protocols (DoQ/DoT), though those can still be your primary. The debounce threshold is `FAIL_THRESHOLD` (default 2).
 

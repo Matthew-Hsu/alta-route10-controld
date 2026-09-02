@@ -185,8 +185,8 @@ if load_env; then
     if [ "${PREFERRED_PROTOCOL:-${DNS_TYPE}}" != "${DNS_TYPE}" ]; then
         print_warn "Preferred: $(proto_label "${PREFERRED_PROTOCOL}") — on fallback; watchdog will return to it"
     fi
-    if [ -n "${CURLD_VERSION:-}" ]; then
-        print_ok "Version: ${CURLD_VERSION}"
+    if [ -n "${CTRLD_VERSION:-}" ]; then
+        print_ok "Version: ${CTRLD_VERSION}"
     fi
 else
     print_fail "/cfg/controld.env not found or unreadable"

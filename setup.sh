@@ -381,7 +381,7 @@ print_step "Step 3: Writing configuration files..."
 cat > /cfg/controld.env << EOF
 RESOLVER_ID=${RESOLVER_ID}
 BOOTSTRAP_IP=${BOOTSTRAP_IP}
-CURLD_VERSION=${CTRLD_PIN}
+CTRLD_VERSION=${CTRLD_PIN}
 DNS_TYPE=${DNS_TYPE}
 PREFERRED_PROTOCOL=${DNS_TYPE}
 FORCED_DNS=0
@@ -520,15 +520,22 @@ logger -t post-cfg "starting with resolver=${RESOLVER_ID} type=${DNS_TYPE}"
 
 # Self-heal: download ctrld binary if missing
 if [ ! -x /cfg/ctrld ]; then
+    # No fallback to the old misspelled key: an env file that predates the
+    # rename must be migrated by re-running setup.sh, not silently half-read
+    # into a download URL with an empty version in it.
+    [ -n "${CTRLD_VERSION:-}" ] || {
+        logger -t post-cfg 'CTRLD_VERSION missing from controld.env — re-run setup.sh to migrate'
+        exit 1
+    }
     logger -t post-cfg 'ctrld binary missing, downloading...'
-    _asset="ctrld_${CURLD_VERSION}_linux_arm64.tar.gz"
-    wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${CURLD_VERSION}/${_asset}" || { logger -t post-cfg 'ctrld download failed'; exit 1; }
+    _asset="ctrld_${CTRLD_VERSION}_linux_arm64.tar.gz"
+    wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${CTRLD_VERSION}/${_asset}" || { logger -t post-cfg 'ctrld download failed'; exit 1; }
     if command -v verify_ctrld_download >/dev/null 2>&1; then
-        _vrc=0; verify_ctrld_download /tmp/ctrld.tar.gz "$_asset" "$CURLD_VERSION" || _vrc=$?
+        _vrc=0; verify_ctrld_download /tmp/ctrld.tar.gz "$_asset" "$CTRLD_VERSION" || _vrc=$?
         [ "$_vrc" = "1" ] && { rm -f /tmp/ctrld.tar.gz; logger -t post-cfg 'ctrld checksum mismatch, refusing to install'; exit 1; }
     fi
     tar xzf /tmp/ctrld.tar.gz -C /tmp
-    mv "/tmp/dist/ctrld_${CURLD_VERSION}_linux_arm64/ctrld" /cfg/ctrld
+    mv "/tmp/dist/ctrld_${CTRLD_VERSION}_linux_arm64/ctrld" /cfg/ctrld
     chmod +x /cfg/ctrld
     rm -rf /tmp/dist /tmp/ctrld.tar.gz
     logger -t post-cfg 'ctrld binary restored'
@@ -1013,7 +1020,11 @@ if [ -z "$LATEST" ]; then
     logger -t controld-update "could not determine latest release (rate limit or no network) — skipping"
     exit 0
 fi
-CURRENT="v${CURLD_VERSION}"
+if [ -z "${CTRLD_VERSION:-}" ]; then
+    logger -t controld-update "CTRLD_VERSION missing from controld.env — re-run setup.sh to migrate"
+    exit 1
+fi
+CURRENT="v${CTRLD_VERSION}"
 [ "$LATEST" = "$CURRENT" ] && exit 0
 
 VER="${LATEST#v}"
@@ -1050,7 +1061,7 @@ chmod +x /cfg/ctrld
 rm -rf /tmp/dist /tmp/ctrld.tar.gz
 
 if start_ctrld_wait; then
-    sed -i "s|CURLD_VERSION=.*|CURLD_VERSION=${VER}|" /cfg/controld.env
+    sed -i "s|CTRLD_VERSION=.*|CTRLD_VERSION=${VER}|" /cfg/controld.env
     logger -t controld-update "ctrld updated to ${LATEST} and resolving"
     exit 0
 fi

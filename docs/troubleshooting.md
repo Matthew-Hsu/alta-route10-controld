@@ -47,9 +47,9 @@
 **Fix:** Re-download the ctrld binary:
 ```sh
 cd /cfg
-. /cfg/controld.env          # CURLD_VERSION = the release this install runs
+. /cfg/controld.env          # CTRLD_VERSION = the release this install runs
 rm ctrld
-wget -O ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${CURLD_VERSION}/ctrld_${CURLD_VERSION}_linux_arm64.tar.gz"
+wget -O ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${CTRLD_VERSION}/ctrld_${CTRLD_VERSION}_linux_arm64.tar.gz"
 tar xzf ctrld.tar.gz -C /tmp
 mv /tmp/dist/ctrld_*/ctrld /cfg/ctrld
 chmod +x /cfg/ctrld

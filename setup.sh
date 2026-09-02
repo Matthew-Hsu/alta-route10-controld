@@ -467,16 +467,38 @@ TOMLINNER
         return 1
     }
     restart_ctrld() { stop_ctrld; start_ctrld "$@"; }
-    ensure_iptables() {
-        _port="${1:-$DNS_PORT}"
-        _cnt="$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c "$_port")"
-        if [ "$_cnt" -eq 0 ]; then
-            iptables -t nat -A PREROUTING -i br-lan   -p udp --dport 53 -j REDIRECT --to-port "$_port"
-            iptables -t nat -A PREROUTING -i br-lan   -p tcp --dport 53 -j REDIRECT --to-port "$_port"
-            iptables -t nat -A PREROUTING -i br-lan_2 -p udp --dport 53 -j REDIRECT --to-port "$_port"
-            iptables -t nat -A PREROUTING -i br-lan_2 -p tcp --dport 53 -j REDIRECT --to-port "$_port"
+    # Every LAN bridge, not a hardcoded pair: Alta names VLAN bridges
+    # br-lan_<vlan-id>, and a bridge with no redirect bypasses ctrld entirely.
+    lan_ifaces() {
+        if [ -n "${LAN_IFACES:-}" ]; then
+            for _li in $LAN_IFACES; do printf '%s\n' "$_li"; done
             return 0
         fi
+        _lfound=0
+        for _lp in /sys/class/net/br-lan /sys/class/net/br-lan_*; do
+            [ -e "$_lp" ] || continue
+            _li="${_lp##*/}"
+            case " ${LAN_IFACES_EXCLUDE:-} " in *" ${_li} "*) continue ;; esac
+            _lfound=1
+            printf '%s\n' "$_li"
+        done
+        [ "$_lfound" = "1" ] || printf 'br-lan\n'
+    }
+    ensure_redirect_rule() {
+        _rif="$1"; _rproto="$2"; _rdport="$3"; _rto="$4"
+        iptables -t nat -C PREROUTING -i "$_rif" -p "$_rproto" --dport "$_rdport" \
+            -j REDIRECT --to-port "$_rto" 2>/dev/null && return 1
+        iptables -t nat -A PREROUTING -i "$_rif" -p "$_rproto" --dport "$_rdport" \
+            -j REDIRECT --to-port "$_rto" 2>/dev/null
+    }
+    ensure_iptables() {
+        _port="${1:-$DNS_PORT}"
+        _added=0
+        for _if in $(lan_ifaces); do
+            if ensure_redirect_rule "$_if" udp 53 "$_port"; then _added=$((_added + 1)); fi
+            if ensure_redirect_rule "$_if" tcp 53 "$_port"; then _added=$((_added + 1)); fi
+        done
+        [ "$_added" -gt 0 ] && return 0
         return 1
     }
 fi
@@ -540,10 +562,12 @@ start_ctrld /cfg/ctrld.toml
 
 # Only redirect DNS if ctrld is confirmed working
 if check_dns "127.0.0.1#${DNS_PORT}"; then
-    ensure_iptables "$DNS_PORT"
+    ensure_iptables "$DNS_PORT" || true
+    # Persist the redirects so a firewall reload restores them instantly
+    command -v ensure_firewall_user_rules >/dev/null 2>&1 && { ensure_firewall_user_rules "$DNS_PORT" || true; }
     # Restore forced-DNS state (port 853 + uci) if enabled — survives reboot/firmware
     command -v ensure_forced_dns >/dev/null 2>&1 && ensure_forced_dns
-    logger -t post-cfg "ctrld started (${DNS_TYPE}) with device discovery, DNS redirected to port ${DNS_PORT}"
+    logger -t post-cfg "ctrld started (${DNS_TYPE}), DNS redirected to ${DNS_PORT} on: $(lan_ifaces | tr '\n' ' ')"
 else
     logger -t post-cfg 'ctrld failed health check, using https-dns-proxy fallback'
 fi
@@ -753,16 +777,38 @@ else
         return 1
     }
     restart_ctrld() { stop_ctrld; start_ctrld "$@"; }
-    ensure_iptables() {
-        _port="${1:-$DNS_PORT}"
-        _cnt="$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c "$_port")"
-        if [ "$_cnt" -eq 0 ]; then
-            iptables -t nat -A PREROUTING -i br-lan   -p udp --dport 53 -j REDIRECT --to-port "$_port"
-            iptables -t nat -A PREROUTING -i br-lan   -p tcp --dport 53 -j REDIRECT --to-port "$_port"
-            iptables -t nat -A PREROUTING -i br-lan_2 -p udp --dport 53 -j REDIRECT --to-port "$_port"
-            iptables -t nat -A PREROUTING -i br-lan_2 -p tcp --dport 53 -j REDIRECT --to-port "$_port"
+    # Every LAN bridge, not a hardcoded pair: Alta names VLAN bridges
+    # br-lan_<vlan-id>, and a bridge with no redirect bypasses ctrld entirely.
+    lan_ifaces() {
+        if [ -n "${LAN_IFACES:-}" ]; then
+            for _li in $LAN_IFACES; do printf '%s\n' "$_li"; done
             return 0
         fi
+        _lfound=0
+        for _lp in /sys/class/net/br-lan /sys/class/net/br-lan_*; do
+            [ -e "$_lp" ] || continue
+            _li="${_lp##*/}"
+            case " ${LAN_IFACES_EXCLUDE:-} " in *" ${_li} "*) continue ;; esac
+            _lfound=1
+            printf '%s\n' "$_li"
+        done
+        [ "$_lfound" = "1" ] || printf 'br-lan\n'
+    }
+    ensure_redirect_rule() {
+        _rif="$1"; _rproto="$2"; _rdport="$3"; _rto="$4"
+        iptables -t nat -C PREROUTING -i "$_rif" -p "$_rproto" --dport "$_rdport" \
+            -j REDIRECT --to-port "$_rto" 2>/dev/null && return 1
+        iptables -t nat -A PREROUTING -i "$_rif" -p "$_rproto" --dport "$_rdport" \
+            -j REDIRECT --to-port "$_rto" 2>/dev/null
+    }
+    ensure_iptables() {
+        _port="${1:-$DNS_PORT}"
+        _added=0
+        for _if in $(lan_ifaces); do
+            if ensure_redirect_rule "$_if" udp 53 "$_port"; then _added=$((_added + 1)); fi
+            if ensure_redirect_rule "$_if" tcp 53 "$_port"; then _added=$((_added + 1)); fi
+        done
+        [ "$_added" -gt 0 ] && return 0
         return 1
     }
 fi
@@ -786,7 +832,14 @@ FAIL_COUNT_FILE="/tmp/controld-dns-fail.count"
 FAIL_THRESHOLD="${FAIL_THRESHOLD:-2}"
 
 if check_dns "127.0.0.1#${DNS_PORT}"; then
-    # DNS healthy — self-heal forced-DNS state (drift only) + check discovery inputs
+    # DNS healthy — self-heal forced-DNS state (drift only) + check discovery inputs.
+    # ensure_iptables is idempotent (iptables -C per rule) and picks up bridges
+    # added since install, so a new VLAN starts resolving through ctrld within
+    # 5 minutes instead of at the next reboot.
+    if ensure_iptables "$DNS_PORT"; then
+        logger -t watchdog "added DNS redirect rules for new LAN bridge(s)"
+        command -v ensure_firewall_user_rules >/dev/null 2>&1 && { ensure_firewall_user_rules "$DNS_PORT" || true; }
+    fi
     command -v ensure_forced_dns >/dev/null 2>&1 && ensure_forced_dns
     if [ -f /cfg/dhcp.leases ] && find /cfg/dhcp.leases -mmin +120 2>/dev/null | grep -q .; then
         logger -t watchdog "dhcp.leases stale (>2h) — device discovery may degrade"
@@ -867,20 +920,20 @@ logger -t rc.local "ControlD boot hook starting"
     }
 ) &
 
-# 3. Ensure iptables redirect rules survive firewall restarts
+# 3. Ensure iptables redirect rules survive firewall restarts.
+#    The rule set depends on which LAN bridges exist, so it is generated by
+#    lib.sh rather than hardcoded here (post-cfg.sh does the same at boot).
 (
     sleep 10
-    if ! grep -q "to-port 5354" /etc/firewall.user 2>/dev/null; then
-        cat >> /etc/firewall.user << 'FW'
-
-# ControlD per-device DNS redirect (restored by /cfg/rc.local)
-iptables -t nat -A PREROUTING -i br-lan   -p udp --dport 53 -j REDIRECT --to-port 5354
-iptables -t nat -A PREROUTING -i br-lan   -p tcp --dport 53 -j REDIRECT --to-port 5354
-iptables -t nat -A PREROUTING -i br-lan_2 -p udp --dport 53 -j REDIRECT --to-port 5354
-iptables -t nat -A PREROUTING -i br-lan_2 -p tcp --dport 53 -j REDIRECT --to-port 5354
-FW
-        logger -t rc.local "firewall.user rules installed"
+    if [ -f /cfg/lib.sh ]; then
+        # shellcheck source=/dev/null
+        . /cfg/lib.sh
+        load_env >/dev/null 2>&1 || true
+        ensure_firewall_user_rules "$DNS_PORT" && \
+            logger -t rc.local "firewall.user rules refreshed"
     fi
+    # Without lib.sh there is no rule generator here; post-cfg.sh still applies
+    # the redirects directly at boot via its inline fallback helpers.
 ) &
 
 logger -t rc.local "ControlD boot hook scheduled"
@@ -929,9 +982,12 @@ print_ok "Weekly auto-update cron installed"
 
 # ── Step 9: Copy lib.sh to router for runtime use ──
 
-if [ -f "${LIB_DIR}/lib.sh" ] && [ ! -f /cfg/lib.sh ]; then
+# Always refresh it: re-running setup.sh is the documented upgrade path, and
+# skipping the copy when /cfg/lib.sh exists would leave an old library (and its
+# bugs) in charge of every boot and watchdog run.
+if [ -f "${LIB_DIR}/lib.sh" ] && [ "${LIB_DIR}/lib.sh" != "/cfg/lib.sh" ]; then
     cp "${LIB_DIR}/lib.sh" /cfg/lib.sh
-    print_ok "lib.sh copied to /cfg/ for runtime use"
+    print_ok "lib.sh installed to /cfg/ for runtime use"
 elif [ ! -f /cfg/lib.sh ]; then
     wget -O /cfg/lib.sh "${REPO_BASE}/lib.sh" >/dev/null 2>&1 && \
         print_ok "lib.sh downloaded to /cfg/"
@@ -1027,11 +1083,22 @@ else
     print_warn "ctrld not responding on port ${DNS_PORT} (may need a moment)"
 fi
 
-RULES="$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c "${DNS_PORT}")"
-if [ "$RULES" -gt 0 ]; then
-    print_ok "iptables redirect rules active (${RULES} rules)"
+_covered=""; _uncovered=""
+for _if in $(lan_ifaces); do
+    if iptables -t nat -C PREROUTING -i "$_if" -p udp --dport 53 \
+            -j REDIRECT --to-port "${DNS_PORT}" 2>/dev/null; then
+        _covered="${_covered} ${_if}"
+    else
+        _uncovered="${_uncovered} ${_if}"
+    fi
+done
+if [ -n "$_covered" ]; then
+    print_ok "DNS redirected on:${_covered}"
 else
     print_warn "No iptables redirect rules"
+fi
+if [ -n "$_uncovered" ]; then
+    print_warn "No redirect on:${_uncovered} (these clients would bypass ControlD)"
 fi
 
 if check_dns; then

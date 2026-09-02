@@ -55,6 +55,60 @@ chmod +x /cfg/ctrld
 rm -rf /tmp/dist ctrld.tar.gz
 ```
 
+## Devices on a VLAN never appear in ControlD
+
+**Symptom:** The router itself (and anything on the default LAN) shows up in the
+ControlD dashboard, but phones, laptops, and other clients on a VLAN never do.
+Their DNS works — it just is not going through ctrld.
+
+**Cause:** DNS is intercepted per bridge interface. Alta names the default LAN
+bridge `br-lan` and every VLAN `br-lan_<vlan-id>` (`br-lan_10`, `br-lan_20`, …).
+Installs from before VLAN discovery existed only ever redirected `br-lan` and
+`br-lan_2`, so every other VLAN resolved around ctrld.
+
+**Check** which bridges are covered:
+
+```sh
+sh /cfg/status.sh          # lists each bridge and whether it has a redirect
+iptables -t nat -L PREROUTING -n --line-numbers | grep 5354
+```
+
+If `iptables-save -t nat` shows `-i br-lan` and `-i br-lan_2` rules but nothing
+for your VLAN bridges, that is the problem.
+
+**Fix:**
+
+```sh
+sh /cfg/reconfigure.sh --repair
+```
+
+This re-applies the redirect to every LAN bridge that exists right now, updates
+`/etc/firewall.user` so the rules survive a firewall reload, and re-applies the
+port-853 (DoT) hijack if forced DNS is on. It is safe to run repeatedly.
+
+If `/cfg/reconfigure.sh` predates this fix, update the tooling first — re-running
+`setup.sh` reinstalls `/cfg/lib.sh` and the helper scripts:
+
+```sh
+wget -O /tmp/setup.sh https://codeberg.org/CookieTyrant/alta-route10-controld/raw/branch/master/setup.sh
+sh /tmp/setup.sh
+```
+
+New VLANs added later are picked up automatically: the watchdog re-checks
+coverage every 5 minutes and adds the missing rules.
+
+**Excluding a VLAN** (e.g. a guest network that should keep its own DNS) — add to
+`/cfg/controld.env`:
+
+```sh
+LAN_IFACES_EXCLUDE="br-lan_40"     # skip these bridges
+# or pin the list exactly:
+LAN_IFACES="br-lan br-lan_10 br-lan_20"
+```
+
+Clients cache DNS answers, so reconnect a device (or wait out its cache) before
+expecting it in the dashboard.
+
 ## Devices showing as MAC addresses only (no hostnames)
 
 **Cause:** ctrld's DHCP discovery isn't reading the lease file.

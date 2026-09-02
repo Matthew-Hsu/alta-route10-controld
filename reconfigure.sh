@@ -31,6 +31,7 @@ usage() {
     --benchmark     Benchmark all protocols, apply fastest
     --policy        Manage split DNS policies (add/remove/list)
     --force-dns     Toggle forced DNS (hijack all outbound DNS)
+    --repair        Re-apply DNS redirects to every LAN bridge (incl. new VLANs)
     --help          Show this help
 
   ${BOLD}Options:${RESET}
@@ -47,6 +48,7 @@ usage() {
     reconfigure.sh --benchmark              # find fastest, apply it
     reconfigure.sh --policy                 # manage split DNS rules
     reconfigure.sh --force-dns              # toggle forced DNS hijacking
+    reconfigure.sh --repair                 # cover VLANs added since install
 EOF
     exit 0
 }
@@ -66,6 +68,7 @@ while [ $# -gt 0 ]; do
         --benchmark)     ACTION="benchmark" ;;
         --policy)        ACTION="policy" ;;
         --force-dns)     ACTION="force_dns" ;;
+        --repair)        ACTION="repair" ;;
         --to)            [ -z "${2:-}" ] && die "--to requires a value"; TARGET="$2"; shift ;;
         --force|-f)      FORCE=1 ;;
         *)               die "Unknown option: $1 (try --help)" ;;
@@ -429,6 +432,10 @@ EOF
                 ;;
             3)
                 printf "\n  ${BOLD}Add Network Rule${RESET}\n"
+                for _lif in $(lan_ifaces); do
+                    _lcidr="$(lan_cidr "$_lif" 2>/dev/null)" || continue
+                    printf "    %-12s %-18s %s\n" "$_lif" "$_lcidr" "$(lan_net_name "$_lif")"
+                done
                 printf "  CIDR (e.g. 192.168.1.200/32 or 192.168.2.0/24): "
                 read -r cidr
                 valid_cidr "$cidr" || { print_fail "Invalid CIDR format"; continue; }
@@ -567,6 +574,60 @@ do_force_dns() {
     fi
 }
 
+# ── Action: Repair ──
+
+# Re-assert the port-53 (and, when forced DNS is on, port-853) redirects on
+# every LAN bridge. Installs made before VLAN discovery existed only ever
+# redirected br-lan and br-lan_2, so every other VLAN resolved around ctrld and
+# never showed up as a device in ControlD. Safe to run repeatedly.
+do_repair() {
+    print_header "Repair DNS Redirects"
+
+    _bridges="$(lan_ifaces | tr '\n' ' ')"
+    printf "  LAN bridges found:%s\n" " ${_bridges}"
+    printf "  Redirecting port 53 to ctrld on port %s.\n\n" "$DNS_PORT"
+
+    if ! pidof ctrld >/dev/null 2>&1; then
+        print_warn "ctrld is not running — start it before redirecting DNS"
+        return 1
+    fi
+    if ! check_dns "127.0.0.1#${DNS_PORT}"; then
+        print_warn "ctrld is not answering on port ${DNS_PORT} — not touching iptables"
+        return 1
+    fi
+
+    if ensure_iptables "$DNS_PORT"; then
+        print_ok "Redirect rules added for bridges that were missing them"
+    else
+        print_info "All LAN bridges already had a redirect rule"
+    fi
+
+    if ensure_firewall_user_rules "$DNS_PORT"; then
+        print_ok "/etc/firewall.user updated (rules survive a firewall reload)"
+    else
+        print_info "/etc/firewall.user already up to date"
+    fi
+
+    if [ "${FORCED_DNS:-0}" = "1" ]; then
+        ensure_forced_dns
+        print_ok "Forced DNS (port 853) re-applied to all bridges"
+    fi
+
+    printf "\n"
+    for _rif in $(lan_ifaces); do
+        if iptables -t nat -C PREROUTING -i "$_rif" -p udp --dport 53 \
+                -j REDIRECT --to-port "$DNS_PORT" 2>/dev/null; then
+            print_ok "${_rif} -> port ${DNS_PORT}"
+        else
+            print_fail "${_rif} still has no redirect"
+        fi
+    done
+
+    printf "\n"
+    print_info "Clients keep their old DNS answers until their cache expires;"
+    print_info "reconnect a device (or wait a few minutes) to see it in ControlD."
+}
+
 # ── Interactive menu ──
 
 if [ -z "$ACTION" ]; then
@@ -577,6 +638,7 @@ if [ -z "$ACTION" ]; then
     printf "    ${BOLD}3)${RESET} Run benchmark, apply fastest\n"
     printf "    ${BOLD}4)${RESET} Manage split DNS policies\n"
     printf "    ${BOLD}5)${RESET} Toggle forced DNS hijacking\n"
+    printf "    ${BOLD}6)${RESET} Repair DNS redirects (cover all VLANs)\n"
     printf "    ${BOLD}q)${RESET} Exit\n\n"
     printf "  Choice: "
     read -r menu_choice
@@ -587,6 +649,7 @@ if [ -z "$ACTION" ]; then
         3) do_benchmark ;;
         4) do_policy ;;
         5) do_force_dns ;;
+        6) do_repair ;;
         q|Q) print_info "Done."; exit 0 ;;
         *)  die "Cancelled" ;;
     esac
@@ -598,6 +661,7 @@ else
         benchmark) do_benchmark ;;
         policy)    do_policy ;;
         force_dns) do_force_dns ;;
+        repair)    do_repair ;;
         *)         die "Unknown action: $ACTION" ;;
     esac
 fi

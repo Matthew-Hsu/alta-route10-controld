@@ -44,11 +44,18 @@ done
 
 # Only redirect DNS if ctrld is confirmed working
 if nslookup google.com 127.0.0.1#5354 >/dev/null 2>&1; then
-    # Redirect LAN DNS traffic to ctrld (preserves source IP for per-device visibility)
-    iptables -t nat -A PREROUTING -i br-lan -p udp --dport 53 -j REDIRECT --to-port 5354
-    iptables -t nat -A PREROUTING -i br-lan -p tcp --dport 53 -j REDIRECT --to-port 5354
-    iptables -t nat -A PREROUTING -i br-lan_2 -p udp --dport 53 -j REDIRECT --to-port 5354
-    iptables -t nat -A PREROUTING -i br-lan_2 -p tcp --dport 53 -j REDIRECT --to-port 5354
+    # Redirect LAN DNS traffic to ctrld (preserves source IP for per-device
+    # visibility). One rule pair per LAN bridge: Alta names VLAN bridges
+    # br-lan_<vlan-id>, and any bridge without a rule keeps resolving around
+    # ctrld — those clients never appear as devices in ControlD.
+    for iface in /sys/class/net/br-lan /sys/class/net/br-lan_*; do
+        [ -e "$iface" ] || continue
+        iface="${iface##*/}"
+        iptables -t nat -C PREROUTING -i "$iface" -p udp --dport 53 -j REDIRECT --to-port 5354 2>/dev/null || \
+            iptables -t nat -A PREROUTING -i "$iface" -p udp --dport 53 -j REDIRECT --to-port 5354
+        iptables -t nat -C PREROUTING -i "$iface" -p tcp --dport 53 -j REDIRECT --to-port 5354 2>/dev/null || \
+            iptables -t nat -A PREROUTING -i "$iface" -p tcp --dport 53 -j REDIRECT --to-port 5354
+    done
     logger -t post-cfg 'ctrld started (DoH3) with device discovery, DNS redirected to port 5354'
 else
     # Fallback: dnsmasq uses https-dns-proxy (already configured above)

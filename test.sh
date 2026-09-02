@@ -48,6 +48,18 @@ assert_contains() {
     fi
 }
 
+assert_not_contains() {
+    TOTAL=$((TOTAL + 1))
+    local desc="$1" haystack="$2" needle="$3"
+    if echo "$haystack" | grep -q "$needle"; then
+        FAIL=$((FAIL + 1))
+        printf "    ${RED}FAIL${RESET}  %s\n  string should not contain: '%s'\n" "$desc" "$needle"
+    else
+        PASS=$((PASS + 1))
+        printf "    ${GREEN}PASS${RESET}  %s\n" "$desc"
+    fi
+}
+
 assert_match() {
     TOTAL=$((TOTAL + 1))
     local desc="$1" actual="$2" pattern="$3"
@@ -204,8 +216,107 @@ assert_true "TOML has [listener.0]"         grep -q '\[listener\.0\]' "$TEST_CON
 assert_true "TOML has [network.0]"          grep -q '\[network\.0\]' "$TEST_CONF"
 
 # ══════════════════════════════════════════════════════════════════
-# ENV FILE TESTS
+# LAN INTERFACE DISCOVERY
 # ══════════════════════════════════════════════════════════════════
+
+describe "lan_ifaces() — LAN bridge discovery"
+
+FAKE_NET="$TMPDIR/sys-net"
+mkdir -p "$FAKE_NET/br-lan" "$FAKE_NET/br-lan_2" "$FAKE_NET/br-lan_10" \
+         "$FAKE_NET/br-lan_20" "$FAKE_NET/eth4" "$FAKE_NET/ppp0"
+
+ifaces="$(SYSFS_NET="$FAKE_NET" lan_ifaces | tr '\n' ' ')"
+assert_contains "finds the default bridge"      "$ifaces" "br-lan "
+assert_contains "finds VLAN 10 bridge"          "$ifaces" "br-lan_10"
+assert_contains "finds VLAN 20 bridge"          "$ifaces" "br-lan_20"
+assert_not_contains "skips the WAN interface"   "$ifaces" "eth4"
+assert_not_contains "skips PPP interfaces"      "$ifaces" "ppp0"
+
+excluded="$(SYSFS_NET="$FAKE_NET" LAN_IFACES_EXCLUDE="br-lan_20" lan_ifaces | tr '\n' ' ')"
+assert_not_contains "LAN_IFACES_EXCLUDE drops a bridge" "$excluded" "br-lan_20"
+assert_contains "LAN_IFACES_EXCLUDE keeps the rest"  "$excluded" "br-lan_10"
+
+override="$(LAN_IFACES="br-lan br-lan_30" lan_ifaces | tr '\n' ' ')"
+assert_eq "LAN_IFACES overrides discovery" "br-lan br-lan_30 " "$override"
+
+fallback="$(SYSFS_NET="$TMPDIR/no-such-dir" lan_ifaces)"
+assert_eq "falls back to br-lan when sysfs is unreadable" "br-lan" "$fallback"
+
+describe "lan_net_name() — bridge labels"
+assert_eq "default bridge"  "LAN"     "$(lan_net_name br-lan)"
+assert_eq "VLAN bridge"     "VLAN 10" "$(lan_net_name br-lan_10)"
+assert_eq "unknown bridge"  "eth4"    "$(lan_net_name eth4)"
+
+describe "ipv4_network() — subnet from address + prefix"
+assert_eq "/24"  "192.168.10.0/24" "$(ipv4_network 192.168.10.117 24)"
+assert_eq "/16"  "192.168.0.0/16"  "$(ipv4_network 192.168.10.117 16)"
+assert_eq "/8"   "10.0.0.0/8"      "$(ipv4_network 10.1.2.3 8)"
+assert_eq "/20"  "172.16.0.0/20"   "$(ipv4_network 172.16.5.9 20)"
+assert_eq "/32"  "192.168.1.7/32"  "$(ipv4_network 192.168.1.7 32)"
+assert_false "rejects a bad octet"  ipv4_network 192.168.1.999 24
+assert_false "rejects a bad prefix" ipv4_network 192.168.1.1 33
+
+describe "dns_redirect_commands() — firewall.user rules"
+cmds="$(SYSFS_NET="$FAKE_NET" dns_redirect_commands 5354 53)"
+assert_eq "one rule per bridge per protocol" "8" "$(printf '%s\n' "$cmds" | wc -l | tr -d ' ')"
+assert_contains "covers VLAN 10 on udp" "$cmds" \
+    "PREROUTING -i br-lan_10 -p udp --dport 53 -j REDIRECT --to-port 5354"
+assert_contains "covers VLAN 20 on tcp" "$cmds" \
+    "PREROUTING -i br-lan_20 -p tcp --dport 53 -j REDIRECT --to-port 5354"
+both="$(SYSFS_NET="$FAKE_NET" dns_redirect_commands 5354 53 853)"
+assert_eq "port 853 doubles the rule count" "16" "$(printf '%s\n' "$both" | wc -l | tr -d ' ')"
+
+describe "replace_block() / read_block() / remove_block()"
+BLOCK_FILE="$TMPDIR/firewall.user"
+printf 'existing line\n' > "$BLOCK_FILE"
+printf 'one\ntwo\n' | replace_block "$BLOCK_FILE" "test-marker"
+assert_eq "block body round-trips" "one
+two" "$(read_block "$BLOCK_FILE" test-marker)"
+assert_file_contains "unrelated content is kept" "$BLOCK_FILE" "existing line"
+printf 'three\n' | replace_block "$BLOCK_FILE" "test-marker"
+assert_eq "rewriting replaces, never appends" "three" "$(read_block "$BLOCK_FILE" test-marker)"
+assert_eq "only one block after rewrite" "1" \
+    "$(grep -c 'test-marker BEGIN' "$BLOCK_FILE" | tr -d ' ')"
+remove_block "$BLOCK_FILE" "test-marker"
+assert_false "removed block leaves no markers" grep -q 'test-marker' "$BLOCK_FILE"
+assert_file_contains "removal keeps other content" "$BLOCK_FILE" "existing line"
+
+describe "ensure_firewall_user_rules() — persisted rules"
+
+# Stub logger and point the library at a temp file, so the test never touches /etc
+mkdir -p "$TMPDIR/bin"
+printf '#!/bin/sh\nexit 0\n' > "$TMPDIR/bin/logger"
+chmod +x "$TMPDIR/bin/logger"
+PATH="$TMPDIR/bin:$PATH"
+
+FW_USER="$TMPDIR/firewall.user"
+SYSFS_NET="$FAKE_NET"
+# A user rule plus the hardcoded block older versions appended
+cat > "$FW_USER" << 'FWEOF'
+iptables -t nat -A PREROUTING -i br-lan -p udp --dport 123 -j REDIRECT --to-port 9999
+
+# ControlD per-device DNS redirect (restored by /cfg/rc.local)
+iptables -t nat -A PREROUTING -i br-lan   -p udp --dport 53 -j REDIRECT --to-port 5354
+iptables -t nat -A PREROUTING -i br-lan_2 -p udp --dport 53 -j REDIRECT --to-port 5354
+FWEOF
+
+assert_true "rewrites on drift" ensure_firewall_user_rules 5354
+assert_file_contains "covers VLAN 10 now"     "$FW_USER" "br-lan_10 -p udp --dport 53"
+assert_file_contains "keeps the user's own rule" "$FW_USER" "dport 123"
+assert_false "drops the old hardcoded block" grep -q "restored by /cfg/rc.local" "$FW_USER"
+# The legacy lines are replaced, not appended to
+assert_eq "no duplicated rules" "0" \
+    "$(sort "$FW_USER" | uniq -d | grep -c . | tr -d ' ')"
+assert_eq "one rule pair per bridge" "2" \
+    "$(grep -c 'br-lan_2 ' "$FW_USER" | tr -d ' ')"
+assert_false "port 853 absent while forced DNS is off" grep -q 'dport 853' "$FW_USER"
+assert_false "second call makes no changes" ensure_firewall_user_rules 5354
+
+FORCED_DNS=1
+assert_true "forced DNS adds port 853" ensure_firewall_user_rules 5354
+assert_file_contains "853 rule present" "$FW_USER" "br-lan_10 -p tcp --dport 853"
+FORCED_DNS=0
+unset FW_USER SYSFS_NET
 
 describe "load_env() — env file parsing"
 

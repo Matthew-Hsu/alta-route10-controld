@@ -51,6 +51,10 @@ done
 
 print_banner
 
+# Load the install's settings up front — DNS_PORT and the LAN_IFACES overrides
+# are needed by the iptables section below, not just by the endpoint section.
+load_env >/dev/null 2>&1 || true
+
 # ── Config Files ─────────────────────────────────────────────────────────────
 
 print_header "Configuration Files"
@@ -106,6 +110,24 @@ if [ "$rules" -gt 0 ]; then
     print_ok "${rules} redirect rule(s) active (per-device visibility enabled)"
 else
     print_fail "No redirect rules (per-device visibility disabled)"
+fi
+
+# Per-bridge coverage. A LAN bridge without a rule is the usual reason devices
+# resolve fine but never appear in the ControlD dashboard: their queries never
+# reach ctrld, so ControlD only ever sees the router itself.
+uncovered=""
+for iface in $(lan_ifaces); do
+    if iptables -t nat -C PREROUTING -i "$iface" -p udp --dport 53 \
+            -j REDIRECT --to-port "$DNS_PORT" 2>/dev/null; then
+        subnet="$(lan_cidr "$iface" 2>/dev/null || echo "no IPv4")"
+        print_ok "${iface} -> port ${DNS_PORT} (${subnet})"
+    else
+        uncovered="${uncovered} ${iface}"
+        print_fail "${iface} has NO redirect — its clients bypass ControlD"
+    fi
+done
+if [ -n "$uncovered" ]; then
+    print_info "Fix:  /cfg/reconfigure.sh --repair   (re-applies rules for all bridges)"
 fi
 
 force_dns=$(uci -q get https-dns-proxy.config.force_dns 2>/dev/null || echo "0")

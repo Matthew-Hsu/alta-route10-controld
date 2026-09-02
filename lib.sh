@@ -10,9 +10,8 @@ VERSION="1.6.0"
 # The ctrld release a fresh install pins. Deliberately separate from VERSION:
 # these move for unrelated reasons, and while they shared one variable a tools
 # bump silently pointed setup.sh at a ctrld release that does not exist.
-# The version actually installed on a router is CURLD_VERSION in
-# /cfg/controld.env (the historical spelling), which the weekly updater moves
-# forward from this pin.
+# The version actually installed on a router is CTRLD_VERSION in
+# /cfg/controld.env, which the weekly updater moves forward from this pin.
 CTRLD_PIN="1.5.7"
 
 # Set while the watchdog has torn the DNS redirects down to keep the LAN

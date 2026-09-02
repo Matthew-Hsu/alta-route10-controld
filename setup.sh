@@ -1,7 +1,7 @@
 #!/bin/sh
 # ControlD DNS installer for Alta Labs Route 10
 # Run this script ON the router:
-#   wget -O /tmp/setup.sh https://codeberg.org/CookieTyrant/alta-route10-controld/raw/branch/master/setup.sh
+#   wget -O /tmp/setup.sh https://raw.githubusercontent.com/Matthew-Hsu/alta-route10-controld/master/setup.sh
 #   sh /tmp/setup.sh
 #
 # lib.sh is auto-downloaded if not present — no need to wget it separately.
@@ -12,8 +12,11 @@
 set -e
 
 # ── Repository base URL for auto-downloading supplementary files ──
+# This fork is the canonical home; the original is archived. setup.sh fetches
+# lib.sh and the utility scripts from here when they are not alongside it, so
+# this must point at the tree these scripts are maintained in.
 
-REPO_BASE="https://codeberg.org/CookieTyrant/alta-route10-controld/raw/branch/master"
+REPO_BASE="https://raw.githubusercontent.com/Matthew-Hsu/alta-route10-controld/master"
 
 # ── Source shared library ──
 

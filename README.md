@@ -68,7 +68,7 @@ iptables REDIRECT (forced DNS)
 
 ```sh
 # SSH into your router and run:
-wget -O /tmp/setup.sh https://codeberg.org/CookieTyrant/alta-route10-controld/raw/branch/master/setup.sh
+wget -O /tmp/setup.sh https://raw.githubusercontent.com/Matthew-Hsu/alta-route10-controld/master/setup.sh
 sh /tmp/setup.sh
 ```
 

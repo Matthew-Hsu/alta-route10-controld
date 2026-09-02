@@ -446,13 +446,13 @@ describe "load_env() — env file parsing"
 cat > "$TMPDIR/test.env" << 'EOF'
 RESOLVER_ID=test123
 BOOTSTRAP_IP=1.2.3.4
-CURLD_VERSION=1.5.0
+CTRLD_VERSION=1.5.0
 DNS_TYPE=doq
 EOF
 load_env "$TMPDIR/test.env"
 assert_eq "resolver from env"     "test123" "$RESOLVER_ID"
 assert_eq "bootstrap from env"    "1.2.3.4" "$BOOTSTRAP_IP"
-assert_eq "version from env"      "1.5.0"   "$CURLD_VERSION"
+assert_eq "version from env"      "1.5.0"   "$CTRLD_VERSION"
 assert_eq "type from env"         "doq"     "$DNS_TYPE"
 assert_eq "PREFERRED_PROTOCOL defaults to DNS_TYPE" "doq" "$PREFERRED_PROTOCOL"
 
@@ -462,7 +462,7 @@ PREFERRED_PROTOCOL=""
 BOOTSTRAP_IP=""
 cat > "$TMPDIR/test-minimal.env" << 'EOF'
 RESOLVER_ID=abc
-CURLD_VERSION=1.5.0
+CTRLD_VERSION=1.5.0
 EOF
 load_env "$TMPDIR/test-minimal.env"
 assert_eq "default DNS_TYPE is doh3"      "doh3"        "$DNS_TYPE"

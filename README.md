@@ -207,7 +207,7 @@ The binary it replaces is the only thing answering DNS for every client on every
 
 1. **Verified** — the download is checked against the SHA-256 in the release's `checksums.txt`. A mismatch aborts before anything is swapped.
 2. **Proven** — the current binary is kept as `/cfg/ctrld.prev`, and the new one must answer a real DNS query within 15 seconds.
-3. **Rolled back** — if it does not, `ctrld.prev` is restored and `CURLD_VERSION` is left untouched, so the next run retries. Recovery needs no network, since the old binary is already on disk.
+3. **Rolled back** — if it does not, `ctrld.prev` is restored and `CTRLD_VERSION` is left untouched, so the next run retries. Recovery needs no network, since the old binary is already on disk.
 
 ### Watchdog (Health Monitor)
 
@@ -334,7 +334,7 @@ Two versions live in `lib.sh` and move independently:
 
 They used to be one variable, which meant bumping the tools version silently repointed `setup.sh` at a `ctrld` release that does not exist. `test.sh` now asserts they are distinct and that no download URL is built from `VERSION`.
 
-`CTRLD_PIN` is only the starting point. The version actually installed is recorded as `CURLD_VERSION` in `/cfg/controld.env` (the historical spelling), and the weekly updater moves it forward from there — so pinning gives reproducible installs without leaving routers stranded on an old release.
+`CTRLD_PIN` is only the starting point. The version actually installed is recorded as `CTRLD_VERSION` in `/cfg/controld.env`, and the weekly updater moves it forward from there — so pinning gives reproducible installs without leaving routers stranded on an old release.
 
 ## Shared Library
 

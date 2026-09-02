@@ -450,6 +450,31 @@ check_port_in_use() {
     return 1
 }
 
+# ── Cron Jobs ──
+
+# Is a cron entry for this exact script installed?
+#
+# Matching the bare word "watchdog" also matches the router's own
+# wireguard_watchdog job. rc.local then believed ours was already installed and
+# skipped reinstalling it after every reboot — so the health check silently
+# stopped running — while status.sh reported a job that was not there. Match the
+# script path, never a word that another service might share.
+# Usage: cron_has /cfg/watchdog.sh [crontab-file]
+cron_has() {
+    if [ -n "${2:-}" ]; then
+        grep -qF "$1" "$2" 2>/dev/null
+    else
+        crontab -l 2>/dev/null | grep -qF "$1"
+    fi
+}
+
+# Remove only our own cron entry. "grep -v watchdog" deleted the router's
+# wireguard_watchdog job as collateral.
+# Usage: cron_remove /cfg/watchdog.sh
+cron_remove() {
+    crontab -l 2>/dev/null | grep -vF "$1" | crontab - 2>/dev/null || true
+}
+
 # ── Health Checks ──
 
 # Test DNS resolution

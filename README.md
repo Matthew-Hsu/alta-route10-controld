@@ -393,7 +393,7 @@ See [docs/troubleshooting.md](docs/troubleshooting.md).
 CI runs on every push/PR to `master` via **GitHub Actions** (`.github/workflows/ci.yml`), this fork's canonical home. The original `.forgejo/workflows/` definitions are kept in step for anyone running this on a Forgejo instance, but GitHub does not read them.
 
 1. **shellcheck** — lints all shell scripts
-2. **test suite** — runs `test.sh` (unit tests; integration tests run only on-router)
+2. **test suite** — runs `test.sh` under both GNU awk and BusyBox awk, since the router runs BusyBox and its awk differs in ways that have silently broken on-device behavior while CI was green (integration tests run only on-router)
 3. **betterleaks** — scans for leaked secrets (`.forgejo/workflows/secrets-scan.yml`)
 
 ## Credits

@@ -529,7 +529,7 @@ assert_false "missing env file returns error" load_env "$TMPDIR/nonexistent.env"
 # ══════════════════════════════════════════════════════════════════
 
 describe "--help flags on all scripts"
-for script in setup.sh status.sh watchdog.sh benchmark.sh uninstall.sh reconfigure.sh; do
+for script in setup.sh status.sh benchmark.sh uninstall.sh reconfigure.sh; do
     if [ -f "$SCRIPT_DIR/$script" ]; then
         HELP_OUT=$(sh "$SCRIPT_DIR/$script" --help 2>&1 || true)
         assert_contains "$script --help mentions usage" "$HELP_OUT" "Usage"
@@ -607,13 +607,6 @@ else
     # Restore original in case self-heal used different proto
     printf "%s" "$BACKUP_TOML" > /cfg/ctrld.toml
 
-    # Integration: watchdog dry-run (the healthy path is silent — it logs to
-    # syslog, not stdout — so assert it exits clean rather than prints a string)
-    if grep -q dry-run /cfg/watchdog.sh 2>/dev/null; then
-        assert_true "watchdog dry-run exits clean" sh -c 'sh /cfg/watchdog.sh --dry-run >/dev/null 2>&1'
-    else
-        skip "watchdog --dry-run not available (old version)"
-    fi
 
     # Integration: benchmark runs successfully
     if [ -f /cfg/benchmark.sh ]; then

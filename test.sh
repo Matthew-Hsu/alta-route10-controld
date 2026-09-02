@@ -436,9 +436,9 @@ SPLITEOF
 SPLIT_NEW="$TMPDIR/split-rewritten.toml"
 write_ctrld_config "$SPLIT_NEW" "main" "76.76.2.22" "doq"
 {
-    toml_blocks "$SPLIT_BAK" '^\[upstream\.[1-9]'
-    toml_blocks "$SPLIT_BAK" '^\[network\.[1-9]'
-    toml_blocks "$SPLIT_BAK" '^\[listener\.0\.policy\]'
+    toml_blocks "$SPLIT_BAK" '[upstream.' '[upstream.0]'
+    toml_blocks "$SPLIT_BAK" '[network.' '[network.0]'
+    toml_blocks "$SPLIT_BAK" '[listener.0.policy]'
 } >> "$SPLIT_NEW"
 
 assert_file_contains "policy upstream survives"      "$SPLIT_NEW" '\[upstream.1\]'
@@ -482,11 +482,11 @@ cat > "$POL_CONF" << 'POLEOF'
     {"network.1" = ["upstream.1"]},
     ]
 POLEOF
-extra_up="$(toml_blocks "$POL_CONF" '^\[upstream\.[1-9]')"
+extra_up="$(toml_blocks "$POL_CONF" '[upstream.' '[upstream.0]')"
 assert_contains "extracts the extra upstream header" "$extra_up" "\[upstream.1\]"
 assert_contains "extracts its body too"              "$extra_up" "kid123.dns.controld.com"
 assert_not_contains "does not take upstream.0" "$extra_up" "ControlD"
-pol="$(toml_blocks "$POL_CONF" '^\[listener\.0\.policy\]')"
+pol="$(toml_blocks "$POL_CONF" '[listener.0.policy]')"
 assert_contains "extracts the policy table" "$pol" 'network.1'
 
 # ══════════════════════════════════════════════════════════════════

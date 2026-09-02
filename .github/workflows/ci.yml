@@ -23,6 +23,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: unit tests
+      - name: unit tests (GNU awk)
         # Integration tests auto-skip off-router; unit tests cover the logic.
         run: sh test.sh
+
+      - name: unit tests (BusyBox awk)
+        # The router runs BusyBox. Its awk differs from GNU awk in ways that
+        # have already caused a silent failure on-device while CI stayed green,
+        # so the suite runs against both.
+        run: |
+          sudo apt-get install -y -qq busybox
+          AWK="busybox awk" sh test.sh

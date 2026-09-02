@@ -24,6 +24,10 @@ DEGRADED_FLAG="${DEGRADED_FLAG:-/tmp/controld-degraded}"
 DNS_PORT="${DNS_PORT:-5354}"
 # The file fw3 runs on every firewall reload, and the marker for the block this
 # project owns inside it. FW_USER is overridable so tests never touch /etc.
+# awk implementation to use. The router runs BusyBox awk, which handles a
+# regex passed through -v differently from GNU awk; overridable so the tests
+# can run the same assertions under both.
+AWK="${AWK:-awk}"
 FW_USER="${FW_USER:-/etc/firewall.user}"
 FW_MARKER="controld-dns-redirect"
 # 443-only fallback targets (DoH3/DoH). DoQ/DoT use port 853 which ISPs/mobile
@@ -190,15 +194,17 @@ lan_net_name() {
 # Network address for an IPv4 address + prefix length
 # Usage: ipv4_network 192.168.10.1 24  ->  192.168.10.0/24
 ipv4_network() {
-    awk -v ip="$1" -v pfx="$2" 'BEGIN {
+    $AWK -v ip="$1" -v pfx="$2" 'BEGIN {
         if (split(ip, o, ".") != 4) exit 1
         if (pfx !~ /^[0-9]+$/ || pfx + 0 > 32) exit 1
         for (i = 1; i <= 4; i++) {
             if (o[i] !~ /^[0-9]+$/ || o[i] + 0 > 255) exit 1
             bits = pfx - (i - 1) * 8
-            if (bits >= 8)     step = 1
+            # Repeated doubling rather than 2 ^ (8 - bits): some BusyBox awk
+            # builds ship without math support and the exponent operator fails
+            if (bits >= 8)      step = 1
             else if (bits <= 0) step = 256
-            else                step = 2 ^ (8 - bits)
+            else { step = 1; for (k = bits; k < 8; k++) step = step * 2 }
             o[i] = int(o[i] / step) * step
         }
         printf "%d.%d.%d.%d/%d\n", o[1], o[2], o[3], o[4], pfx
@@ -260,14 +266,24 @@ write_ctrld_config() {
 EOF
 }
 
-# Print whole [table] blocks whose header line matches an extended regex.
-# A block runs from its header to the next line starting with "[".
-# Usage: toml_blocks <file> '^\[upstream\.[1-9]'
+# Print whole [table] blocks whose header starts with a literal prefix,
+# optionally skipping one exact header. A block runs from its header to the
+# next line starting with "[".
+#
+# Matching is literal string comparison, not a regex passed through -v: BusyBox
+# awk (which the router runs) mangles the backslashes in a pattern like
+# '^\[upstream\.[1-9]' -- that pattern then matches every line, while
+# '^\[listener\.0\.policy\]' matches none. GNU awk handles both, so the unit
+# tests passed while on the router a config rewrite silently dropped the
+# split-DNS policy and duplicated every other table.
+#
+# Usage: toml_blocks <file> <header-prefix> [exact-header-to-skip]
+#   toml_blocks cfg.toml '[upstream.' '[upstream.0]'
 toml_blocks() {
     [ -f "$1" ] || return 0
-    awk -v re="$2" '
-        /^\[/ { keep = ($0 ~ re) }
-        keep   { print }
+    $AWK -v p="$2" -v x="${3:-}" '
+        substr($0, 1, 1) == "[" { keep = (index($0, p) == 1) && ($0 != x) }
+        keep { print }
     ' "$1"
 }
 
@@ -280,7 +296,7 @@ next_toml_index() {
     _nti_file="${1:-/cfg/ctrld.toml}"
     _nti_tbl="$2"
     [ -f "$_nti_file" ] || { printf '0'; return 0; }
-    awk -v t="$_nti_tbl" '
+    $AWK -v t="$_nti_tbl" '
         match($0, "^\\[" t "\\.[0-9]+\\]") {
             n = substr($0, length(t) + 3, RLENGTH - length(t) - 3) + 0
             if (n >= max) max = n + 1
@@ -294,7 +310,7 @@ next_toml_index() {
 # Pull one asset's SHA-256 out of a checksums.txt body ("<sha>  <filename>")
 # Usage: checksum_for_asset <checksums-text> <asset-filename>
 checksum_for_asset() {
-    printf '%s\n' "$1" | awk -v a="$2" '$2 == a { print $1; exit }'
+    printf '%s\n' "$1" | $AWK -v a="$2" '$2 == a { print $1; exit }'
 }
 
 # Check a downloaded release asset against the checksums.txt published beside it.
@@ -541,7 +557,7 @@ remove_dns_redirects() {
 # Usage: read_block <file> <marker>
 read_block() {
     [ -f "$1" ] || return 0
-    awk -v m="$2" '
+    $AWK -v m="$2" '
         $0 == "# " m " BEGIN" { inb = 1; next }
         $0 == "# " m " END"   { inb = 0; next }
         inb { print }
@@ -555,7 +571,7 @@ replace_block() {
     _rb_body="$(cat)"
     _rb_tmp="${_rb_file}.controld.$$"
     [ -f "$_rb_file" ] || : > "$_rb_file"
-    if ! awk -v m="$_rb_marker" '
+    if ! $AWK -v m="$_rb_marker" '
         $0 == "# " m " BEGIN" { skip = 1; next }
         $0 == "# " m " END"   { skip = 0; next }
         !skip { print }

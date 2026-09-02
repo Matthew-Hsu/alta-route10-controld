@@ -423,14 +423,6 @@ else
     cidrs = ["0.0.0.0/0"]
     name = "Everyone"
 
-[network.1]
-    cidrs = ["192.168.1.0/24"]
-    name = "LAN"
-
-[network.2]
-    cidrs = ["192.168.2.0/24"]
-    name = "LAN2"
-
 [upstream.0]
     bootstrap_ip = "${_bootstrap}"
     endpoint = "${_endpoint}"
@@ -595,7 +587,9 @@ POLICY_NETWORKS=""
 POLICY_MACS=""
 POLICY_CONF=""
 UPSTREAM_IDX=1
-NETWORK_IDX=3
+# Allocate from the config that was just written rather than assuming an index:
+# a fixed one silently overwrites a network block when the layout changes.
+NETWORK_IDX="$(next_toml_index /cfg/ctrld.toml network)"
 
 if [ "$DO_SPLIT" = "y" ] || [ "$DO_SPLIT" = "Y" ]; then
     while true; do

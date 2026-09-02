@@ -299,7 +299,8 @@ sh test.sh    # works locally and on-router
 - Endpoint URL generation for all protocols
 - Protocol labels and fallback chain ordering
 - Input validation (resolver IDs, MACs, CIDRs, protocols)
-- TOML config generation
+- TOML config generation and table index allocation
+- LAN bridge discovery, subnet math, and generated redirect rules
 - Env file parsing with defaults
 - `--help` and `--version` flags on all scripts
 - Invalid input rejection

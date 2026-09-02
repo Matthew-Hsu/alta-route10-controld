@@ -117,7 +117,7 @@ If `/cfg/reconfigure.sh` predates this fix, update the tooling first — re-runn
 `setup.sh` reinstalls `/cfg/lib.sh` and the helper scripts:
 
 ```sh
-wget -O /tmp/setup.sh https://codeberg.org/CookieTyrant/alta-route10-controld/raw/branch/master/setup.sh
+wget -O /tmp/setup.sh https://raw.githubusercontent.com/Matthew-Hsu/alta-route10-controld/master/setup.sh
 sh /tmp/setup.sh
 ```
 

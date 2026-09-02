@@ -902,9 +902,16 @@ _proto="$DNS_TYPE"; _attempt=0
 while [ "$_attempt" -lt "$MAX_RESTART_ATTEMPTS" ]; do
     _proto="$(next_proto "$_proto")"; _attempt=$((_attempt + 1))
     logger -t watchdog "trying ${_proto} (attempt ${_attempt}/${MAX_RESTART_ATTEMPTS})"
-    _endpoint="$(get_endpoint "$_proto" "$RESOLVER_ID")"
-    sed -i "s|endpoint = \".*\"|endpoint = \"${_endpoint}\"|" /cfg/ctrld.toml
-    sed -i "s|type = \"[a-z0-9]*\"|type = \"${_proto}\"|" /cfg/ctrld.toml
+    # Switch each upstream's transport while keeping its own resolver. The
+    # unanchored sed this replaces rewrote every endpoint in the file to the
+    # main resolver, quietly moving split-DNS profiles onto the default one.
+    if command -v retarget_upstreams >/dev/null 2>&1; then
+        retarget_upstreams /cfg/ctrld.toml "$_proto"
+    else
+        logger -t watchdog "lib.sh missing — cannot switch protocol safely, restarting on ${DNS_TYPE}"
+        restart_ctrld /cfg/ctrld.toml && exit 0
+        break
+    fi
     if restart_ctrld /cfg/ctrld.toml; then
         sed -i "s|DNS_TYPE=.*|DNS_TYPE=${_proto}|" /cfg/controld.env
         logger -t watchdog "fallback to ${_proto} succeeded"

@@ -351,6 +351,58 @@ assert_eq "no partial-name match" "" \
 assert_eq "unverifiable download reports 2, not 0" "2" \
     "$(rc=0; verify_ctrld_download "$TMPDIR/no-such-file" asset 1.5.7 || rc=$?; echo $rc)"
 
+describe "retarget_upstreams() — protocol switch keeps each resolver"
+
+RT="$TMPDIR/retarget.toml"
+cat > "$RT" << 'RTEOF'
+[upstream.0]
+    endpoint = "https://dns.controld.com/main1234"
+    name = "ControlD"
+    type = "doh3"
+[upstream.1]
+    endpoint = "https://dns.controld.com/kids5678"
+    name = "ControlD-Kids"
+    type = "doh3"
+[upstream.2]
+    endpoint = "https://dns.quad9.net/dns-query"
+    name = "Quad9"
+    type = "doh"
+[listener.0.policy]
+    networks = [
+    {"network.1" = ["upstream.1"]}
+    ]
+RTEOF
+retarget_upstreams "$RT" doq
+
+# The bug this replaces: an unanchored sed rewrote every endpoint to the main
+# resolver, silently moving a split-DNS profile onto the default profile.
+assert_file_contains "main upstream switched to DoQ form"  "$RT" 'endpoint = "main1234.dns.controld.com"'
+assert_file_contains "policy upstream keeps its own resolver" "$RT" 'endpoint = "kids5678.dns.controld.com"'
+assert_eq "the two resolvers stay distinct" "2" \
+    "$(grep -c 'dns.controld.com' "$RT" | tr -d ' ')"
+assert_false "kids resolver was not replaced by the main one" \
+    grep -q 'main1234.dns.controld.com.*kids\|kids5678.*main1234' "$RT"
+assert_eq "no upstream still points at the old main endpoint" "0" \
+    "$(grep -c 'dns.controld.com/main1234' "$RT" | tr -d ' ')"
+assert_file_contains "non-ControlD upstream untouched" "$RT" 'endpoint = "https://dns.quad9.net/dns-query"'
+assert_file_contains "and keeps its own protocol"      "$RT" 'type = "doh"'
+assert_eq "both ControlD upstreams retyped" "2" "$(grep -c 'type = "doq"' "$RT" | tr -d ' ')"
+assert_file_contains "policy table survives the rewrite" "$RT" 'network.1" = \["upstream.1"\]'
+
+# Round-trip back, and the original endpoints must come back exactly
+retarget_upstreams "$RT" doh3
+assert_file_contains "round-trips to the DoH form"        "$RT" 'endpoint = "https://dns.controld.com/main1234"'
+assert_file_contains "policy resolver round-trips too"    "$RT" 'endpoint = "https://dns.controld.com/kids5678"'
+
+describe "resolver_from_endpoint() — identity extraction"
+assert_eq "DoH form"  "abc123" "$(resolver_from_endpoint https://dns.controld.com/abc123)"
+assert_eq "DoQ form"  "abc123" "$(resolver_from_endpoint abc123.dns.controld.com)"
+assert_false "rejects a non-ControlD endpoint" resolver_from_endpoint https://dns.quad9.net/dns-query
+assert_false "rejects empty input"             resolver_from_endpoint ""
+# retarget must agree with get_endpoint, or the two would drift apart
+assert_eq "agrees with get_endpoint for doq" "$(get_endpoint doq abc123)" "abc123.dns.controld.com"
+assert_eq "agrees with get_endpoint for doh3" "$(get_endpoint doh3 abc123)" "https://dns.controld.com/abc123"
+
 describe "split-DNS config survives a rewrite"
 
 # The exact extraction apply_and_restart uses to carry policy config across a

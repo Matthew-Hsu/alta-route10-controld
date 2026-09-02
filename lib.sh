@@ -314,6 +314,82 @@ verify_ctrld_download() {
     [ "$_vcd_want" = "$_vcd_got" ]
 }
 
+# ── Upstream Protocol Switching ──
+
+# Resolver ID out of a ControlD endpoint, in either protocol's form.
+# Non-zero for anything that is not a ControlD endpoint, so a custom upstream
+# is never rewritten into one.
+# Usage: resolver_from_endpoint https://dns.controld.com/abc123  ->  abc123
+#        resolver_from_endpoint abc123.dns.controld.com          ->  abc123
+resolver_from_endpoint() {
+    case "$1" in
+        https://dns.controld.com/*) printf '%s' "${1##*/}" ;;
+        *.dns.controld.com)         printf '%s' "${1%%.*}" ;;
+        *) return 1 ;;
+    esac
+}
+
+# Rewrite one buffered [upstream.N] block for a protocol. Reads the block on
+# stdin, writes it to stdout. Helper for retarget_upstreams.
+retarget_upstream_block() {
+    _rub_proto="$1"
+    _rub_block="$(cat)"
+    _rub_ep="$(printf '%s\n' "$_rub_block" \
+        | sed -n 's/^[[:space:]]*endpoint[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' | head -1)"
+    if ! _rub_id="$(resolver_from_endpoint "$_rub_ep")"; then
+        # Not a ControlD endpoint — leave this upstream exactly as it is
+        printf '%s\n' "$_rub_block"
+        return 0
+    fi
+    _rub_new="$(get_endpoint "$_rub_proto" "$_rub_id")"
+    printf '%s\n' "$_rub_block" \
+        | sed -e "s|^\([[:space:]]*endpoint[[:space:]]*=[[:space:]]*\).*|\1\"${_rub_new}\"|" \
+              -e "s|^\([[:space:]]*type[[:space:]]*=[[:space:]]*\).*|\1\"${_rub_proto}\"|"
+}
+
+# Switch every ControlD upstream in a config to a transport protocol, keeping
+# each upstream's own resolver ID.
+#
+# Protocol changes used to be done with an unanchored sed, which rewrote every
+# endpoint line in the file to the main resolver's — so one protocol fallback
+# silently repointed a split-DNS profile (kids, guest) at the default profile,
+# with nothing failing and nothing logged. Switching transport is per upstream;
+# the resolver each one points at is its identity and must survive.
+# Usage: retarget_upstreams <config> <proto>
+retarget_upstreams() {
+    _rtu_file="$1"; _rtu_proto="$2"
+    [ -f "$_rtu_file" ] || return 1
+    _rtu_tmp="${_rtu_file}.retarget.$$"
+    : > "$_rtu_tmp"
+    _rtu_buf=""
+    _rtu_in=0
+    while IFS= read -r _rtu_line || [ -n "$_rtu_line" ]; do
+        case "$_rtu_line" in
+            \[*\])
+                # A table header ends whatever block we were collecting
+                if [ "$_rtu_in" = "1" ]; then
+                    printf '%s\n' "$_rtu_buf" | retarget_upstream_block "$_rtu_proto" >> "$_rtu_tmp"
+                    _rtu_buf=""
+                    _rtu_in=0
+                fi
+                case "$_rtu_line" in
+                    \[upstream.*\]) _rtu_in=1; _rtu_buf="$_rtu_line"; continue ;;
+                esac
+                ;;
+        esac
+        if [ "$_rtu_in" = "1" ]; then
+            _rtu_buf="${_rtu_buf}
+${_rtu_line}"
+        else
+            printf '%s\n' "$_rtu_line" >> "$_rtu_tmp"
+        fi
+    done < "$_rtu_file"
+    if [ "$_rtu_in" = "1" ]; then
+        printf '%s\n' "$_rtu_buf" | retarget_upstream_block "$_rtu_proto" >> "$_rtu_tmp"
+    fi
+    mv "$_rtu_tmp" "$_rtu_file"
+}
+
 # ── Process Management ──
 
 # Kill any running ctrld process
@@ -684,7 +760,10 @@ EOF
     fi
 
     logger -t watchdog "preferred $(proto_label "$PREFERRED_PROTOCOL") healthy — upgrading back"
-    write_ctrld_config /cfg/ctrld.toml "$RESOLVER_ID" "$BOOTSTRAP_IP" "$PREFERRED_PROTOCOL"
+    # Switch the transport in place. Regenerating the config here (what this
+    # used to do) silently deleted every split-DNS policy — automatically, about
+    # 30 minutes after any protocol fallback, with nothing logged.
+    retarget_upstreams /cfg/ctrld.toml "$PREFERRED_PROTOCOL"
     if restart_ctrld /cfg/ctrld.toml; then
         sed -i "s/^DNS_TYPE=.*/DNS_TYPE=${PREFERRED_PROTOCOL}/" /cfg/controld.env
         logger -t watchdog "upgraded to $(proto_label "$PREFERRED_PROTOCOL")"

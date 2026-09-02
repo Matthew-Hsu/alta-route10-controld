@@ -106,6 +106,11 @@ apply_and_restart() {
                 if [ -n "$policy" ];    then printf '\n%s\n' "$policy";    fi
             } >> /cfg/ctrld.toml
             print_info "Split DNS policy config preserved"
+            # Preserved upstreams still carry the old protocol. Leaving them
+            # there means a policy keeps using a transport the user just moved
+            # off — failing for exactly the devices the policy targets.
+            retarget_upstreams /cfg/ctrld.toml "$DNS_TYPE"
+            print_info "Policy upstreams moved to $(proto_label "$DNS_TYPE")"
         fi
     fi
 

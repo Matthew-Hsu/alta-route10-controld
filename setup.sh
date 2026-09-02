@@ -387,7 +387,7 @@ BOOTSTRAP_IP=${BOOTSTRAP_IP}
 CTRLD_VERSION=${CTRLD_PIN}
 DNS_TYPE=${DNS_TYPE}
 PREFERRED_PROTOCOL=${DNS_TYPE}
-FORCED_DNS=0
+FORCED_DNS=$(preserved_forced_dns /cfg/controld.env)
 EOF
 print_ok "/cfg/controld.env written"
 

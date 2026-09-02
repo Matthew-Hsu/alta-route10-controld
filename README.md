@@ -148,8 +148,33 @@ sh reconfigure.sh --policy
 # Toggle forced DNS hijacking
 sh reconfigure.sh --force-dns
 
+# Re-apply DNS redirects to every LAN bridge (picks up new VLANs)
+sh reconfigure.sh --repair
+
 # Interactive menu (no flags)
 sh reconfigure.sh
+```
+
+### VLAN Coverage
+
+Per-device visibility depends on DNS being intercepted on every LAN bridge. Alta
+names the default LAN bridge `br-lan` and each VLAN `br-lan_<vlan-id>`
+(`br-lan_10`, `br-lan_20`, …), so the bridge list is discovered at runtime — a
+VLAN added after install is picked up by the watchdog within 5 minutes.
+
+```sh
+sh status.sh                  # per-bridge redirect coverage + subnets
+sh reconfigure.sh --repair    # re-apply redirects to every bridge now
+```
+
+A bridge without a redirect is the usual reason a device resolves fine but never
+appears in the ControlD dashboard: its queries never reach `ctrld`, so ControlD
+only ever sees the router. To leave a VLAN alone (a guest network with its own
+DNS, say), set either of these in `/cfg/controld.env`:
+
+```sh
+LAN_IFACES_EXCLUDE="br-lan_40"              # cover everything except these
+LAN_IFACES="br-lan br-lan_10 br-lan_20"     # or pin the list exactly
 ```
 
 ### Boot Persistence
@@ -158,7 +183,7 @@ sh reconfigure.sh
 
 1. Runs `post-cfg.sh` — starts ctrld, restores iptables redirect rules, configures fallback DNS
 2. Reinstalls cron jobs — adds watchdog (5-min) and auto-update (weekly) to crontab, since crontab lives in `/etc/` and may be wiped by firmware updates
-3. Writes `firewall.user` rules — ensures iptables redirects survive mid-session firewall restarts
+3. Refreshes `firewall.user` rules — regenerated from the current LAN bridge list, so iptables redirects survive mid-session firewall restarts
 
 After a firmware update or reboot, ControlD is fully operational within ~30 seconds. No manual intervention required.
 
@@ -184,7 +209,7 @@ A cron job runs weekly (Monday 3 AM) to check for new `ctrld` releases and updat
 
 1. Checks if `ctrld` is running — restarts if dead
 2. Tests DNS resolution through `ctrld`
-3. If DNS is healthy, self-heals forced-DNS state, warns if `dhcp.leases` is stale, and **self-upgrades back to your preferred protocol** if currently on a fallback
+3. If DNS is healthy, re-asserts redirect coverage for any LAN bridge added since install (new VLANs), self-heals forced-DNS state, warns if `dhcp.leases` is stale, and **self-upgrades back to your preferred protocol** if currently on a fallback
 4. If DNS fails, **waits for a second consecutive failure** before acting (debounce — avoids restarting ctrld or churning the protocol on a single transient blip)
 5. Restores iptables redirect rules if they disappeared
 6. Logs all actions to syslog
@@ -296,6 +321,7 @@ All scripts source `lib.sh` which provides:
 - Config generation (`write_ctrld_config`, `get_endpoint`)
 - Process management (`start_ctrld`, `stop_ctrld`, `restart_ctrld`)
 - Health checks (`check_dns`, `ensure_iptables`, `check_port_in_use`)
+- LAN bridge discovery (`lan_ifaces`, `lan_cidr`, `lan_net_name`) and redirect rules (`ensure_redirect_rule`, `ensure_firewall_user_rules`)
 - Forced DNS (`ensure_forced_dns`, `disable_forced_dns`, `set_forced_dns_flag`)
 - Input validation (`valid_resolver`, `valid_mac`, `valid_cidr`, `valid_proto`)
 - Protocol utilities (`proto_label`, `next_proto`)

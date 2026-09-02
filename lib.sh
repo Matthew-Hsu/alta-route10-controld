@@ -3,7 +3,14 @@
 # Source this file: . /path/to/lib.sh
 
 VERSION="1.5.0"
-DNS_PORT=5354
+# Respect a port already set by the caller's environment (an install that had to
+# move off 5354 exports it before sourcing this file); load_env applies the same
+# default for anything that reads /cfg/controld.env.
+DNS_PORT="${DNS_PORT:-5354}"
+# The file fw3 runs on every firewall reload, and the marker for the block this
+# project owns inside it. FW_USER is overridable so tests never touch /etc.
+FW_USER="${FW_USER:-/etc/firewall.user}"
+FW_MARKER="controld-dns-redirect"
 # 443-only fallback targets (DoH3/DoH). DoQ/DoT use port 853 which ISPs/mobile
 # networks can block, so they are never automatic fallback *targets* — they can
 # still be the user's primary protocol. See watchdog self-upgrade for recovery.
@@ -119,6 +126,80 @@ next_proto() {
     printf "%s" "$(echo "$FALLBACK_CHAIN" | awk '{print $1}')"
 }
 
+# ── LAN Interface Discovery ──
+
+# Root of the sysfs network tree — overridable so tests can point at a fixture.
+SYSFS_NET="${SYSFS_NET:-/sys/class/net}"
+
+# List the LAN bridges that DNS must be intercepted on, one per line.
+#
+# Alta names the default LAN bridge br-lan and every additional VLAN
+# br-lan_<vlan-id> (br-lan_10, br-lan_20, ...). A hardcoded list therefore
+# misses every VLAN the user adds: those clients keep resolving through
+# whatever DNS they were handed, bypass ctrld, and never show up as devices in
+# the ControlD dashboard. Enumerate sysfs instead, so VLANs created after
+# install are covered the next time rules are asserted (boot or watchdog).
+#
+# Overrides, set in /cfg/controld.env:
+#   LAN_IFACES="br-lan br-lan_10"    intercept exactly these
+#   LAN_IFACES_EXCLUDE="br-lan_40"   intercept everything except these
+lan_ifaces() {
+    if [ -n "${LAN_IFACES:-}" ]; then
+        for _lan_if in $LAN_IFACES; do printf '%s\n' "$_lan_if"; done
+        return 0
+    fi
+    _lan_found=0
+    for _lan_path in "$SYSFS_NET"/br-lan "$SYSFS_NET"/br-lan_*; do
+        [ -e "$_lan_path" ] || continue
+        _lan_if="${_lan_path##*/}"
+        case " ${LAN_IFACES_EXCLUDE:-} " in
+            *" ${_lan_if} "*) continue ;;
+        esac
+        _lan_found=1
+        printf '%s\n' "$_lan_if"
+    done
+    # Fall back to the historical default if sysfs is unreadable
+    [ "$_lan_found" = "1" ] || printf 'br-lan\n'
+}
+
+# Human-readable name for a LAN bridge, used to label ctrld network blocks
+# Usage: lan_net_name br-lan_10  ->  VLAN 10
+lan_net_name() {
+    case "$1" in
+        br-lan)   printf 'LAN' ;;
+        br-lan_*) printf 'VLAN %s' "${1#br-lan_}" ;;
+        *)        printf '%s' "$1" ;;
+    esac
+}
+
+# Network address for an IPv4 address + prefix length
+# Usage: ipv4_network 192.168.10.1 24  ->  192.168.10.0/24
+ipv4_network() {
+    awk -v ip="$1" -v pfx="$2" 'BEGIN {
+        if (split(ip, o, ".") != 4) exit 1
+        if (pfx !~ /^[0-9]+$/ || pfx + 0 > 32) exit 1
+        for (i = 1; i <= 4; i++) {
+            if (o[i] !~ /^[0-9]+$/ || o[i] + 0 > 255) exit 1
+            bits = pfx - (i - 1) * 8
+            if (bits >= 8)     step = 1
+            else if (bits <= 0) step = 256
+            else                step = 2 ^ (8 - bits)
+            o[i] = int(o[i] / step) * step
+        }
+        printf "%d.%d.%d.%d/%d\n", o[1], o[2], o[3], o[4], pfx
+    }'
+}
+
+# Subnet of a LAN bridge — lan_cidr br-lan_10 -> 192.168.10.0/24
+# Non-zero (and no output) when the bridge has no IPv4 address.
+lan_cidr() {
+    _lan_addr="$(ip -4 -o addr show dev "$1" 2>/dev/null | awk '{print $4; exit}')"
+    case "$_lan_addr" in
+        */*) ipv4_network "${_lan_addr%/*}" "${_lan_addr#*/}" ;;
+        *)   return 1 ;;
+    esac
+}
+
 # Generate ctrld.toml config
 # Usage: write_ctrld_config <output_file> <resolver> <bootstrap> <type> [extra_upstreams] [policy]
 write_ctrld_config() {
@@ -226,19 +307,141 @@ check_dns() {
     fi
 }
 
-# Ensure iptables redirect rules are in place
+# ── iptables Redirect Rules ──
+
+# Add a REDIRECT rule unless an identical one already exists.
+# Usage: ensure_redirect_rule <append|insert> <iface> <tcp|udp> <dport> <to-port>
+# Returns 0 when a rule was added, 1 when it was already present or failed.
+ensure_redirect_rule() {
+    _err_mode="$1"; _err_if="$2"; _err_proto="$3"; _err_dport="$4"; _err_to="$5"
+    if iptables -t nat -C PREROUTING -i "$_err_if" -p "$_err_proto" \
+            --dport "$_err_dport" -j REDIRECT --to-port "$_err_to" 2>/dev/null; then
+        return 1
+    fi
+    if [ "$_err_mode" = "insert" ]; then
+        # Head of PREROUTING, so the hijack wins over firewall zone port-forwards
+        iptables -t nat -I PREROUTING 1 -i "$_err_if" -p "$_err_proto" \
+            --dport "$_err_dport" -j REDIRECT --to-port "$_err_to" 2>/dev/null
+    else
+        iptables -t nat -A PREROUTING -i "$_err_if" -p "$_err_proto" \
+            --dport "$_err_dport" -j REDIRECT --to-port "$_err_to" 2>/dev/null
+    fi
+}
+
+# Delete a REDIRECT rule if present (never fails)
+# Usage: del_redirect_rule <iface> <tcp|udp> <dport> <to-port>
+del_redirect_rule() {
+    iptables -t nat -D PREROUTING -i "$1" -p "$2" --dport "$3" \
+        -j REDIRECT --to-port "$4" 2>/dev/null || true
+}
+
+# Emit the iptables commands that assert the DNS redirect, for /etc/firewall.user
+# Usage: dns_redirect_commands <to-port> <dport>...
+dns_redirect_commands() {
+    _drc_to="$1"; shift
+    for _drc_if in $(lan_ifaces); do
+        for _drc_dport in "$@"; do
+            printf 'iptables -t nat -A PREROUTING -i %s -p udp --dport %s -j REDIRECT --to-port %s\n' \
+                "$_drc_if" "$_drc_dport" "$_drc_to"
+            printf 'iptables -t nat -A PREROUTING -i %s -p tcp --dport %s -j REDIRECT --to-port %s\n' \
+                "$_drc_if" "$_drc_dport" "$_drc_to"
+        done
+    done
+}
+
+# Ensure the port-53 redirect exists on every LAN bridge.
+#
+# Rules are checked per interface and per protocol rather than "is there any
+# rule mentioning the port", so a VLAN added after install gets covered on the
+# next call (boot, or the 5-minute watchdog) instead of silently bypassing ctrld.
+# Returns 0 if anything was added.
 ensure_iptables() {
     local port="${1:-$DNS_PORT}"
-    local count
-    count=$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c "$port")
-    if [ "$count" -eq 0 ]; then
-        iptables -t nat -A PREROUTING -i br-lan -p udp --dport 53 -j REDIRECT --to-port "$port"
-        iptables -t nat -A PREROUTING -i br-lan -p tcp --dport 53 -j REDIRECT --to-port "$port"
-        iptables -t nat -A PREROUTING -i br-lan_2 -p udp --dport 53 -j REDIRECT --to-port "$port"
-        iptables -t nat -A PREROUTING -i br-lan_2 -p tcp --dport 53 -j REDIRECT --to-port "$port"
+    local added=0
+    local iface
+    for iface in $(lan_ifaces); do
+        if ensure_redirect_rule append "$iface" udp 53 "$port"; then added=$((added + 1)); fi
+        if ensure_redirect_rule append "$iface" tcp 53 "$port"; then added=$((added + 1)); fi
+    done
+    if [ "$added" -gt 0 ]; then
         return 0
     fi
     return 1
+}
+
+# ── Marker-Delimited File Blocks ──
+# Used to keep /etc/firewall.user in sync with the current LAN bridge list
+# without appending a duplicate block on every run.
+
+# Print the body of a marked block (empty if absent)
+# Usage: read_block <file> <marker>
+read_block() {
+    [ -f "$1" ] || return 0
+    awk -v m="$2" '
+        $0 == "# " m " BEGIN" { inb = 1; next }
+        $0 == "# " m " END"   { inb = 0; next }
+        inb { print }
+    ' "$1"
+}
+
+# Replace (or create) a marked block with the text on stdin
+# Usage: replace_block <file> <marker> < body
+replace_block() {
+    _rb_file="$1"; _rb_marker="$2"
+    _rb_body="$(cat)"
+    _rb_tmp="${_rb_file}.controld.$$"
+    [ -f "$_rb_file" ] || : > "$_rb_file"
+    if ! awk -v m="$_rb_marker" '
+        $0 == "# " m " BEGIN" { skip = 1; next }
+        $0 == "# " m " END"   { skip = 0; next }
+        !skip { print }
+    ' "$_rb_file" > "$_rb_tmp"; then
+        rm -f "$_rb_tmp"
+        return 1
+    fi
+    {
+        printf '# %s BEGIN\n' "$_rb_marker"
+        printf '%s\n' "$_rb_body"
+        printf '# %s END\n' "$_rb_marker"
+    } >> "$_rb_tmp"
+    mv "$_rb_tmp" "$_rb_file"
+}
+
+# Delete a marked block
+# Usage: remove_block <file> <marker>
+remove_block() {
+    [ -f "$1" ] || return 0
+    printf '' | replace_block "$1" "$2"
+    # replace_block leaves an empty block behind; strip the markers too
+    sed -i "/^# $2 BEGIN$/,/^# $2 END$/d" "$1"
+}
+
+# Keep /etc/firewall.user asserting the DNS redirects for the current LAN
+# bridges, so they are restored instantly on a firewall reload. Rewrites only on
+# drift (a new VLAN, a changed port), so the 5-minute watchdog does not write to
+# flash every cycle. Port 853 is included only when forced DNS is on.
+# Usage: ensure_firewall_user_rules [port]
+ensure_firewall_user_rules() {
+    _efu_port="${1:-$DNS_PORT}"
+    _efu_file="$FW_USER"
+    if [ "${FORCED_DNS:-0}" = "1" ]; then
+        _efu_want="$(dns_redirect_commands "$_efu_port" 53 853)"
+    else
+        _efu_want="$(dns_redirect_commands "$_efu_port" 53)"
+    fi
+    if [ "$(read_block "$_efu_file" "$FW_MARKER")" = "$_efu_want" ]; then
+        return 1
+    fi
+    # Drop pre-marker rules from older installs so they are not duplicated
+    if [ -f "$_efu_file" ]; then
+        sed -i -e '/controld-forced-dns-853/d' \
+               -e '/ControlD per-device DNS redirect/d' \
+               -e '/^iptables -t nat -A PREROUTING -i br-lan.*--dport 53 -j REDIRECT --to-port/d' \
+               -e '/^iptables -t nat -A PREROUTING -i br-lan.*--dport 853 -j REDIRECT --to-port/d' "$_efu_file"
+    fi
+    printf '%s\n' "$_efu_want" | replace_block "$_efu_file" "$FW_MARKER"
+    logger -t controld "firewall.user DNS redirect rules updated ($(lan_ifaces | tr '\n' ' '))"
+    return 0
 }
 
 # ── Forced DNS ──
@@ -282,28 +485,20 @@ ensure_forced_dns() {
         logger -t forced-dns "restored uci force_dns=1 (ports 53,853)"
     fi
 
-    # 2. port-853 iptables rules — restored here so they survive reboot
-    if ! iptables -t nat -L PREROUTING -n 2>/dev/null | grep -q 'dpt:853'; then
-        iptables -t nat -I PREROUTING 1 -i br-lan   -p tcp --dport 853 -j REDIRECT --to-port "$_port"
-        iptables -t nat -I PREROUTING 2 -i br-lan   -p udp --dport 853 -j REDIRECT --to-port "$_port"
-        iptables -t nat -I PREROUTING 3 -i br-lan_2 -p tcp --dport 853 -j REDIRECT --to-port "$_port"
-        iptables -t nat -I PREROUTING 4 -i br-lan_2 -p udp --dport 853 -j REDIRECT --to-port "$_port"
-        logger -t forced-dns "restored port-853 redirect rules"
+    # 2. port-853 iptables rules — restored here so they survive reboot.
+    #    Checked per bridge, so a VLAN added after install is covered too.
+    _added=0
+    for _if in $(lan_ifaces); do
+        if ensure_redirect_rule insert "$_if" tcp 853 "$_port"; then _added=$((_added + 1)); fi
+        if ensure_redirect_rule insert "$_if" udp 853 "$_port"; then _added=$((_added + 1)); fi
+    done
+    if [ "$_added" -gt 0 ]; then
+        logger -t forced-dns "restored ${_added} port-853 redirect rule(s)"
     fi
 
-    # 3. firewall.user — persist 853 rules so a firewall reload restores them instantly
-    _fw="/etc/firewall.user"
-    if [ -f "$_fw" ] && ! grep -q 'controld-forced-dns-853' "$_fw" 2>/dev/null; then
-        cat >> "$_fw" << 'FW853'
-
-# controld-forced-dns-853 — DoT hijack, restored by ensure_forced_dns
-iptables -t nat -A PREROUTING -i br-lan   -p tcp --dport 853 -j REDIRECT --to-port 5354
-iptables -t nat -A PREROUTING -i br-lan   -p udp --dport 853 -j REDIRECT --to-port 5354
-iptables -t nat -A PREROUTING -i br-lan_2 -p tcp --dport 853 -j REDIRECT --to-port 5354
-iptables -t nat -A PREROUTING -i br-lan_2 -p udp --dport 853 -j REDIRECT --to-port 5354
-FW853
-        logger -t forced-dns "added port-853 rules to $_fw"
-    fi
+    # 3. firewall.user — persist the 53 + 853 rules so a firewall reload
+    #    restores them instantly (rewritten only when the bridge list drifts)
+    ensure_firewall_user_rules "$_port" || true
 
     return 0
 }
@@ -312,13 +507,16 @@ FW853
 disable_forced_dns() {
     _port="${DNS_PORT:-5354}"
 
-    iptables -t nat -D PREROUTING -i br-lan   -p tcp --dport 853 -j REDIRECT --to-port "$_port" 2>/dev/null || true
-    iptables -t nat -D PREROUTING -i br-lan   -p udp --dport 853 -j REDIRECT --to-port "$_port" 2>/dev/null || true
-    iptables -t nat -D PREROUTING -i br-lan_2 -p tcp --dport 853 -j REDIRECT --to-port "$_port" 2>/dev/null || true
-    iptables -t nat -D PREROUTING -i br-lan_2 -p udp --dport 853 -j REDIRECT --to-port "$_port" 2>/dev/null || true
+    for _if in $(lan_ifaces); do
+        del_redirect_rule "$_if" tcp 853 "$_port"
+        del_redirect_rule "$_if" udp 853 "$_port"
+    done
 
-    if [ -f /etc/firewall.user ]; then
-        sed -i -e '/controld-forced-dns-853/d' -e '/--dport 853/d' /etc/firewall.user
+    if [ -f "$FW_USER" ]; then
+        # Legacy (pre-marker) lines, then rewrite our block without port 853
+        sed -i -e '/controld-forced-dns-853/d' -e '/--dport 853 -j REDIRECT/d' "$FW_USER"
+        FORCED_DNS=0
+        ensure_firewall_user_rules "$_port" || true
     fi
 
     uci set https-dns-proxy.config.force_dns=0

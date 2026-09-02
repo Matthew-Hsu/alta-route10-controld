@@ -933,7 +933,7 @@ WATCHDOG
 chmod +x /cfg/watchdog.sh
 
 # Install watchdog cron (every 5 minutes)
-crontab -l 2>/dev/null | grep -v watchdog | crontab -
+cron_remove /cfg/watchdog.sh
 (crontab -l 2>/dev/null; printf '*/5 * * * * /cfg/watchdog.sh\n') | crontab - 2>/dev/null || {
     print_warn "Could not install watchdog cron"
 }
@@ -960,11 +960,11 @@ logger -t rc.local "ControlD boot hook starting"
 (
     while ! pidof crond >/dev/null 2>&1; do sleep 1; done
     CRONTAB="$(crontab -l 2>/dev/null)"
-    echo "$CRONTAB" | grep -q "watchdog" || {
+    echo "$CRONTAB" | grep -qF "/cfg/watchdog.sh" || {
         (crontab -l 2>/dev/null; echo "*/5 * * * * /cfg/watchdog.sh") | crontab -
         logger -t rc.local "watchdog cron installed"
     }
-    echo "$CRONTAB" | grep -q "controld-update" || {
+    echo "$CRONTAB" | grep -qF "/cfg/controld-update.sh" || {
         (crontab -l 2>/dev/null; echo "0 3 * * 1 /cfg/controld-update.sh") | crontab -
         logger -t rc.local "auto-update cron installed"
     }
@@ -1098,7 +1098,7 @@ print_ok "/cfg/controld-update.sh written"
 
 # ── Step 8: Install cron job for weekly updates ──
 
-crontab -l 2>/dev/null | grep -v controld-update | crontab -
+cron_remove /cfg/controld-update.sh
 (crontab -l 2>/dev/null; printf '0 3 * * 1 /cfg/controld-update.sh\n') | crontab - 2>/dev/null || {
     print_warn "Could not install cron job (non-fatal, auto-update won't run)"
 }

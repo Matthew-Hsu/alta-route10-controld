@@ -2,7 +2,17 @@
 # lib.sh — shared function library for Alta Route 10 + ControlD
 # Source this file: . /path/to/lib.sh
 
-VERSION="1.5.0"
+# Version of these scripts, semver: MAJOR for a change that breaks an existing
+# install (a config key or file layout an upgrade cannot read), MINOR for new
+# capability that upgrades cleanly, PATCH for fixes with no new behavior.
+VERSION="1.6.0"
+
+# The ctrld release a fresh install pins. Deliberately separate from VERSION:
+# these move for unrelated reasons, and while they shared one variable a tools
+# bump silently pointed setup.sh at a ctrld release that does not exist.
+# The version actually installed on a router is CURLD_VERSION in
+# /cfg/controld.env, which the weekly updater moves forward from this pin.
+CTRLD_PIN="1.5.7"
 # Respect a port already set by the caller's environment (an install that had to
 # move off 5354 exports it before sourcing this file); load_env applies the same
 # default for anything that reads /cfg/controld.env.
@@ -58,7 +68,7 @@ print_banner() {
 # ── Help / Version ──
 
 show_version() {
-    printf "  controld-tools %s\n" "$VERSION"
+    printf "  controld-tools %s (pins ctrld %s)\n" "$VERSION" "$CTRLD_PIN"
 }
 
 # ── Config Helpers ──

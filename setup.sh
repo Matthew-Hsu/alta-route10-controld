@@ -219,9 +219,9 @@ if [ -z "$DNS_TYPE" ]; then
             # Download ctrld first if not already present (needed for benchmark)
             if [ ! -x /cfg/ctrld ]; then
                 print_info "Downloading ctrld for benchmark..."
-                wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${VERSION}/ctrld_${VERSION}_linux_arm64.tar.gz" >/dev/null 2>&1 || die "Download failed"
+                wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${CTRLD_PIN}/ctrld_${CTRLD_PIN}_linux_arm64.tar.gz" >/dev/null 2>&1 || die "Download failed"
                 tar xzf /tmp/ctrld.tar.gz -C /tmp
-                mv "/tmp/dist/ctrld_${VERSION}_linux_arm64/ctrld" /cfg/ctrld
+                mv "/tmp/dist/ctrld_${CTRLD_PIN}_linux_arm64/ctrld" /cfg/ctrld
                 chmod +x /cfg/ctrld
                 rm -rf /tmp/dist /tmp/ctrld.tar.gz
             fi
@@ -347,13 +347,13 @@ fi
 
 # ── Step 3: Download ctrld ──
 
-print_step "Step 2: Installing ctrld v${VERSION}..."
+print_step "Step 2: Installing ctrld v${CTRLD_PIN}..."
 
-wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${VERSION}/ctrld_${VERSION}_linux_arm64.tar.gz" || {
+wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${CTRLD_PIN}/ctrld_${CTRLD_PIN}_linux_arm64.tar.gz" || {
     die "Download failed. Check internet connectivity."
 }
 tar xzf /tmp/ctrld.tar.gz -C /tmp
-mv "/tmp/dist/ctrld_${VERSION}_linux_arm64/ctrld" /cfg/ctrld
+mv "/tmp/dist/ctrld_${CTRLD_PIN}_linux_arm64/ctrld" /cfg/ctrld
 chmod +x /cfg/ctrld
 rm -rf /tmp/dist /tmp/ctrld.tar.gz
 print_ok "ctrld binary installed to /cfg/ctrld"
@@ -365,7 +365,7 @@ print_step "Step 3: Writing configuration files..."
 cat > /cfg/controld.env << EOF
 RESOLVER_ID=${RESOLVER_ID}
 BOOTSTRAP_IP=${BOOTSTRAP_IP}
-CURLD_VERSION=${VERSION}
+CURLD_VERSION=${CTRLD_PIN}
 DNS_TYPE=${DNS_TYPE}
 PREFERRED_PROTOCOL=${DNS_TYPE}
 FORCED_DNS=0

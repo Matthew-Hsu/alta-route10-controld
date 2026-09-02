@@ -201,8 +201,10 @@ assert_file_contains "cache enabled"              "$TEST_CONF" 'cache_enable = t
 assert_file_contains "DHCP discovery"             "$TEST_CONF" 'discover_dhcp = true'
 assert_file_contains "lease file path"            "$TEST_CONF" 'dhcp_lease_file_path = "/cfg/dhcp.leases"'
 assert_file_contains "send_client_info"           "$TEST_CONF" 'send_client_info = true'
-assert_file_contains "LAN network"                "$TEST_CONF" 'cidrs = \["192.168.1.0/24"\]'
-assert_file_contains "LAN2 network"               "$TEST_CONF" 'cidrs = \["192.168.2.0/24"\]'
+assert_file_contains "catch-all network"          "$TEST_CONF" 'cidrs = \["0.0.0.0/0"\]'
+# The old config hardcoded 192.168.1.0/24 + 192.168.2.0/24, which described no
+# real router. LAN subnets are discovered at runtime instead.
+assert_false "no hardcoded LAN subnets" grep -q '192.168.[12].0/24' "$TEST_CONF"
 
 TEST_CONF2="$TMPDIR/test-doq.toml"
 write_ctrld_config "$TEST_CONF2" "xyz789" "76.76.2.22" "doq"
@@ -317,6 +319,96 @@ assert_true "forced DNS adds port 853" ensure_firewall_user_rules 5354
 assert_file_contains "853 rule present" "$FW_USER" "br-lan_10 -p tcp --dport 853"
 FORCED_DNS=0
 unset FW_USER SYSFS_NET
+
+describe "split-DNS config survives a rewrite"
+
+# The exact extraction apply_and_restart uses to carry policy config across a
+# regenerated ctrld.toml. Copying header lines without their bodies (what this
+# used to do) leaves ctrld with empty tables and it refuses to start.
+SPLIT_BAK="$TMPDIR/split.toml.bak"
+cat > "$SPLIT_BAK" << 'SPLITEOF'
+[network.0]
+    cidrs = ["0.0.0.0/0"]
+    name = "Everyone"
+[upstream.0]
+    endpoint = "https://dns.controld.com/main"
+    name = "ControlD"
+[listener.0]
+    ip = "0.0.0.0"
+    port = 5354
+[upstream.1]
+    endpoint = "https://dns.controld.com/kids"
+    name = "ControlD-Kids"
+    type = "doh3"
+[network.3]
+    cidrs = ["192.168.30.0/24"]
+    name = "Kids"
+[listener.0.policy]
+    name = "Split DNS Policy"
+    networks = [
+    {"network.3" = ["upstream.1"]}
+    ]
+SPLITEOF
+
+SPLIT_NEW="$TMPDIR/split-rewritten.toml"
+write_ctrld_config "$SPLIT_NEW" "main" "76.76.2.22" "doq"
+{
+    toml_blocks "$SPLIT_BAK" '^\[upstream\.[1-9]'
+    toml_blocks "$SPLIT_BAK" '^\[network\.[1-9]'
+    toml_blocks "$SPLIT_BAK" '^\[listener\.0\.policy\]'
+} >> "$SPLIT_NEW"
+
+assert_file_contains "policy upstream survives"      "$SPLIT_NEW" '\[upstream.1\]'
+assert_file_contains "with its endpoint body"        "$SPLIT_NEW" 'dns.controld.com/kids'
+assert_file_contains "policy network survives"       "$SPLIT_NEW" '\[network.3\]'
+assert_file_contains "with its cidrs body"           "$SPLIT_NEW" '192.168.30.0/24'
+assert_file_contains "the policy table survives"     "$SPLIT_NEW" 'network.3" = \["upstream.1"\]'
+assert_file_contains "main upstream took the new protocol" "$SPLIT_NEW" 'endpoint = "main.dns.controld.com"'
+# Every table the policy points at must exist with a body, or ctrld refuses the config
+assert_eq "no empty [upstream.N] tables" "0" \
+    "$(awk '/^\[upstream\./ { if (prev ~ /^\[/) n++ } { prev = $0 } END { print n + 0 }' "$SPLIT_NEW")"
+assert_eq "policy allocates past the preserved blocks" "4" \
+    "$(next_toml_index "$SPLIT_NEW" network)"
+
+describe "next_toml_index() — index allocation"
+IDX_CONF="$TMPDIR/idx.toml"
+cat > "$IDX_CONF" << 'IDXEOF'
+[network.0]
+    cidrs = ["0.0.0.0/0"]
+[upstream.0]
+    name = "a"
+[upstream.5]
+    name = "b"
+[network.3]
+    cidrs = ["192.168.9.0/24"]
+IDXEOF
+assert_eq "next network index skips gaps"  "4" "$(next_toml_index "$IDX_CONF" network)"
+assert_eq "next upstream index skips gaps" "6" "$(next_toml_index "$IDX_CONF" upstream)"
+assert_eq "missing config starts at 0"     "0" "$(next_toml_index "$TMPDIR/none.toml" network)"
+
+describe "toml_blocks() — whole-table extraction"
+POL_CONF="$TMPDIR/policy.toml"
+cat > "$POL_CONF" << 'POLEOF'
+[upstream.0]
+    name = "ControlD"
+[upstream.1]
+    name = "Kids"
+    endpoint = "kid123.dns.controld.com"
+[listener.0.policy]
+    networks = [
+    {"network.1" = ["upstream.1"]},
+    ]
+POLEOF
+extra_up="$(toml_blocks "$POL_CONF" '^\[upstream\.[1-9]')"
+assert_contains "extracts the extra upstream header" "$extra_up" "\[upstream.1\]"
+assert_contains "extracts its body too"              "$extra_up" "kid123.dns.controld.com"
+assert_not_contains "does not take upstream.0" "$extra_up" "ControlD"
+pol="$(toml_blocks "$POL_CONF" '^\[listener\.0\.policy\]')"
+assert_contains "extracts the policy table" "$pol" 'network.1'
+
+# ══════════════════════════════════════════════════════════════════
+# ENV FILE TESTS
+# ══════════════════════════════════════════════════════════════════
 
 describe "load_env() — env file parsing"
 

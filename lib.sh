@@ -549,6 +549,35 @@ remove_dns_redirects() {
         > "$DEGRADED_FLAG" 2>/dev/null || true
 }
 
+# Delete redirect rules pointing at our port on interfaces that are not LAN
+# bridges any more — a VLAN removed from the router, or br-lan_2 left behind by
+# the era when the bridge list was hardcoded. Rules are otherwise only ever
+# added, so stale ones linger until a reboot. Prints the number removed.
+# Usage: prune_stale_redirects [port]
+prune_stale_redirects() {
+    _psr_port="${1:-$DNS_PORT}"
+    _psr_keep=" $(lan_ifaces | tr '\n' ' ')"
+    _psr_rules="$(iptables-save -t nat 2>/dev/null | grep '^-A PREROUTING' \
+        | grep -- "--to-ports ${_psr_port}")"
+    _psr_n=0
+    if [ -n "$_psr_rules" ]; then
+        _psr_ifs="$IFS"
+        IFS='
+'
+        for _psr_rule in $_psr_rules; do
+            _psr_if="$(printf '%s\n' "$_psr_rule" | sed -n 's/.* -i \([^ ]*\).*/\1/p')"
+            [ -n "$_psr_if" ] || continue
+            case "$_psr_keep" in *" ${_psr_if} "*) continue ;; esac
+            # shellcheck disable=SC2086  # the saved rule spec must word-split
+            if iptables -t nat -D PREROUTING ${_psr_rule#-A PREROUTING } 2>/dev/null; then
+                _psr_n=$((_psr_n + 1))
+            fi
+        done
+        IFS="$_psr_ifs"
+    fi
+    printf '%s' "$_psr_n"
+}
+
 # ── Marker-Delimited File Blocks ──
 # Used to keep /etc/firewall.user in sync with the current LAN bridge list
 # without appending a duplicate block on every run.

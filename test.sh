@@ -320,6 +320,18 @@ assert_file_contains "853 rule present" "$FW_USER" "br-lan_10 -p tcp --dport 853
 FORCED_DNS=0
 unset FW_USER SYSFS_NET
 
+describe "version split — tools version vs pinned ctrld"
+
+assert_match "VERSION is semver"    "$VERSION"    '^[0-9]+\.[0-9]+\.[0-9]+$'
+assert_match "CTRLD_PIN is semver"  "$CTRLD_PIN"  '^[0-9]+\.[0-9]+\.[0-9]+$'
+# These moved together once, and bumping the tools version silently repointed
+# setup.sh at a ctrld release that does not exist.
+assert_false "the two versions are not the same variable" [ "$VERSION" = "$CTRLD_PIN" ]
+assert_true  "download URLs use the pin, not the tools version" \
+    grep -q 'releases/download/v${CTRLD_PIN}' "$SCRIPT_DIR/setup.sh"
+assert_false "no download URL is built from VERSION" \
+    grep -q 'releases/download/v${VERSION}' "$SCRIPT_DIR/setup.sh"
+
 describe "split-DNS config survives a rewrite"
 
 # The exact extraction apply_and_restart uses to carry policy config across a
@@ -461,7 +473,8 @@ describe "--version flags"
 for script in setup.sh; do
     if [ -f "$SCRIPT_DIR/$script" ]; then
         VER_OUT=$(sh "$SCRIPT_DIR/$script" --version 2>&1 || true)
-        assert_contains "$script --version shows version" "$VER_OUT" "1.5.0"
+        assert_contains "$script --version shows the tools version" "$VER_OUT" "$VERSION"
+        assert_contains "$script --version shows the pinned ctrld" "$VER_OUT" "$CTRLD_PIN"
     else
         skip "$script not found"
     fi

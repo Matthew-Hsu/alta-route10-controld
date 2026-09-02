@@ -320,6 +320,27 @@ assert_file_contains "853 rule present" "$FW_USER" "br-lan_10 -p tcp --dport 853
 FORCED_DNS=0
 unset FW_USER SYSFS_NET
 
+describe "cron_has() — must not confuse another service's job for ours"
+
+# The router ships "* * * * * /usr/bin/wireguard_watchdog". Matching the bare
+# word "watchdog" made rc.local skip reinstalling our job after every reboot.
+CRONFIX="$TMPDIR/crontab.txt"
+cat > "$CRONFIX" << 'CRONEOF'
+0 3 * * * logrotate /etc/logrotate.conf
+* * * * * /usr/bin/wireguard_watchdog
+0 3 * * 1 /cfg/controld-update.sh
+CRONEOF
+assert_false "wireguard_watchdog is not our watchdog" cron_has /cfg/watchdog.sh "$CRONFIX"
+assert_true  "our update job is found"                cron_has /cfg/controld-update.sh "$CRONFIX"
+printf '%s\n' '*/5 * * * * /cfg/watchdog.sh' >> "$CRONFIX"
+assert_true  "our watchdog is found once present"     cron_has /cfg/watchdog.sh "$CRONFIX"
+
+# and no caller may go back to the loose match
+assert_false "setup.sh does not grep the bare word" \
+    grep -qE "grep -v watchdog|grep -q \"watchdog\"" "$SCRIPT_DIR/setup.sh"
+assert_false "status.sh does not grep the bare word" \
+    grep -q "grep -q 'watchdog'" "$SCRIPT_DIR/status.sh"
+
 describe "preserved_forced_dns() — a re-install must not disable forced DNS"
 
 mkdir -p "$TMPDIR/bin"
@@ -617,8 +638,8 @@ else
 
     # Integration: cron jobs (wrap pipeline in sh -c so assert_true runs the
     # whole check in-process — not in a pipeline subshell, which set -e aborts on)
-    assert_true "watchdog cron installed"     sh -c 'crontab -l 2>/dev/null | grep -q watchdog'
-    assert_true "update cron installed"       sh -c 'crontab -l 2>/dev/null | grep -q controld-update'
+    assert_true "watchdog cron installed"     cron_has /cfg/watchdog.sh
+    assert_true "update cron installed"       cron_has /cfg/controld-update.sh
 
     # Integration: config files exist
     for f in /cfg/controld.env /cfg/ctrld /cfg/ctrld.toml /cfg/post-cfg.sh /cfg/watchdog.sh /cfg/controld-update.sh; do

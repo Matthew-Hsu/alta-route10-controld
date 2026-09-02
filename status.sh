@@ -196,13 +196,13 @@ fi
 
 print_header "Cron Jobs"
 
-if crontab -l 2>/dev/null | grep -q 'controld-update'; then
+if cron_has /cfg/controld-update.sh; then
     print_ok "Weekly auto-update cron installed"
 else
     print_fail "No auto-update cron job"
 fi
 
-if crontab -l 2>/dev/null | grep -q 'watchdog'; then
+if cron_has /cfg/watchdog.sh; then
     print_ok "Watchdog cron installed (5-min health check)"
 else
     print_fail "No watchdog cron job"

@@ -96,9 +96,9 @@ apply_and_restart() {
     # empty [upstream.N] tables and a policy pointing at nothing.)
     if [ -f /cfg/ctrld.toml.bak ]; then
         local extra_up extra_net policy
-        extra_up="$(toml_blocks /cfg/ctrld.toml.bak '^\[upstream\.[1-9]')"
-        extra_net="$(toml_blocks /cfg/ctrld.toml.bak '^\[network\.[1-9]')"
-        policy="$(toml_blocks /cfg/ctrld.toml.bak '^\[listener\.0\.policy\]')"
+        extra_up="$(toml_blocks /cfg/ctrld.toml.bak '[upstream.' '[upstream.0]')"
+        extra_net="$(toml_blocks /cfg/ctrld.toml.bak '[network.' '[network.0]')"
+        policy="$(toml_blocks /cfg/ctrld.toml.bak '[listener.0.policy]')"
         if [ -n "$extra_up" ] || [ -n "$extra_net" ] || [ -n "$policy" ]; then
             {
                 if [ -n "$extra_up" ];  then printf '\n%s\n' "$extra_up";  fi

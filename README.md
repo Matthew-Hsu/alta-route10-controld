@@ -2,6 +2,13 @@
 
 Encrypted DNS with per-device visibility on the Alta Labs Route 10 router using [ControlD](https://controld.com) and the [ctrld](https://github.com/Control-D-Inc/ctrld) daemon.
 
+> **This is a fork.** The original project was created by **CookieTyrant** at
+> [codeberg.org/CookieTyrant/alta-route10-controld](https://codeberg.org/CookieTyrant/alta-route10-controld)
+> and has since been archived. All of the design — the self-healing boot hooks, the
+> watchdog with protocol fallback, split DNS policies, the forced-DNS hijack — is
+> their work. This fork exists to keep it maintained; see the commit history for
+> what has changed since.
+
 ## What This Does
 
 - Routes all DNS traffic through ControlD via encrypted DNS (DoH, DoH3, or DoQ)
@@ -386,10 +393,13 @@ CI runs via Forgejo Actions on every push/PR to `master`. (Codeberg is a backup 
 
 ## Credits
 
+- **CookieTyrant** — original author of this project
+  ([codeberg.org/CookieTyrant/alta-route10-controld](https://codeberg.org/CookieTyrant/alta-route10-controld), now archived).
+  This fork continues their work.
 - [ControlD](https://controld.com) — DNS resolver service
 - [ctrld](https://github.com/Control-D-Inc/ctrld) — DNS forwarding proxy
 - [Alta Labs](https://alta.inc) — Route 10 router
 
 ## License
 
-MIT
+Zero-Clause BSD (0BSD), unchanged from the original project — see [LICENSE](LICENSE).

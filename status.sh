@@ -126,7 +126,10 @@ for iface in $(lan_ifaces); do
         print_fail "${iface} has NO redirect — its clients bypass ControlD"
     fi
 done
-if [ -n "$uncovered" ]; then
+if [ -f "$DEGRADED_FLAG" ]; then
+    print_warn "$(cat "$DEGRADED_FLAG" 2>/dev/null)"
+    print_info "DNS still resolves via dnsmasq -> https-dns-proxy; fix ctrld to restore visibility"
+elif [ -n "$uncovered" ]; then
     print_info "Fix:  /cfg/reconfigure.sh --repair   (re-applies rules for all bridges)"
 fi
 

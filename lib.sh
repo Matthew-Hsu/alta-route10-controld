@@ -11,8 +11,14 @@ VERSION="1.6.0"
 # these move for unrelated reasons, and while they shared one variable a tools
 # bump silently pointed setup.sh at a ctrld release that does not exist.
 # The version actually installed on a router is CURLD_VERSION in
-# /cfg/controld.env, which the weekly updater moves forward from this pin.
+# /cfg/controld.env (the historical spelling), which the weekly updater moves
+# forward from this pin.
 CTRLD_PIN="1.5.7"
+
+# Set while the watchdog has torn the DNS redirects down to keep the LAN
+# resolving; cleared as soon as the rules go back.
+DEGRADED_FLAG="${DEGRADED_FLAG:-/tmp/controld-degraded}"
+
 # Respect a port already set by the caller's environment (an install that had to
 # move off 5354 exports it before sourcing this file); load_env applies the same
 # default for anything that reads /cfg/controld.env.
@@ -423,9 +429,33 @@ ensure_iptables() {
         if ensure_redirect_rule append "$iface" tcp 53 "$port"; then added=$((added + 1)); fi
     done
     if [ "$added" -gt 0 ]; then
+        # Rules are back — whatever tore them down is no longer true
+        rm -f "$DEGRADED_FLAG" 2>/dev/null || true
         return 0
     fi
     return 1
+}
+
+# Tear the DNS redirects down, on every bridge and both ports.
+#
+# Last resort for the watchdog: with ctrld dead the redirects point port 53 at a
+# closed port, so every client on every bridge loses DNS entirely — worse than
+# not intercepting at all. Removing them hands resolution back to dnsmasq ->
+# https-dns-proxy: still encrypted, just without per-device visibility.
+# post-cfg.sh and the watchdog re-add the rules once ctrld answers again.
+# Usage: remove_dns_redirects [port]
+remove_dns_redirects() {
+    _rdr_port="${1:-$DNS_PORT}"
+    for _rdr_if in $(lan_ifaces); do
+        for _rdr_dport in 53 853; do
+            del_redirect_rule "$_rdr_if" udp "$_rdr_dport" "$_rdr_port"
+            del_redirect_rule "$_rdr_if" tcp "$_rdr_dport" "$_rdr_port"
+        done
+    done
+    # Drop the firewall.user block too, or the next firewall reload re-adds them
+    remove_block "$FW_USER" "$FW_MARKER"
+    printf 'ctrld unrecoverable — DNS redirects removed so the LAN keeps resolving\n' \
+        > "$DEGRADED_FLAG" 2>/dev/null || true
 }
 
 # ── Marker-Delimited File Blocks ──

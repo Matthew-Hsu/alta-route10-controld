@@ -320,6 +320,33 @@ assert_file_contains "853 rule present" "$FW_USER" "br-lan_10 -p tcp --dport 853
 FORCED_DNS=0
 unset FW_USER SYSFS_NET
 
+describe "preserved_forced_dns() — a re-install must not disable forced DNS"
+
+mkdir -p "$TMPDIR/bin"
+printf '#!/bin/sh\nexit 1\n' > "$TMPDIR/bin/uci"   # uci says nothing / not present
+chmod +x "$TMPDIR/bin/uci"
+PATH="$TMPDIR/bin:$PATH"
+
+printf 'FORCED_DNS=1\n' > "$TMPDIR/fd.env"
+assert_eq "an enabled install stays enabled"  "1" "$(preserved_forced_dns "$TMPDIR/fd.env")"
+printf 'FORCED_DNS=0\n' > "$TMPDIR/fd.env"
+assert_eq "a disabled install stays disabled" "0" "$(preserved_forced_dns "$TMPDIR/fd.env")"
+assert_eq "no env file means off"             "0" "$(preserved_forced_dns "$TMPDIR/none.env")"
+
+# Installs predating the flag: uci is the only record that it is on
+printf '#!/bin/sh\necho 1\n' > "$TMPDIR/bin/uci"
+printf 'RESOLVER_ID=abc\n' > "$TMPDIR/fd-noflag.env"
+assert_eq "falls back to live uci state"      "1" "$(preserved_forced_dns "$TMPDIR/fd-noflag.env")"
+printf 'FORCED_DNS=0\n' > "$TMPDIR/fd.env"
+assert_eq "uci on beats a stale 0 in the file" "1" "$(preserved_forced_dns "$TMPDIR/fd.env")"
+
+# setup.sh must actually call it — this fix was described in a commit before it
+# was in the diff, and no test would have noticed
+assert_true "setup.sh writes the preserved value" \
+    grep -q 'FORCED_DNS=$(preserved_forced_dns' "$SCRIPT_DIR/setup.sh"
+assert_false "setup.sh never hardcodes FORCED_DNS=0" \
+    grep -q '^FORCED_DNS=0$' "$SCRIPT_DIR/setup.sh"
+
 describe "version split — tools version vs pinned ctrld"
 
 assert_match "VERSION is semver"    "$VERSION"    '^[0-9]+\.[0-9]+\.[0-9]+$'

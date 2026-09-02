@@ -653,6 +653,32 @@ ensure_firewall_user_rules() {
     return 0
 }
 
+# The FORCED_DNS value a (re)install should write.
+#
+# Preserves an existing choice, falling back to the live uci state for installs
+# that predate the flag. setup.sh wrote 0 unconditionally, so re-running it over
+# a working install left the flag saying "off" while uci and the port-853 rules
+# still said "on": ensure_forced_dns then skipped its restore and firewall.user
+# was rebuilt without the DoT hijack, so the setting decayed at the next reboot
+# while status.sh still reported it enabled.
+# Usage: preserved_forced_dns [env-file]
+preserved_forced_dns() {
+    _pfd_env="${1:-/cfg/controld.env}"
+    _pfd_val=""
+    if [ -f "$_pfd_env" ]; then
+        _pfd_val="$(sed -n 's/^FORCED_DNS=\([01]\).*/\1/p' "$_pfd_env" | head -1)"
+    fi
+    if [ "$_pfd_val" = "1" ]; then
+        printf '1'
+        return 0
+    fi
+    if [ "$(uci -q get https-dns-proxy.config.force_dns 2>/dev/null || echo 0)" = "1" ]; then
+        printf '1'
+        return 0
+    fi
+    printf '0'
+}
+
 # ── Forced DNS ──
 
 # Write FORCED_DNS=<0|1> to /cfg/controld.env — update in place or append if absent.

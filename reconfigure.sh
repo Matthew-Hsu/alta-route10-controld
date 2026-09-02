@@ -617,6 +617,13 @@ do_repair() {
         print_info "All LAN bridges already had a redirect rule"
     fi
 
+    _pruned="$(prune_stale_redirects "$DNS_PORT")"
+    if [ "${_pruned:-0}" -gt 0 ]; then
+        print_ok "Removed ${_pruned} stale rule(s) for bridges that no longer exist"
+    else
+        print_info "No stale rules from removed bridges"
+    fi
+
     if ensure_firewall_user_rules "$DNS_PORT"; then
         print_ok "/etc/firewall.user updated (rules survive a firewall reload)"
     else

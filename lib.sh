@@ -5,7 +5,7 @@
 # Version of these scripts, semver: MAJOR for a change that breaks an existing
 # install (a config key or file layout an upgrade cannot read), MINOR for new
 # capability that upgrades cleanly, PATCH for fixes with no new behavior.
-VERSION="1.7.0"
+VERSION="1.7.1"
 
 # The ctrld release a fresh install pins. Deliberately separate from VERSION:
 # these move for unrelated reasons, and while they shared one variable a tools
@@ -720,6 +720,30 @@ preserved_forced_dns() {
         return 0
     fi
     printf '0'
+}
+
+# ── Env file ──
+
+# Write the recovery config from the current settings.
+#
+# FORCED_DNS is resolved BEFORE the file is opened. `cat > file << EOF`
+# truncates the target before the here-document is expanded, so a $(...) inside
+# the here-doc that reads that same file always sees it empty. setup.sh did
+# exactly that: the preserved value was silently always empty, and only the uci
+# fallback inside preserved_forced_dns kept forced DNS alive across a re-install
+# — until a firmware update wiped /etc/config, when the setting vanished with it.
+# Usage: write_env_file [path]
+write_env_file() {
+    _wef_path="${1:-/cfg/controld.env}"
+    _wef_forced="$(preserved_forced_dns "$_wef_path")"
+    cat > "$_wef_path" << WEFEOF
+RESOLVER_ID=${RESOLVER_ID}
+BOOTSTRAP_IP=${BOOTSTRAP_IP}
+CTRLD_VERSION=${CTRLD_VERSION}
+DNS_TYPE=${DNS_TYPE}
+PREFERRED_PROTOCOL=${PREFERRED_PROTOCOL:-$DNS_TYPE}
+FORCED_DNS=${_wef_forced}
+WEFEOF
 }
 
 # ── Fallback resolver ──

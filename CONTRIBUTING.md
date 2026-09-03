@@ -14,6 +14,11 @@ Co-Authored-By: ...
 
 **Types used here:** `fix`, `feat`, `refactor`, `docs`, `test`, `ci`, `chore`.
 
+**No tool attribution.** Commit messages and PR descriptions carry no
+`Co-Authored-By` trailer, session link, or "generated with" footer for any
+editor, assistant or automation. The commit author is the person who ran it.
+Strip such lines before committing, whatever a tool adds by default.
+
 **Scopes** name the area, not the file: `dns`, `config`, `update`, `watchdog`,
 `cron`, `uninstall`, `setup`, `version`, `repair`.
 
@@ -28,6 +33,16 @@ Rules that matter more than the format:
 - **Do not describe a fix you have not verified is in the diff.** This has
   happened here: a commit message claimed a change that a failed edit had
   silently dropped, and no test caught it.
+- **Assert on outcomes, not on the shape of the code.** A test that greps the
+  source for your own implementation will pass while the behaviour is broken —
+  that happened here too, asserting a `uci delete` appeared twice while the
+  value it was meant to clear survived on the router. Source-grep assertions
+  are only a regression guard for behaviour that cannot run off-device, never
+  evidence that something works.
+- **Trace the whole sequence, not the function.** The same bug took three
+  attempts because the fix was correct in isolation and undone by a service
+  restart later in the caller. Grep for every restart, every write to the same
+  key, before concluding.
 
 ## Before you push
 

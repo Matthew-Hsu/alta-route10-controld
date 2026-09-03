@@ -451,13 +451,16 @@ arg="${1:-}"
 key="${arg%%=*}"
 val=""
 case "$arg" in *=*) val="${arg#*=}" ;; esac
-_get() { sed -n "s|^$1 ||p" "$store" | head -1; }
-_put() { grep -v "^$1 " "$store" > "$store.t" 2>/dev/null; printf '%s %s\n' "$1" "$2" >> "$store.t"; mv "$store.t" "$store"; }
+# Keys carry regex-special characters (https-dns-proxy.@https-dns-proxy[0]),
+# so match them literally with awk's index() rather than as patterns.
+_get() { awk -v k="$1" 'index($0, k " ") == 1 { print substr($0, length(k) + 2); exit }' "$store"; }
+_del() { awk -v k="$1" 'index($0, k " ") != 1' "$store" > "$store.t"; mv "$store.t" "$store"; }
+_put() { _del "$1"; printf '%s %s\n' "$1" "$2" >> "$store"; }
 case "$cmd" in
     get)      v="$(_get "$key")"; [ -n "$v" ] || exit 1; printf '%s\n' "$v" ;;
     set)      _put "$key" "$val" ;;
     add_list) v="$(_get "$key")"; _put "$key" "${v:+$v }$val" ;;
-    delete)   grep -v "^$key " "$store" > "$store.t" 2>/dev/null; mv "$store.t" "$store" ;;
+    delete)   _del "$key" ;;
     commit)   : ;;
     *)        exit 1 ;;
 esac
@@ -716,6 +719,45 @@ assert_false "missing env file returns error" load_env "$TMPDIR/nonexistent.env"
 # ══════════════════════════════════════════════════════════════════
 # SCRIPT FLAG TESTS
 # ══════════════════════════════════════════════════════════════════
+
+describe "set_fallback_resolver() — the backstop must rotate too"
+
+# https-dns-proxy answers whenever ctrld is down. Before this existed,
+# reconfigure.sh --resolver changed ctrld but not the fallback, so a resolver
+# rotated away from — a leaked one, say — kept resolving for the whole LAN
+# every time ctrld restarted.
+FBR_SAVED_PATH="$PATH"
+PATH="$TMPDIR/ucibin:$PATH"          # stateful fake uci from the section above
+UCI_STORE="$TMPDIR/fbr.store"; export UCI_STORE
+: > "$UCI_STORE"
+uci set https-dns-proxy.@https-dns-proxy[0]=https-dns-proxy
+uci set https-dns-proxy.@https-dns-proxy[1]=https-dns-proxy
+
+set_fallback_resolver newid123 76.76.2.22 >/dev/null 2>&1 || true
+
+assert_eq "instance 0 moved to the new resolver" "https://dns.controld.com/newid123" \
+    "$(uci -q get 'https-dns-proxy.@https-dns-proxy[0].resolver_url')"
+assert_eq "instance 1 moved too" "https://dns.controld.com/newid123" \
+    "$(uci -q get 'https-dns-proxy.@https-dns-proxy[1].resolver_url')"
+assert_eq "bootstrap follows the resolver" "76.76.2.22" \
+    "$(uci -q get 'https-dns-proxy.@https-dns-proxy[0].bootstrap_dns')"
+# Only instances that exist are touched — no phantom third one is created
+assert_eq "no instance is invented" "" \
+    "$(uci -q get 'https-dns-proxy.@https-dns-proxy[2].resolver_url')"
+
+# With no instances configured it reports failure rather than silently passing
+: > "$UCI_STORE"
+assert_true "reports failure when there is nothing to update" \
+    sh -c "! set_fallback_resolver x 1.1.1.1 >/dev/null 2>&1"
+
+PATH="$FBR_SAVED_PATH"
+unset UCI_STORE
+
+# Both callers must use it — setup.sh on install, reconfigure.sh on rotation
+assert_true "setup.sh points the fallback at ControlD" \
+    grep -q 'set_fallback_resolver "$RESOLVER_ID"' "$SCRIPT_DIR/setup.sh"
+assert_true "reconfigure.sh rotates the fallback with the resolver" \
+    sh -c "sed -n '/^do_resolver/,/^}/p' '$SCRIPT_DIR/reconfigure.sh' | grep -q set_fallback_resolver"
 
 describe "--help flags on all scripts"
 for script in setup.sh status.sh benchmark.sh uninstall.sh reconfigure.sh; do

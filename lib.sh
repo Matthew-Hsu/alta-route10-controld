@@ -5,7 +5,7 @@
 # Version of these scripts, semver: MAJOR for a change that breaks an existing
 # install (a config key or file layout an upgrade cannot read), MINOR for new
 # capability that upgrades cleanly, PATCH for fixes with no new behavior.
-VERSION="1.6.0"
+VERSION="1.7.0"
 
 # The ctrld release a fresh install pins. Deliberately separate from VERSION:
 # these move for unrelated reasons, and while they shared one variable a tools

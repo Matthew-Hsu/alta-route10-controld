@@ -18,12 +18,20 @@
    ```
    If rules exist but ctrld is dead, DNS is being redirected to nothing.
 
-3. **Quick fix** - remove iptables rules to fall back to dnsmasq:
+3. **Quick fix** — remove only this project's redirects so DNS falls back to dnsmasq:
    ```sh
-   iptables -t nat -F PREROUTING
+   . /cfg/lib.sh && load_env && remove_dns_redirects
    /etc/init.d/dnsmasq restart
    ```
-   This restores DNS via https-dns-proxy (still encrypted, just no per-device visibility).
+   This restores DNS via https-dns-proxy (still encrypted, just no per-device
+   visibility). The watchdog puts the redirects back automatically once ctrld
+   answers again.
+
+   > **Never run `iptables -t nat -F PREROUTING`.** That flushes the entire
+   > chain: your port forwards, UPnP mappings and the firewall's own zone jumps
+   > are deleted along with ours, and only a firewall restart or reboot brings
+   > them back. `remove_dns_redirects` deletes our rules one at a time and
+   > leaves everything else in place.
 
 4. **Full reset** - reboot the router. If post-cfg.sh has issues, hold off and re-examine the script.
 
@@ -201,37 +209,68 @@ ssh root@<router-ip> "chmod +x /cfg/ctrld /cfg/post-cfg.sh && /cfg/post-cfg.sh"
 
 ## How to switch protocols
 
-Edit `/cfg/ctrld.env` and `/cfg/ctrld.toml`, then restart:
+```sh
+sh /cfg/reconfigure.sh --protocol --to doh3    # or doq, doh, dot
+sh /cfg/reconfigure.sh --protocol              # interactive menu
+sh /cfg/reconfigure.sh --benchmark --force     # measure, then apply the fastest
+```
+
+`reconfigure.sh` also records the choice as `PREFERRED_PROTOCOL`, so if the
+watchdog ever falls back it knows what to return to.
+
+Do not do this by hand. Deleting `/cfg/ctrld.toml` and re-running `post-cfg.sh`
+regenerates the config from `/cfg/controld.env` alone, which **discards any
+split-DNS policy** — the extra upstreams and the rules pointing at them are not
+in the env file. `reconfigure.sh` carries them across the rewrite and moves each
+one onto the new transport while keeping its own resolver.
+
+## How to change your resolver ID
+
+Rotating a resolver ID — because it leaked, or you switched ControlD profiles —
+is a single command:
 
 ```sh
-# Change protocol in env
-vi /cfg/controld.env  # Edit DNS_TYPE=doq|doh3|doh
-
-# Regenerate config from env
-kill $(pidof ctrld)
-rm /cfg/ctrld.toml
-/cfg/post-cfg.sh
+sh /cfg/reconfigure.sh --resolver --to <new-id>
+sh /cfg/reconfigure.sh --resolver --to <new-id> --force   # no confirmation
 ```
+
+It rewrites `/cfg/ctrld.toml` and `/cfg/controld.env`, preserves any split-DNS
+policy, restarts `ctrld`, and confirms DNS still resolves before returning.
+
+Nothing else on the router refers to the old ID, so there is no stale state to
+clean up afterwards, with two things worth knowing:
+
+- **`https-dns-proxy` keeps the old resolver URL.** It is the fallback that
+  answers if `ctrld` dies, and `setup.sh` — not `reconfigure.sh` — is what
+  points it at ControlD. Re-run `setup.sh` with the new ID, or set it by hand,
+  or leave it: it only ever serves traffic while `ctrld` is down.
+- **A failed change can leave `/cfg/ctrld.toml.bak`**, the rollback copy, which
+  still contains the old ID. It is removed automatically on success;
+  `audit.sh` reports it if one survives.
+
+Verify with `sh /cfg/status.sh` (shows the active resolver ID) and then delete
+the old profile in the ControlD dashboard — until you do, the old ID still
+resolves for anyone who has it.
 
 ## How to uninstall
 
 ```sh
-# Stop ctrld
-kill $(pidof ctrld)
-
-# Remove iptables redirect rules
-iptables -t nat -F PREROUTING
-
-# Remove files
-rm /cfg/ctrld /cfg/ctrld.toml /cfg/post-cfg.sh
-
-# Restore default DNS
-/etc/init.d/https-dns-proxy restart
-/etc/init.d/dnsmasq restart
-
-# Or just reboot
-reboot
+sh /cfg/uninstall.sh          # add --force to skip the confirmation
 ```
+
+That is the whole procedure. It removes every file, cron job and firewall rule
+the project installs, turns forced DNS back off, restores dnsmasq and
+https-dns-proxy, and verifies the result — deleting only our own iptables
+rules, one at a time, so port forwards and UPnP keep working. No reboot needed.
+
+Do not tear it down by hand. Earlier versions of this page suggested
+`iptables -t nat -F PREROUTING` and removing three files, which flushed the
+firewall's own rules and left the boot hook, cron jobs and `firewall.user`
+entries behind — so the redirects came back on the next reboot, pointing at a
+binary that was no longer there.
+
+See the [Uninstalling](../README.md#uninstalling) section of the README for
+exactly what is removed from where, and what is deliberately left alone.
 
 ## ctrld locking up the router
 

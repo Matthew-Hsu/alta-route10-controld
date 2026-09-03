@@ -759,8 +759,58 @@ assert_true "setup.sh points the fallback at ControlD" \
 assert_true "reconfigure.sh rotates the fallback with the resolver" \
     sh -c "sed -n '/^do_resolver/,/^}/p' '$SCRIPT_DIR/reconfigure.sh' | grep -q set_fallback_resolver"
 
+describe "audit.sh — reports without touching anything"
+
+# The whole value of an audit is that running it cannot itself cause drift.
+# Rather than grep the source for writes, run it against stubs that record
+# every call and assert nothing mutating was attempted.
+mkdir -p "$TMPDIR/auditbin"
+AUDIT_LOG="$TMPDIR/audit-calls.log"; : > "$AUDIT_LOG"
+for _cmd in uci iptables crontab logger; do
+    printf '#!/bin/sh\nprintf "%%s %%s\\n" "$(basename "$0")" "$*" >> "$AUDIT_CALL_LOG"\nexit 1\n' \
+        > "$TMPDIR/auditbin/$_cmd"
+    chmod +x "$TMPDIR/auditbin/$_cmd"
+done
+AUDIT_SAVED_PATH="$PATH"
+PATH="$TMPDIR/auditbin:$PATH"
+AUDIT_CALL_LOG="$AUDIT_LOG"; export AUDIT_CALL_LOG
+sh "$SCRIPT_DIR/audit.sh" >/dev/null 2>&1 || true
+PATH="$AUDIT_SAVED_PATH"
+
+assert_true "audit.sh actually inspected the system" [ -s "$AUDIT_LOG" ]
+assert_not_contains "audit.sh never writes uci" "$(cat "$AUDIT_LOG")" "uci set"
+assert_not_contains "audit.sh never deletes uci" "$(cat "$AUDIT_LOG")" "uci delete"
+assert_not_contains "audit.sh never commits uci" "$(cat "$AUDIT_LOG")" "uci commit"
+assert_not_contains "audit.sh never adds iptables rules" "$(cat "$AUDIT_LOG")" "iptables -t nat -A"
+assert_not_contains "audit.sh never inserts iptables rules" "$(cat "$AUDIT_LOG")" "iptables -t nat -I"
+assert_not_contains "audit.sh never deletes iptables rules" "$(cat "$AUDIT_LOG")" "iptables -t nat -D"
+# `crontab -l` is a read; anything else (-r, a file argument) rewrites it
+assert_eq "audit.sh only ever reads the crontab" "" \
+    "$(grep '^crontab' "$AUDIT_LOG" | grep -v '^crontab -l$')"
+# No in-place edits or removals anywhere in the source either
+assert_false "audit.sh contains no in-place sed" grep -q 'sed -i' "$SCRIPT_DIR/audit.sh"
+assert_false "audit.sh contains no rm"           grep -qE '(^|[^a-z-])rm ' "$SCRIPT_DIR/audit.sh"
+
+# Drift must be reported through the exit status, so it can gate a script
+assert_true "audit.sh --help exits 0" sh -c "sh '$SCRIPT_DIR/audit.sh' --help >/dev/null 2>&1"
+assert_true "audit.sh rejects unknown flags" sh -c "! sh '$SCRIPT_DIR/audit.sh' --nope >/dev/null 2>&1"
+
+# It must be installed and, just as importantly, removed again
+assert_true "setup.sh installs audit.sh" \
+    grep -q 'UTILITY_SCRIPTS=.*audit\.sh' "$SCRIPT_DIR/setup.sh"
+assert_true "uninstall.sh removes audit.sh" \
+    grep -q '/cfg/audit\.sh' "$SCRIPT_DIR/uninstall.sh"
+# A failed reconfigure leaves this behind, holding the previous resolver ID
+assert_true "uninstall.sh removes a stale ctrld.toml.bak" \
+    grep -q '/cfg/ctrld\.toml\.bak' "$SCRIPT_DIR/uninstall.sh"
+# backup.sh stored its backup on the partition it existed to protect, and its
+# file list was five files short of a working install
+assert_false "backup.sh is gone" [ -f "$SCRIPT_DIR/backup.sh" ]
+assert_true "uninstall.sh removes the directory it left behind" \
+    grep -q 'rm -rf /cfg/controld-backup' "$SCRIPT_DIR/uninstall.sh"
+
 describe "--help flags on all scripts"
-for script in setup.sh status.sh benchmark.sh uninstall.sh reconfigure.sh; do
+for script in setup.sh status.sh benchmark.sh uninstall.sh reconfigure.sh audit.sh; do
     if [ -f "$SCRIPT_DIR/$script" ]; then
         HELP_OUT=$(sh "$SCRIPT_DIR/$script" --help 2>&1 || true)
         assert_contains "$script --help mentions usage" "$HELP_OUT" "Usage"

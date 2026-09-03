@@ -722,6 +722,31 @@ preserved_forced_dns() {
     printf '0'
 }
 
+# ── Fallback resolver ──
+
+# Point the https-dns-proxy fallback at a ControlD resolver.
+#
+# This is the backstop that answers whenever ctrld is down, so it has to move
+# with the resolver ID. Rotating an ID and leaving this behind means a retired
+# or leaked profile still resolves for the whole LAN every time ctrld restarts.
+# Every configured instance is updated — the router ships three, but the count
+# is read from uci rather than assumed.
+# Usage: set_fallback_resolver <resolver-id> <bootstrap-ip>
+set_fallback_resolver() {
+    _sfr_id="$1"
+    _sfr_boot="$2"
+    _sfr_i=0
+    # Bounded: a broken `uci get` that always succeeds must not spin forever.
+    while [ "$_sfr_i" -lt 16 ] && uci -q get "https-dns-proxy.@https-dns-proxy[${_sfr_i}]" >/dev/null 2>&1; do
+        uci set "https-dns-proxy.@https-dns-proxy[${_sfr_i}].resolver_url=https://dns.controld.com/${_sfr_id}"
+        uci set "https-dns-proxy.@https-dns-proxy[${_sfr_i}].bootstrap_dns=${_sfr_boot}"
+        _sfr_i=$((_sfr_i + 1))
+    done
+    [ "$_sfr_i" -gt 0 ] || return 1
+    uci commit https-dns-proxy
+    return 0
+}
+
 # ── Forced DNS ──
 
 # Write FORCED_DNS=<0|1> to /cfg/controld.env — update in place or append if absent.

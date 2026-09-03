@@ -535,4 +535,6 @@ Secret scanning (`betterleaks`) exists only as `.forgejo/workflows/secrets-scan.
 
 ## License
 
-Zero-Clause BSD (0BSD), unchanged from the original project — see [LICENSE](LICENSE).
+BSD Zero Clause License (0BSD) — see [LICENSE](LICENSE). Same permissive terms
+as the original project; the copyright line now credits both the original
+author and this fork's maintainer.

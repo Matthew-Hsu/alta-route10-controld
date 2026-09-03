@@ -11,12 +11,13 @@ Encrypted DNS with per-device visibility on the Alta Labs Route 10 router using 
 > boot hooks, the watchdog with protocol fallback, split DNS policies, and the
 > forced-DNS hijack, is their work.
 >
-> This fork started because the original didn't handle VLANs: DNS
-> interception was hardcoded to two interfaces, so any device on a VLAN never
-> showed up in the ControlD dashboard. Fixing that led to fixing several
-> related bugs found along the way, and to keeping the project maintained
-> since the original was archived. See the commit history for what has
-> changed since.
+> This fork started because the original didn't support VLANs at all: DNS
+> interception was hardcoded to two interfaces, so any device on a bridge
+> outside those two never got routed through ControlD. Its queries resolved,
+> but not through ControlD, and the device never showed up in the dashboard.
+> Fixing that led to fixing several related bugs found along the way, and to
+> keeping the project maintained since the original was archived. See the
+> commit history for what has changed since.
 
 ## Table of Contents
 

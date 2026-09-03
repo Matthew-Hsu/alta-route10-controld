@@ -424,10 +424,12 @@ assert_eq "falls back to live uci state"      "1" "$(preserved_forced_dns "$TMPD
 printf 'FORCED_DNS=0\n' > "$TMPDIR/fd.env"
 assert_eq "uci on beats a stale 0 in the file" "1" "$(preserved_forced_dns "$TMPDIR/fd.env")"
 
-# setup.sh must actually call it — this fix was described in a commit before it
-# was in the diff, and no test would have noticed
-assert_true "setup.sh writes the preserved value" \
-    grep -q 'FORCED_DNS=$(preserved_forced_dns' "$SCRIPT_DIR/setup.sh"
+# setup.sh must actually preserve it — this fix was once described in a commit
+# before it was in the diff, and no test noticed. The assertion that replaced
+# that gap checked for the literal `FORCED_DNS=$(preserved_forced_dns ...)`
+# inside setup.sh's here-doc, and passed for months while that exact line read
+# an already-truncated file. Both are now covered by running the real writer
+# against a real file, in "write_env_file()" below.
 
 describe "force_dns_port — a package default, not ours to delete"
 
@@ -719,6 +721,55 @@ assert_false "missing env file returns error" load_env "$TMPDIR/nonexistent.env"
 # ══════════════════════════════════════════════════════════════════
 # SCRIPT FLAG TESTS
 # ══════════════════════════════════════════════════════════════════
+
+describe "write_env_file() — the rewrite must not lose the old value"
+
+# `cat > file << EOF` truncates the target before the here-document expands, so
+# reading the same file from inside the here-doc always saw it empty. setup.sh
+# did exactly that for FORCED_DNS. preserved_forced_dns was tested on its own
+# and passed; the bug lived in the sequence around it, and only the uci
+# fallback hid it. uci is stubbed to say "off" here so nothing can mask it.
+WEF_SAVED_PATH="$PATH"
+mkdir -p "$TMPDIR/bin"
+printf '#!/bin/sh\nexit 1\n' > "$TMPDIR/bin/uci"   # uci knows nothing
+chmod +x "$TMPDIR/bin/uci"
+PATH="$TMPDIR/bin:$PATH"
+
+RESOLVER_ID=newid123
+BOOTSTRAP_IP=76.76.2.22
+CTRLD_VERSION=1.5.7
+DNS_TYPE=doh3
+PREFERRED_PROTOCOL=doh3
+
+WEF_ENV="$TMPDIR/wef.env"
+printf 'RESOLVER_ID=oldid999\nFORCED_DNS=1\n' > "$WEF_ENV"
+write_env_file "$WEF_ENV"
+
+assert_file_contains "forced DNS survives the rewrite" "$WEF_ENV" "FORCED_DNS=1"
+assert_file_contains "the new resolver is written"     "$WEF_ENV" "RESOLVER_ID=newid123"
+assert_false "the old resolver is gone" grep -q 'oldid999' "$WEF_ENV"
+
+# A disabled install must stay disabled — the preserve must not be a hardcoded 1
+printf 'FORCED_DNS=0\n' > "$WEF_ENV"
+write_env_file "$WEF_ENV"
+assert_file_contains "a disabled install stays disabled" "$WEF_ENV" "FORCED_DNS=0"
+
+# First install: no file at all
+rm -f "$WEF_ENV"
+write_env_file "$WEF_ENV"
+assert_file_contains "a fresh install starts disabled" "$WEF_ENV" "FORCED_DNS=0"
+assert_file_contains "fresh install records the protocol" "$WEF_ENV" "PREFERRED_PROTOCOL=doh3"
+
+PATH="$WEF_SAVED_PATH"
+unset RESOLVER_ID BOOTSTRAP_IP CTRLD_VERSION DNS_TYPE PREFERRED_PROTOCOL
+
+# Both writers must go through it, or the bug comes back in one of them
+assert_true "setup.sh writes the env file through the helper" \
+    grep -q '^write_env_file /cfg/controld.env' "$SCRIPT_DIR/setup.sh"
+assert_true "reconfigure.sh does too" \
+    grep -q 'write_env_file /cfg/controld.env' "$SCRIPT_DIR/reconfigure.sh"
+assert_false "no here-doc reads the file it is truncating" \
+    grep -q 'FORCED_DNS=$(preserved_forced_dns' "$SCRIPT_DIR/setup.sh"
 
 describe "set_fallback_resolver() — the backstop must rotate too"
 

@@ -5,7 +5,7 @@
 # Version of these scripts, semver: MAJOR for a change that breaks an existing
 # install (a config key or file layout an upgrade cannot read), MINOR for new
 # capability that upgrades cleanly, PATCH for fixes with no new behavior.
-VERSION="1.7.1"
+VERSION="1.8.0"
 
 # The ctrld release a fresh install pins. Deliberately separate from VERSION:
 # these move for unrelated reasons, and while they shared one variable a tools
@@ -153,6 +153,10 @@ next_proto() {
 
 # Root of the sysfs network tree — overridable so tests can point at a fixture.
 SYSFS_NET="${SYSFS_NET:-/sys/class/net}"
+# The library the router is running, as opposed to the one this process sourced.
+# audit.sh compares the two: running a newer checkout against an older install
+# is drift worth naming.
+INSTALLED_LIB="${INSTALLED_LIB:-/cfg/lib.sh}"
 
 # List the LAN bridges that DNS must be intercepted on, one per line.
 #

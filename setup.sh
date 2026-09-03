@@ -381,14 +381,9 @@ print_ok "ctrld binary installed to /cfg/ctrld"
 
 print_step "Step 3: Writing configuration files..."
 
-cat > /cfg/controld.env << EOF
-RESOLVER_ID=${RESOLVER_ID}
-BOOTSTRAP_IP=${BOOTSTRAP_IP}
-CTRLD_VERSION=${CTRLD_PIN}
-DNS_TYPE=${DNS_TYPE}
-PREFERRED_PROTOCOL=${DNS_TYPE}
-FORCED_DNS=$(preserved_forced_dns /cfg/controld.env)
-EOF
+CTRLD_VERSION="${CTRLD_PIN}"
+PREFERRED_PROTOCOL="${DNS_TYPE}"
+write_env_file /cfg/controld.env
 print_ok "/cfg/controld.env written"
 
 # ── Step 5: Write ctrld.toml ──

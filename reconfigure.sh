@@ -115,14 +115,7 @@ apply_and_restart() {
     fi
 
     # Update env file
-    cat > /cfg/controld.env << EOF
-RESOLVER_ID=${RESOLVER_ID}
-BOOTSTRAP_IP=${BOOTSTRAP_IP}
-CTRLD_VERSION=${CTRLD_VERSION}
-DNS_TYPE=${DNS_TYPE}
-PREFERRED_PROTOCOL=${PREFERRED_PROTOCOL:-$DNS_TYPE}
-FORCED_DNS=${FORCED_DNS:-0}
-EOF
+    write_env_file /cfg/controld.env
 
     print_ok "$msg"
     print_info "Restarting ctrld..."

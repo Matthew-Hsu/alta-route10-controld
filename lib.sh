@@ -30,6 +30,10 @@ DNS_PORT="${DNS_PORT:-5354}"
 AWK="${AWK:-awk}"
 FW_USER="${FW_USER:-/etc/firewall.user}"
 FW_MARKER="controld-dns-redirect"
+# Identifies /cfg/rc.local as ours. /etc/rc.local sources that path only if it
+# exists, so it is the sanctioned place for a user's own boot hooks — we must
+# never clobber or delete someone else's.
+RC_MARKER="controld-boot-hook"
 # 443-only fallback targets (DoH3/DoH). DoQ/DoT use port 853 which ISPs/mobile
 # networks can block, so they are never automatic fallback *targets* — they can
 # still be the user's primary protocol. See watchdog self-upgrade for recovery.
@@ -450,6 +454,20 @@ check_port_in_use() {
     return 1
 }
 
+# Was /cfg/rc.local written by this project?
+#
+# Hooks generated before the marker existed have to be recognised too, or an
+# upgraded install leaves its own boot hook behind on uninstall — and that hook
+# then re-adds cron jobs at the next boot pointing at scripts that were just
+# deleted. The legacy signature is the logger line every version has emitted.
+# Usage: is_our_rc_local [file]
+is_our_rc_local() {
+    _iorl_file="${1:-/cfg/rc.local}"
+    [ -f "$_iorl_file" ] || return 1
+    grep -qF "$RC_MARKER" "$_iorl_file" 2>/dev/null && return 0
+    grep -qF "ControlD boot hook" "$_iorl_file" 2>/dev/null
+}
+
 # ── Cron Jobs ──
 
 # Is a cron entry for this exact script installed?
@@ -730,15 +748,19 @@ ensure_forced_dns() {
     # 1. uci config — restored here so it survives firmware wipes of /etc/config
     _cur="$(uci -q get https-dns-proxy.config.force_dns 2>/dev/null || echo "0")"
     [ "$_cur" = "1" ] || { uci set https-dns-proxy.config.force_dns=1; _changed=1; }
-    # Ensure both 53 and 853 are in force_dns_port (rebuild cleanly if 853 missing)
-    _ports="$(uci -q get https-dns-proxy.config.force_dns_port 2>/dev/null || echo "")"
-    case "$_ports" in
-        *853*) : ;;
-        *)  uci delete https-dns-proxy.config.force_dns_port 2>/dev/null || true
-            uci add_list https-dns-proxy.config.force_dns_port=53
-            uci add_list https-dns-proxy.config.force_dns_port=853
-            _changed=1 ;;
-    esac
+    # Ensure 53 and 853 are both in force_dns_port. Additive on purpose: the
+    # list is a stock https-dns-proxy default and may carry extra ports someone
+    # added deliberately, so add what is missing instead of rebuilding it.
+    # Matched word-wise so a port like 8530 is not mistaken for 853.
+    _ports=" $(uci -q get https-dns-proxy.config.force_dns_port 2>/dev/null || echo "") "
+    for _fdp in 53 853; do
+        case "$_ports" in
+            *" ${_fdp} "*) : ;;
+            *)  uci add_list https-dns-proxy.config.force_dns_port="$_fdp"
+                _ports="${_ports}${_fdp} "
+                _changed=1 ;;
+        esac
+    done
     if [ "$_changed" = "1" ]; then
         uci commit https-dns-proxy
         /etc/init.d/https-dns-proxy restart >/dev/null 2>&1 || true
@@ -780,9 +802,17 @@ disable_forced_dns() {
     fi
 
     uci set https-dns-proxy.config.force_dns=0
-    uci delete https-dns-proxy.config.force_dns_port 2>/dev/null || true
     uci commit https-dns-proxy
     /etc/init.d/https-dns-proxy restart >/dev/null 2>&1 || true
+
+    # force_dns=0 is the entire disable, and force_dns_port is deliberately left
+    # alone. The init script unsets the whole forcing block unless force_dns is 1
+    # ([ "$force_dns" = '1' ] || unset force_dns), so the port list is inert once
+    # this is 0. The list is also not ours to remove: 53 and 853 are the ports
+    # the package ships in /etc/config/https-dns-proxy, and the same pair is the
+    # init script's built-in fallback when the option is absent. Earlier versions
+    # deleted it, which removed a vendor default and lost the argument anyway --
+    # the Route 10 rewrites the option back on the next boot.
     logger -t forced-dns "forced DNS disabled"
 }
 

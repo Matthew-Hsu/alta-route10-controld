@@ -320,6 +320,69 @@ assert_file_contains "853 rule present" "$FW_USER" "br-lan_10 -p tcp --dport 853
 FORCED_DNS=0
 unset FW_USER SYSFS_NET
 
+describe "is_our_rc_local() — never clobber someone else's boot hook"
+
+# /etc/rc.local sources /cfg/rc.local only if it exists, so that path is the
+# sanctioned place for a user's own boot hooks.
+RCFIX="$TMPDIR/rc.local"
+printf '#!/bin/sh\n# my own boot hook\nmount -o remount,rw /\n' > "$RCFIX"
+assert_false "a user's own hook is not ours"   is_our_rc_local "$RCFIX"
+printf '#!/bin/sh\n# /cfg/rc.local — %s\n' "$RC_MARKER" > "$RCFIX"
+assert_true  "our generated hook is ours"      is_our_rc_local "$RCFIX"
+assert_false "a missing file is not ours"      is_our_rc_local "$TMPDIR/no-such-rc.local"
+
+# A hook written before the marker existed is still ours. Missing this left the
+# boot hook behind on a real uninstall, and that hook re-adds cron jobs at the
+# next boot pointing at scripts uninstall had just deleted.
+RCOLD="$TMPDIR/rc.local.legacy"
+cat > "$RCOLD" << 'RCOLDEOF'
+#!/bin/sh
+# /cfg/rc.local — sourced by /etc/rc.local at every boot
+# Restores ControlD DNS, iptables rules, cron jobs, and firewall persistence
+
+logger -t rc.local "ControlD boot hook starting"
+[ -x /cfg/post-cfg.sh ] && /cfg/post-cfg.sh &
+RCOLDEOF
+assert_true "a pre-marker hook is recognised as ours" is_our_rc_local "$RCOLD"
+
+# The generated file must carry the marker, or uninstall would refuse to remove
+# its own hook and setup would back it up as a stranger's on every run.
+RCGEN="$TMPDIR/rc-generated.sh"
+sed -n "/^cat > \/cfg\/rc.local << 'RCLOCAL'/,/^RCLOCAL$/p" "$SCRIPT_DIR/setup.sh" \
+    | sed '1d;$d' > "$RCGEN"
+assert_true  "the generated hook carries the marker" is_our_rc_local "$RCGEN"
+
+# It is sourced by /etc/rc.local, which runs its own logic afterwards: an exit
+# or set -e here would silently skip the rest of the router's boot script.
+assert_false "generated hook has no exit"   grep -qE '^[[:space:]]*exit' "$RCGEN"
+assert_false "generated hook has no set -e" grep -qE '^[[:space:]]*set -e' "$RCGEN"
+assert_true  "generated hook warns that it is sourced" grep -q 'sources' "$RCGEN"
+
+describe "uninstall.sh — a full purge, not just file removal"
+
+# Leaving force_dns set means https-dns-proxy keeps hijacking 53 and 853 after
+# the app is gone: someone uninstalling to get their DNS back is still caught.
+assert_true "uninstall disables forced DNS" \
+    grep -q 'disable_forced_dns' "$SCRIPT_DIR/uninstall.sh"
+# force_dns_port is not ours: see the dedicated section below. Uninstall must
+# never delete it, and must say why it is still listed.
+assert_false "uninstall does not delete the package port list" \
+    grep -q 'uci delete https-dns-proxy.config.force_dns_port' "$SCRIPT_DIR/uninstall.sh"
+assert_true "uninstall explains the port list it leaves behind" \
+    grep -q 'stock package default, inert with force_dns=0' "$SCRIPT_DIR/uninstall.sh"
+assert_true "uninstall removes the empty /etc/controld ctrld creates" \
+    grep -q 'rmdir /etc/controld' "$SCRIPT_DIR/uninstall.sh"
+assert_true "uninstall clears runtime state" \
+    grep -q 'controld-degraded' "$SCRIPT_DIR/uninstall.sh"
+assert_true "uninstall checks rc.local ownership" \
+    grep -q 'is_our_rc_local' "$SCRIPT_DIR/uninstall.sh"
+assert_true "uninstall restores a pre-install rc.local" \
+    grep -q 'rc.local.pre-controld' "$SCRIPT_DIR/uninstall.sh"
+assert_false "rc.local is not in the blind removal list" \
+    grep -qE '^\s+/cfg/rc.local ' "$SCRIPT_DIR/uninstall.sh"
+assert_true "setup backs up a foreign rc.local" \
+    grep -q 'rc.local.pre-controld' "$SCRIPT_DIR/setup.sh"
+
 describe "cron_has() — must not confuse another service's job for ours"
 
 # The router ships "* * * * * /usr/bin/wireguard_watchdog". Matching the bare
@@ -365,6 +428,84 @@ assert_eq "uci on beats a stale 0 in the file" "1" "$(preserved_forced_dns "$TMP
 # was in the diff, and no test would have noticed
 assert_true "setup.sh writes the preserved value" \
     grep -q 'FORCED_DNS=$(preserved_forced_dns' "$SCRIPT_DIR/setup.sh"
+
+describe "force_dns_port — a package default, not ours to delete"
+
+# 53 and 853 are the ports https-dns-proxy ships in its own /etc/config, and the
+# same pair is the init script's fallback when the option is absent. Deleting
+# them on uninstall removed a vendor default and did not stick either — the
+# Route 10 wrote the option back on the next boot. Three fixes chased that
+# before anyone read the package, each guarded by a test that asserted where
+# the delete sat in the file rather than what the router ended up with. These
+# run the real functions against a fake uci and assert on the resulting state.
+FD_SAVED_PATH="$PATH"
+mkdir -p "$TMPDIR/ucibin"
+cat > "$TMPDIR/ucibin/uci" << 'UCIEOF'
+#!/bin/sh
+# Minimal stateful uci: get/set/add_list/delete/commit over $UCI_STORE
+store="$UCI_STORE"
+[ -f "$store" ] || : > "$store"
+[ "$1" = "-q" ] && shift
+cmd="$1"; shift
+arg="${1:-}"
+key="${arg%%=*}"
+val=""
+case "$arg" in *=*) val="${arg#*=}" ;; esac
+_get() { sed -n "s|^$1 ||p" "$store" | head -1; }
+_put() { grep -v "^$1 " "$store" > "$store.t" 2>/dev/null; printf '%s %s\n' "$1" "$2" >> "$store.t"; mv "$store.t" "$store"; }
+case "$cmd" in
+    get)      v="$(_get "$key")"; [ -n "$v" ] || exit 1; printf '%s\n' "$v" ;;
+    set)      _put "$key" "$val" ;;
+    add_list) v="$(_get "$key")"; _put "$key" "${v:+$v }$val" ;;
+    delete)   grep -v "^$key " "$store" > "$store.t" 2>/dev/null; mv "$store.t" "$store" ;;
+    commit)   : ;;
+    *)        exit 1 ;;
+esac
+exit 0
+UCIEOF
+chmod +x "$TMPDIR/ucibin/uci"
+printf '#!/bin/sh\nexit 0\n' > "$TMPDIR/ucibin/iptables"
+chmod +x "$TMPDIR/ucibin/iptables"
+PATH="$TMPDIR/ucibin:$PATH"
+UCI_STORE="$TMPDIR/uci.store"; export UCI_STORE
+FW_USER="$TMPDIR/fd-firewall.user"
+SYSFS_NET="$FAKE_NET"
+DNS_PORT=5354
+
+# A router with forced DNS on and the stock port list
+: > "$UCI_STORE"
+uci set https-dns-proxy.config.force_dns=1
+uci add_list https-dns-proxy.config.force_dns_port=53
+uci add_list https-dns-proxy.config.force_dns_port=853
+: > "$FW_USER"
+disable_forced_dns >/dev/null 2>&1 || true
+
+assert_eq "disable turns the hijack off" "0" \
+    "$(uci -q get https-dns-proxy.config.force_dns)"
+assert_eq "disable leaves the package port list alone" "53 853" \
+    "$(uci -q get https-dns-proxy.config.force_dns_port)"
+
+# A trimmed list plus a port someone added deliberately. 8530 also catches the
+# substring bug: a naive *853* match sees it and never adds the DoT port.
+: > "$UCI_STORE"
+uci set https-dns-proxy.config.force_dns=0
+uci add_list https-dns-proxy.config.force_dns_port=53
+uci add_list https-dns-proxy.config.force_dns_port=8530
+: > "$FW_USER"
+FORCED_DNS=1
+ensure_forced_dns >/dev/null 2>&1 || true
+
+assert_eq "enable turns the hijack on" "1" \
+    "$(uci -q get https-dns-proxy.config.force_dns)"
+assert_eq "enable adds only the missing port, keeping the rest" "53 8530 853" \
+    "$(uci -q get https-dns-proxy.config.force_dns_port)"
+
+ensure_forced_dns >/dev/null 2>&1 || true
+assert_eq "a second enable adds no duplicates" "53 8530 853" \
+    "$(uci -q get https-dns-proxy.config.force_dns_port)"
+
+PATH="$FD_SAVED_PATH"
+unset UCI_STORE FW_USER SYSFS_NET DNS_PORT FORCED_DNS
 assert_false "setup.sh never hardcodes FORCED_DNS=0" \
     grep -q '^FORCED_DNS=0$' "$SCRIPT_DIR/setup.sh"
 

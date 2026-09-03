@@ -33,9 +33,11 @@ FORCE=0
 # leave commands that error out.
 INSTALL_FILES="/cfg/ctrld /cfg/ctrld.toml /cfg/post-cfg.sh \
                /cfg/controld.env /cfg/controld-update.sh /cfg/watchdog.sh \
-               /cfg/rc.local /cfg/ctrld.prev \
+               /cfg/ctrld.prev \
                /cfg/status.sh /cfg/benchmark.sh /cfg/reconfigure.sh \
                /cfg/lib.sh /cfg/uninstall.sh"
+# /cfg/rc.local is handled separately: it is only ours if it carries our
+# marker, and a pre-install copy may need restoring in its place.
 
 # ── Help ──
 
@@ -222,6 +224,41 @@ if [ -f "$FW_USER" ]; then
     print_ok "firewall.user entries removed (rules will not return on reload)"
 fi
 
+# ── Restore forced DNS ──
+
+# Without this, force_dns stays set in uci and https-dns-proxy keeps hijacking
+# ports 53 and 853 after the app is gone — someone uninstalling to get their
+# DNS back would still be intercepted. force_dns is the only switch we own;
+# see disable_forced_dns for why force_dns_port is left alone.
+print_step "Disabling forced DNS..."
+if command -v disable_forced_dns >/dev/null 2>&1; then
+    disable_forced_dns
+    print_ok "Forced DNS disabled (uci force_dns cleared)"
+else
+    print_warn "lib.sh unavailable — check 'uci show https-dns-proxy.config' by hand"
+fi
+
+# ── Boot hook ──
+
+print_step "Removing boot hook..."
+if [ -f /cfg/rc.local ] && ! is_our_rc_local /cfg/rc.local; then
+    print_warn "/cfg/rc.local is not ours — left untouched"
+elif [ -f /cfg/rc.local ]; then
+    rm -f /cfg/rc.local
+    print_ok "Removed /cfg/rc.local"
+fi
+if [ -f /cfg/rc.local.pre-controld ]; then
+    mv /cfg/rc.local.pre-controld /cfg/rc.local
+    print_ok "Restored the /cfg/rc.local that existed before install"
+fi
+
+# Runtime state, so the router is clean without waiting for a reboot
+rm -f /tmp/controld-degraded /tmp/controld-dns-fail.count /tmp/controld-upgrade.count
+
+# The ctrld binary creates /etc/controld for its own state. rmdir only removes
+# it when empty, so anything the daemon actually left there is preserved.
+rmdir /etc/controld 2>/dev/null || true
+
 # ── Remove files ──
 
 print_step "Removing files..."
@@ -269,6 +306,16 @@ uci commit https-dns-proxy 2>/dev/null || true
 
 /etc/init.d/https-dns-proxy restart 2>/dev/null || true
 print_ok "https-dns-proxy restarted (Quad9)"
+
+# force_dns_port is left as we found it. It is a stock https-dns-proxy default
+# (the shipped /etc/config lists 53 and 853, and the init script falls back to
+# the same pair when the option is absent), the Route 10 rewrites it on boot,
+# and the init script ignores it entirely while force_dns is 0. Say so, because
+# anyone auditing the uninstall will find the ports still listed.
+_fdp="$(uci -q get https-dns-proxy.config.force_dns_port 2>/dev/null || true)"
+if [ -n "$_fdp" ]; then
+    print_info "force_dns_port lists ${_fdp} — stock package default, inert with force_dns=0"
+fi
 
 # Reset dnsmasq to use https-dns-proxy defaults
 uci delete dhcp.@dnsmasq[0].server 2>/dev/null || true

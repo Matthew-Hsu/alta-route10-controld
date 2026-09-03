@@ -22,7 +22,7 @@ Encrypted DNS with per-device visibility on the Alta Labs Route 10 router using 
 - **Benchmark tool**: test which protocol is fastest on your ISP
 - **Quick reconfigure**: change protocol, resolver, or policies without re-running setup
 - **Forced DNS**: hijack all outbound DNS (port 53 + 853) so smart TVs and IoT devices can't bypass ControlD
-- **Built-in test suite**: 170+ tests covering all functions, run locally and on-router under both GNU and BusyBox awk
+- **Built-in test suite**: unit tests run anywhere, integration tests on-router, both under GNU and BusyBox awk
 
 ## Supported Protocols
 
@@ -84,16 +84,95 @@ The installer will:
 sh setup.sh --resolver abc123 --protocol doh3
 ```
 
+## Common Workflows
+
+Every command below is run over SSH on the router. After install the scripts
+live in `/cfg/`; before install, run them from wherever you unpacked the repo.
+
+### Install
+
+```sh
+wget -O /tmp/setup.sh https://raw.githubusercontent.com/Matthew-Hsu/alta-route10-controld/master/setup.sh
+sh /tmp/setup.sh                                   # interactive
+sh /tmp/setup.sh --resolver abc123 --protocol doh3 # non-interactive
+```
+
+Re-running `setup.sh` over an existing install is safe: it preserves your
+forced-DNS choice and resolver, and re-downloads only what is missing.
+
+### Verify an install
+
+Two questions, two tools. Run both after installing, and after any firmware
+update or reboot you want to be sure about.
+
+```sh
+sh /cfg/status.sh    # is it working?  services, DNS, per-bridge coverage, cron
+sh /cfg/audit.sh     # is it clean?    duplicates, stale references, leftovers
+```
+
+`status.sh` confirms the redirect rules exist. `audit.sh` goes further and
+reports how many packets each bridge has actually redirected — rules can be
+present and still never match. A VLAN with active devices and zero packets is
+the one to investigate; an idle VLAN reading zero is expected.
+
+`audit.sh` exits non-zero when it finds drift, so it can gate a script:
+
+```sh
+sh /cfg/audit.sh >/dev/null || echo "drift found — run it again for detail"
+sh /cfg/audit.sh --raw    # add crontab, firewall.user, uci and nat dumps
+```
+
+If it reports rules for a bridge that no longer exists, or a bridge with no
+rules, `sh /cfg/reconfigure.sh --repair` re-applies coverage and prunes the
+stale entries.
+
+### Change the resolver ID
+
+```sh
+sh /cfg/reconfigure.sh --resolver --to <new-id>
+```
+
+This rewrites `ctrld.toml` and `controld.env`, preserves any split-DNS policy,
+moves the `https-dns-proxy` fallback onto the same new profile, restarts
+`ctrld`, and checks DNS before returning. Confirm with `sh /cfg/status.sh`,
+then delete the old profile in the ControlD dashboard — until you do, the old
+ID keeps resolving for anyone who has it.
+
+### Change protocol
+
+```sh
+sh /cfg/reconfigure.sh --protocol --to doh3   # or doq, doh, dot
+sh /cfg/benchmark.sh                          # measure first
+sh /cfg/reconfigure.sh --benchmark --force    # measure, then apply the winner
+```
+
+### Uninstall
+
+```sh
+sh /cfg/uninstall.sh            # --force skips the confirmation
+```
+
+It verifies its own removal on the way out. Audit it independently by running
+`audit.sh` from a repo checkout rather than `/cfg` — uninstall removes `/cfg`
+entirely, `lib.sh` included, so the installed copy is gone by then:
+
+```sh
+sh /tmp/controld/audit.sh
+```
+
+**Before a factory reset, uninstall first** — see [Uninstalling](#uninstalling).
+
 ## Scripts
 
 | Script | Purpose | Key Flags |
 |---|---|---|
 | `setup.sh` | Interactive installer with guided protocol selection and inline benchmark | `--help` `--version` `--protocol <type>` `--resolver <id>` |
 | `status.sh` | Health check: services, upstreams, policies, watchdog activity | `--help` |
-| `reconfigure.sh` | Change protocol, resolver, or policies without re-running setup | `--help` `--show` `--protocol` `--resolver` `--benchmark` `--policy` `--force-dns` `--to <value>` `--force` |
+| `reconfigure.sh` | Change protocol, resolver, or policies without re-running setup | `--help` `--show` `--protocol` `--resolver` `--benchmark` `--policy` `--force-dns` `--repair` `--to <value>` `--force` |
 | `benchmark.sh` | Test DNS query latency across DoQ, DoH3, and DoH | `--help` `--queries N` |
+| `audit.sh` | Read-only drift check: duplicates, stale references, leftovers, packets actually intercepted | `--help` `--raw` |
 | `uninstall.sh` | Removes everything, restores default DNS | `--help` `--force` |
-| `test.sh` | Comprehensive test suite (170+ tests) | — |
+| `test.sh` | Test suite: unit tests anywhere, integration tests on-router | — |
 
 Every script supports `--help` with full usage documentation.
 
@@ -112,6 +191,8 @@ Every script supports `--help` with full usage documentation.
 | `/cfg/benchmark.sh` | Protocol benchmark tool |
 | `/cfg/reconfigure.sh` | Quick reconfiguration tool |
 | `/cfg/status.sh` | Status reporting tool |
+| `/cfg/audit.sh` | Drift and leftover audit |
+| `/cfg/uninstall.sh` | Uninstaller |
 
 ## Key Features
 
@@ -324,6 +405,46 @@ sh test.sh    # works locally and on-router
 - Self-healing config regeneration
 - Benchmark completion
 
+## Uninstalling
+
+`sh /cfg/uninstall.sh` removes everything this project installs, in all four
+places it writes:
+
+| Location | What is removed |
+|---|---|
+| `/cfg/` | every file `setup.sh` installed, including the boot hook |
+| `/etc/firewall.user` | our marker block, and any legacy lines |
+| crontab | our two jobs, matched by script path |
+| uci | forced DNS turned off; dnsmasq and https-dns-proxy pointed back at defaults |
+
+Only our own iptables rules are deleted, one at a time — the firewall's zone
+jumps are left alone, so port forwards and UPnP keep working and no reboot is
+needed.
+
+**What it does not restore:** your original `https-dns-proxy` resolver. Nothing
+records what it was before install, so uninstall points it at a public
+resolver (Quad9) and says so. Set it to whatever you want afterwards. The
+dnsmasq lease time is likewise left at 24h.
+
+`force_dns` is set to 0, which is the entire disable: the https-dns-proxy init
+script drops its whole forcing block unless `force_dns` is 1, so the port list
+is never read while it is 0.
+
+`force_dns_port` still lists 53 and 853 afterwards, and that is correct — those
+are the ports the package ships in its own `/etc/config/https-dns-proxy`, and
+the same pair is the init script's built-in fallback when the option is absent.
+It was never ours to delete, and the Route 10 rewrites the option on the next
+boot regardless. Uninstall says so rather than trying.
+
+`/cfg/rc.local` is only removed if it carries this project's marker. Because
+`/etc/rc.local` sources that path only when it exists, it is also where a user's
+own boot hooks would live: `setup.sh` copies a foreign one to
+`/cfg/rc.local.pre-controld` before writing its own, and uninstall puts it back.
+
+**Before a factory reset, uninstall first.** `/cfg` is a persistent partition and
+survives a reset, so the boot hook would otherwise re-apply ControlD to your
+freshly reset router.
+
 ## Versioning
 
 Two versions live in `lib.sh` and move independently:
@@ -350,6 +471,7 @@ All scripts source `lib.sh` which provides:
 - Release verification (`verify_ctrld_download`, `checksum_for_asset`)
 - LAN bridge discovery (`lan_ifaces`, `lan_cidr`, `lan_net_name`) and redirect rules (`ensure_redirect_rule`, `ensure_firewall_user_rules`)
 - Forced DNS (`ensure_forced_dns`, `disable_forced_dns`, `set_forced_dns_flag`)
+- Fallback resolver (`set_fallback_resolver`) — keeps https-dns-proxy on the same ControlD profile as ctrld
 - Input validation (`valid_resolver`, `valid_mac`, `valid_cidr`, `valid_proto`)
 - Protocol utilities (`proto_label`, `next_proto`) and per-upstream protocol switching (`retarget_upstreams`, `resolver_from_endpoint`)
 - Degraded-mode handling (`remove_dns_redirects`) and config editing (`toml_blocks`, `next_toml_index`)
@@ -370,12 +492,19 @@ If you prefer not to use the automated installer, see `config/ctrld.toml.example
 
 **Automatic recovery:** Firmware updates typically preserve `/cfg/` (persistent ext4 partition). The boot persistence layer (`/cfg/rc.local`) automatically restores all services, cron jobs, and iptables rules on reboot. No manual intervention needed.
 
-**If `/cfg/` is wiped** (rare, but possible on major updates), restore from backup:
+**If `/cfg/` is wiped** (rare, but possible on major updates), just re-run the
+installer — it is faster than restoring by hand and cannot produce a partial
+install:
 
 ```sh
-scp controld.env ctrld ctrld.toml post-cfg.sh root@<router-ip>:/cfg/
-ssh root@<router-ip> "chmod +x /cfg/ctrld /cfg/post-cfg.sh && /cfg/post-cfg.sh"
+sh setup.sh --resolver <your-id> --protocol doh3
 ```
+
+Earlier versions shipped a `backup.sh` that copied a handful of files into
+`/cfg/controld-backup`. It has been removed: it stored the backup on the very
+partition it existed to protect, and its file list had fallen five files behind
+what an install actually needs, so restoring from it produced a broken install.
+`uninstall.sh` deletes the directory if an old run left one.
 
 ## Troubleshooting
 
@@ -387,7 +516,7 @@ CI runs on every push/PR to `master` via **GitHub Actions** (`.github/workflows/
 
 1. **shellcheck** — lints all shell scripts
 2. **test suite** — runs `test.sh` under both GNU awk and BusyBox awk, since the router runs BusyBox and its awk differs in ways that have silently broken on-device behavior while CI was green (integration tests run only on-router)
-3. **betterleaks** — scans for leaked secrets (`.forgejo/workflows/secrets-scan.yml`)
+Secret scanning (`betterleaks`) exists only as `.forgejo/workflows/secrets-scan.yml` and therefore does **not** run on GitHub — treat it as Forgejo-only until it is ported.
 
 ## Credits
 

@@ -555,13 +555,7 @@ fi
 while ! uci get https-dns-proxy.@https-dns-proxy[0] >/dev/null 2>&1; do sleep 1; done
 
 # Set https-dns-proxy to ControlD as fallback
-uci set https-dns-proxy.@https-dns-proxy[0].resolver_url="https://dns.controld.com/${RESOLVER_ID}"
-uci set https-dns-proxy.@https-dns-proxy[0].bootstrap_dns="${BOOTSTRAP_IP}"
-uci set https-dns-proxy.@https-dns-proxy[1].resolver_url="https://dns.controld.com/${RESOLVER_ID}"
-uci set https-dns-proxy.@https-dns-proxy[1].bootstrap_dns="${BOOTSTRAP_IP}"
-uci set https-dns-proxy.@https-dns-proxy[2].resolver_url="https://dns.controld.com/${RESOLVER_ID}"
-uci set https-dns-proxy.@https-dns-proxy[2].bootstrap_dns="${BOOTSTRAP_IP}"
-uci commit https-dns-proxy
+set_fallback_resolver "$RESOLVER_ID" "$BOOTSTRAP_IP" || true
 # stderr dropped: on a router that has not started the service since boot,
 # restart prints "ubus call service signal ... Not found" before starting it
 # normally. Step 5 verifies DNS for real, so the noise buys nothing.

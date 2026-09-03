@@ -245,6 +245,16 @@ do_resolver() {
     cp /cfg/ctrld.toml /cfg/ctrld.toml.bak
     RESOLVER_ID="$new_id"
     apply_and_restart "Resolver changed to ${RESOLVER_ID}"
+
+    # The fallback has to move too. It answers whenever ctrld is down, so
+    # leaving it on the old ID means a rotated-away profile — a leaked one,
+    # say — still resolves for the whole LAN at the next ctrld restart.
+    if set_fallback_resolver "$RESOLVER_ID" "$BOOTSTRAP_IP"; then
+        /etc/init.d/https-dns-proxy restart >/dev/null 2>&1 || true
+        print_ok "https-dns-proxy fallback moved to the new resolver"
+    else
+        print_warn "Could not update the https-dns-proxy fallback — check 'uci show https-dns-proxy'"
+    fi
 }
 
 # ── Action: Benchmark ──

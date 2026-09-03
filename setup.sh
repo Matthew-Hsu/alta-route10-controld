@@ -1129,7 +1129,7 @@ fi
 
 # ── Step 9b: Install utility scripts ──
 
-UTILITY_SCRIPTS="status.sh benchmark.sh reconfigure.sh uninstall.sh"
+UTILITY_SCRIPTS="status.sh benchmark.sh reconfigure.sh audit.sh uninstall.sh"
 _installed=""
 for _uscript in $UTILITY_SCRIPTS; do
     if [ -f "${LIB_DIR}/${_uscript}" ]; then
@@ -1262,11 +1262,13 @@ printf "    /cfg/lib.sh               Shared function library\n"
 printf "    /cfg/status.sh            Status reporting tool\n"
 printf "    /cfg/benchmark.sh         Protocol benchmark tool\n"
 printf "    /cfg/reconfigure.sh       Quick reconfiguration tool\n"
+printf "    /cfg/audit.sh             Drift and leftover audit\n"
 printf "    /cfg/uninstall.sh         Uninstaller\n\n"
 printf "  ${BOLD}Quick commands:${RESET}\n"
 printf "    sh /cfg/status.sh         Check DNS health\n"
 printf "    sh /cfg/benchmark.sh      Test protocol speeds\n"
 printf "    sh /cfg/reconfigure.sh    Change protocol/resolver/policy\n"
+printf "    sh /cfg/audit.sh          Check for drift and leftovers\n"
 printf "    sh /cfg/uninstall.sh      Remove ControlD\n\n"
 printf "  ${DIM}Note: Use the scripts above instead of running /cfg/ctrld directly.${RESET}\n"
 printf "  ${DIM}The ctrld 'start'/'status' commands expect a different config format.${RESET}\n\n"

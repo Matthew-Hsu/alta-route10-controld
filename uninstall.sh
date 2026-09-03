@@ -35,6 +35,7 @@ INSTALL_FILES="/cfg/ctrld /cfg/ctrld.toml /cfg/post-cfg.sh \
                /cfg/controld.env /cfg/controld-update.sh /cfg/watchdog.sh \
                /cfg/ctrld.prev \
                /cfg/status.sh /cfg/benchmark.sh /cfg/reconfigure.sh \
+               /cfg/audit.sh /cfg/ctrld.toml.bak \
                /cfg/lib.sh /cfg/uninstall.sh"
 # /cfg/rc.local is handled separately: it is only ours if it carries our
 # marker, and a pre-install copy may need restoring in its place.
@@ -306,6 +307,14 @@ uci commit https-dns-proxy 2>/dev/null || true
 
 /etc/init.d/https-dns-proxy restart 2>/dev/null || true
 print_ok "https-dns-proxy restarted (Quad9)"
+
+# /cfg/controld-backup is left by the backup.sh that shipped with earlier
+# versions. That script is gone (it copied /cfg into /cfg, so it could not
+# survive the /cfg wipe it existed for), but the directory it made persists.
+if [ -d /cfg/controld-backup ]; then
+    rm -rf /cfg/controld-backup
+    print_ok "Removed /cfg/controld-backup (left by the old backup.sh)"
+fi
 
 # force_dns_port is left as we found it. It is a stock https-dns-proxy default
 # (the shipped /etc/config lists 53 and 853, and the init script falls back to

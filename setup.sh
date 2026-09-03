@@ -946,10 +946,23 @@ print_ok "Watchdog installed (5-min health check + protocol fallback)"
 # restarts. (Port-853 forced-DNS persistence is handled by ensure_forced_dns,
 # which post-cfg.sh and the watchdog call at boot / every 5 min.)
 
+# /etc/rc.local sources this path only when it exists, which makes it the
+# sanctioned spot for a user's own boot hooks. Never overwrite one we did not
+# write — keep a copy so nothing is lost silently.
+if [ -f /cfg/rc.local ] && ! is_our_rc_local /cfg/rc.local; then
+    cp /cfg/rc.local /cfg/rc.local.pre-controld
+    print_warn "Existing /cfg/rc.local was not ours — saved to /cfg/rc.local.pre-controld"
+fi
+
 cat > /cfg/rc.local << 'RCLOCAL'
 #!/bin/sh
-# /cfg/rc.local — sourced by /etc/rc.local at every boot
-# Restores ControlD DNS, iptables rules, cron jobs, and firewall persistence
+# /cfg/rc.local — controld-boot-hook
+# Restores ControlD DNS, iptables rules, cron jobs, and firewall persistence.
+#
+# IMPORTANT: /etc/rc.local *sources* this file, so it runs in that shell and
+# Alta's own logic continues after it (it signals procd on some device types).
+# Never add "exit" or "set -e" here, and keep every block in a backgrounded
+# subshell, or the rest of the router's boot script will not run.
 
 logger -t rc.local "ControlD boot hook starting"
 

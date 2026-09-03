@@ -1,7 +1,8 @@
 name: ci
 
 # Mirrors .forgejo/workflows/ci.yml, which GitHub does not read. This fork is
-# the canonical home, so the checks have to run here.
+# the canonical home, so the checks have to run here. secrets-scan mirrors
+# .forgejo/workflows/secrets-scan.yml for the same reason.
 on:
   push:
     branches: [master]
@@ -9,6 +10,15 @@ on:
     branches: [master]
 
 jobs:
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: betterleaks
+        run: |
+          curl -sL https://github.com/betterleaks/betterleaks/releases/download/v1.1.2/betterleaks_1.1.2_linux_x64.tar.gz | sudo tar xz -C /usr/local/bin
+          betterleaks dir . --exit-code 1 --redact
+
   shellcheck:
     runs-on: ubuntu-latest
     steps:

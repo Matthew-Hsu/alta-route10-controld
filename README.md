@@ -526,9 +526,9 @@ opening a public issue.
 
 CI runs on every push/PR to `master` via **GitHub Actions** (`.github/workflows/ci.yml`), this fork's canonical home. The original `.forgejo/workflows/` definitions are kept in step for anyone running this on a Forgejo instance, but GitHub does not read them.
 
-1. **shellcheck** — lints all shell scripts
-2. **test suite** — runs `test.sh` under both GNU awk and BusyBox awk, since the router runs BusyBox and its awk differs in ways that have silently broken on-device behavior while CI was green (integration tests run only on-router)
-Secret scanning (`betterleaks`) exists only as `.forgejo/workflows/secrets-scan.yml` and therefore does **not** run on GitHub — treat it as Forgejo-only until it is ported.
+1. **secrets-scan** — runs `betterleaks` over the tree so no credential or key gets committed
+2. **shellcheck** — lints all shell scripts
+3. **test suite** — runs `test.sh` under both GNU awk and BusyBox awk, since the router runs BusyBox and its awk differs in ways that have silently broken on-device behavior while CI was green (integration tests run only on-router)
 
 ## Credits
 

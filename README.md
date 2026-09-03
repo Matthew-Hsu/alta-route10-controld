@@ -516,6 +516,12 @@ what an install actually needs, so restoring from it produced a broken install.
 
 See [docs/troubleshooting.md](docs/troubleshooting.md).
 
+## Security
+
+Found a way to bypass or spoof the DNS routing, or another security issue?
+See [SECURITY.md](SECURITY.md) for how to report it privately rather than
+opening a public issue.
+
 ## CI
 
 CI runs on every push/PR to `master` via **GitHub Actions** (`.github/workflows/ci.yml`), this fork's canonical home. The original `.forgejo/workflows/` definitions are kept in step for anyone running this on a Forgejo instance, but GitHub does not read them.

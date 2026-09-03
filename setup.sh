@@ -562,7 +562,10 @@ uci set https-dns-proxy.@https-dns-proxy[1].bootstrap_dns="${BOOTSTRAP_IP}"
 uci set https-dns-proxy.@https-dns-proxy[2].resolver_url="https://dns.controld.com/${RESOLVER_ID}"
 uci set https-dns-proxy.@https-dns-proxy[2].bootstrap_dns="${BOOTSTRAP_IP}"
 uci commit https-dns-proxy
-/etc/init.d/https-dns-proxy restart
+# stderr dropped: on a router that has not started the service since boot,
+# restart prints "ubus call service signal ... Not found" before starting it
+# normally. Step 5 verifies DNS for real, so the noise buys nothing.
+/etc/init.d/https-dns-proxy restart 2>/dev/null
 
 # Restore dnsmasq to use https-dns-proxy (fallback)
 uci delete dhcp.@dnsmasq[0].server 2>/dev/null

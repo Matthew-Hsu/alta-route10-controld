@@ -842,6 +842,25 @@ assert_eq "audit.sh only ever reads the crontab" "" \
 assert_false "audit.sh contains no in-place sed" grep -q 'sed -i' "$SCRIPT_DIR/audit.sh"
 assert_false "audit.sh contains no rm"           grep -qE '(^|[^a-z-])rm ' "$SCRIPT_DIR/audit.sh"
 
+# An audit that names the wrong version is worse than none: audit.sh can be run
+# from a checkout in /tmp while the router runs something older.
+VER_FIX="$TMPDIR/verfix"
+mkdir -p "$VER_FIX"
+printf 'VERSION="%s"\n' "$VERSION" > "$VER_FIX/match.sh"
+printf 'VERSION="0.0.1"\n' > "$VER_FIX/old.sh"
+
+VER_OUT="$(INSTALLED_LIB="$VER_FIX/match.sh" sh "$SCRIPT_DIR/audit.sh" 2>&1 || true)"
+assert_contains "reports the installed version" "$VER_OUT" "Scripts $VERSION"
+
+VER_OUT="$(INSTALLED_LIB="$VER_FIX/old.sh" sh "$SCRIPT_DIR/audit.sh" 2>&1 || true)"
+assert_contains "names the installed version when it is older" "$VER_OUT" "are 0.0.1"
+assert_contains "names the version being run"                  "$VER_OUT" "audit is $VERSION"
+assert_contains "says which way the skew runs"                 "$VER_OUT" "behind the checkout"
+
+VER_OUT="$(INSTALLED_LIB="$VER_FIX/absent.sh" sh "$SCRIPT_DIR/audit.sh" 2>&1 || true)"
+assert_contains "reports a missing install rather than claiming a version" \
+    "$VER_OUT" "nothing installed"
+
 # Drift must be reported through the exit status, so it can gate a script
 assert_true "audit.sh --help exits 0" sh -c "sh '$SCRIPT_DIR/audit.sh' --help >/dev/null 2>&1"
 assert_true "audit.sh rejects unknown flags" sh -c "! sh '$SCRIPT_DIR/audit.sh' --nope >/dev/null 2>&1"

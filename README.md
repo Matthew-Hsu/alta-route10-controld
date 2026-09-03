@@ -115,6 +115,12 @@ reports how many packets each bridge has actually redirected — rules can be
 present and still never match. A VLAN with active devices and zero packets is
 the one to investigate; an idle VLAN reading zero is expected.
 
+`audit.sh` opens with the versions actually on the router. Because it can be
+run from a checkout in `/tmp` as well as from `/cfg`, it compares the library
+it sourced against the one installed and says so when they differ — an audit
+that silently describes a version the router is not running is worse than no
+audit.
+
 `audit.sh` exits non-zero when it finds drift, so it can gate a script:
 
 ```sh
@@ -170,7 +176,7 @@ sh /tmp/controld/audit.sh
 | `status.sh` | Health check: services, upstreams, policies, watchdog activity | `--help` |
 | `reconfigure.sh` | Change protocol, resolver, or policies without re-running setup | `--help` `--show` `--protocol` `--resolver` `--benchmark` `--policy` `--force-dns` `--repair` `--to <value>` `--force` |
 | `benchmark.sh` | Test DNS query latency across DoQ, DoH3, and DoH | `--help` `--queries N` |
-| `audit.sh` | Read-only drift check: duplicates, stale references, leftovers, packets actually intercepted | `--help` `--raw` |
+| `audit.sh` | Read-only drift check: installed versions, duplicates, stale references, leftovers, packets actually intercepted | `--help` `--raw` |
 | `uninstall.sh` | Removes everything, restores default DNS | `--help` `--force` |
 | `test.sh` | Test suite: unit tests anywhere, integration tests on-router | — |
 

@@ -32,6 +32,8 @@ Exit status:
   1   drift found (details in the output)
 
 Sections:
+  installed   Script and ctrld versions, and whether the install matches
+              the copy of audit.sh being run
   duplicates  Repeated iptables rules, cron jobs, firewall blocks, uci lists
   stale       Rules for vanished bridges, cron jobs for deleted scripts,
               a boot hook whose target is gone
@@ -61,6 +63,31 @@ print_banner
 load_env >/dev/null 2>&1 || true
 DNS_PORT="${DNS_PORT:-5354}"
 FORCE_DNS="$(uci -q get https-dns-proxy.config.force_dns 2>/dev/null || echo 0)"
+
+# ── Installed versions ───────────────────────────────────────────────────────
+
+print_header "Installed"
+
+# $VERSION is whichever lib.sh this process sourced, which is not necessarily
+# the one on the router: audit.sh can be run from a checkout in /tmp. Report
+# both, and say so when they differ — an audit describing a version the router
+# is not running is worse than no audit.
+_installed_ver="$(sed -n 's/^VERSION="\(.*\)"/\1/p' "$INSTALLED_LIB" 2>/dev/null | head -1)"
+if [ -z "$_installed_ver" ]; then
+    review "${INSTALLED_LIB} not found — nothing installed, or an incomplete install"
+    printf "         this audit is running against lib.sh %s\n" "$VERSION"
+elif [ "$_installed_ver" = "$VERSION" ]; then
+    print_ok "Scripts ${_installed_ver}"
+else
+    review "Installed scripts are ${_installed_ver}, this audit is ${VERSION} — the router is behind the checkout"
+fi
+
+if [ -n "${CTRLD_VERSION:-}" ]; then
+    print_ok "ctrld ${CTRLD_VERSION} on $(proto_label "${DNS_TYPE:-doh3}")"
+else
+    review "No ctrld version recorded — /cfg/controld.env missing or unreadable"
+fi
+printf "         redirect port %s, forced DNS %s\n" "$DNS_PORT" "$FORCE_DNS"
 
 # ── Duplicates ───────────────────────────────────────────────────────────────
 

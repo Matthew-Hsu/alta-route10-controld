@@ -155,19 +155,15 @@ if [ -f /cfg/ctrld.toml ]; then
     upstream_count=$(grep -c '^\[upstream\.' /cfg/ctrld.toml 2>/dev/null || echo 0)
     print_ok "${upstream_count} upstream(s) configured"
 
-    grep '^\[upstream\.' /cfg/ctrld.toml 2>/dev/null | while read -r line; do
-        idx=$(echo "$line" | grep -o '[0-9]*')
-        name=$(grep -A1 "\\[upstream.${idx}\\]" /cfg/ctrld.toml | grep 'name' | sed 's/.*= "//;s/"//')
-        proto=$(grep -A5 "\\[upstream.${idx}\\]" /cfg/ctrld.toml | grep 'type' | sed 's/.*= "//;s/"//')
+    list_upstreams /cfg/ctrld.toml | while IFS="$(printf '\t')" read -r idx name proto; do
         printf "         upstream.%s: %s (%s)\n" "$idx" "$name" "$(proto_label "$proto")"
     done
 
     if grep -q '\[listener.0.policy\]' /cfg/ctrld.toml 2>/dev/null; then
         print_ok "Split DNS policy active"
-        mac_count=$(grep -c '="' /cfg/ctrld.toml 2>/dev/null || echo 0)
-        if [ "$mac_count" -gt 0 ]; then
-            print_ok "MAC rules: ${mac_count} device(s)"
-        fi
+        mac_count=$(policy_rule_count /cfg/ctrld.toml mac)
+        net_count=$(policy_rule_count /cfg/ctrld.toml network)
+        print_ok "MAC rules: ${mac_count} device(s), network rules: ${net_count}"
     else
         print_info "No split DNS policy configured"
     fi

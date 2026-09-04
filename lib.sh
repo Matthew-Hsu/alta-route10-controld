@@ -313,6 +313,52 @@ next_toml_index() {
     ' "$_nti_file"
 }
 
+# One line per upstream: "<index>\t<name>\t<type>".
+#
+# Both readouts that show upstreams used `grep -A<n>` with a fixed offset into
+# the block, and both had the wrong offset: -A1 stops at bootstrap_ip so every
+# name printed empty, -A3 stops at name so no protocol ever printed. The offset
+# is also not stable — it depends on how many keys a block happens to carry.
+# Parse the block instead, and match the header exactly: a `grep "[upstream.1]"`
+# also matches [upstream.10].
+# Usage: list_upstreams <config>
+list_upstreams() {
+    [ -f "$1" ] || return 0
+    $AWK '
+        substr($0, 1, 1) == "[" {
+            if (inb && idx != "") printf "%s\t%s\t%s\n", idx, name, type
+            inb = (index($0, "[upstream.") == 1)
+            idx = ""; name = ""; type = ""
+            # between "[upstream." (10 chars) and the closing "]"
+            if (inb) idx = substr($0, 11, length($0) - 11)
+            next
+        }
+        inb && $1 == "name" { name = $0; sub(/^[^=]*=[ \t]*/, "", name); gsub(/"/, "", name) }
+        inb && $1 == "type" { type = $0; sub(/^[^=]*=[ \t]*/, "", type); gsub(/"/, "", type) }
+        END { if (inb && idx != "") printf "%s\t%s\t%s\n", idx, name, type }
+    ' "$1"
+}
+
+# How many split-DNS rules of one kind a config carries.
+#
+# Counted on the quoted key, not on the separator. Both callers matched `="` or
+# `=\[`, while every rule this project writes is `{"key" = ["upstream.N"]}`
+# with spaces around the "=", so both counts were always zero — a config full
+# of MAC rules reported none.
+# Usage: policy_rule_count <config> <mac|network>
+policy_rule_count() {
+    [ -f "$1" ] || { printf '0'; return 0; }
+    case "$2" in
+        # grep -c prints 0 and exits 1 on no match; `|| true` keeps that under
+        # set -e without the second zero an `|| echo 0` would append.
+        mac)     _prc_n="$(grep -cE '\{"([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}"[[:space:]]*=' "$1" || true)" ;;
+        network) _prc_n="$(grep -c '{"network\.' "$1" || true)" ;;
+        *)       _prc_n=0 ;;
+    esac
+    [ -n "$_prc_n" ] || _prc_n=0
+    printf '%s' "$_prc_n"
+}
+
 # ── Release Download Verification ──
 
 # Pull one asset's SHA-256 out of a checksums.txt body ("<sha>  <filename>")

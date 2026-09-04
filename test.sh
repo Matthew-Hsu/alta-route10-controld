@@ -726,6 +726,61 @@ retarget_upstreams "$RT" doh3
 assert_file_contains "round-trips to the DoH form"        "$RT" 'endpoint = "https://dns.controld.com/main1234"'
 assert_file_contains "policy resolver round-trips too"    "$RT" 'endpoint = "https://dns.controld.com/kids5678"'
 
+describe "list_upstreams() / policy_rule_count() — what the readouts report"
+
+# status.sh and reconfigure.sh --show both walked upstream blocks with
+# `grep -A<n>` at a fixed offset, and both had it wrong: -A1 stops at
+# bootstrap_ip so every name printed empty, -A3 stops at name so no protocol
+# ever printed. Both rule counts matched `="` / `=\[` while the rules this
+# project writes are `{"key" = [...]}` with spaces, so both were always 0.
+LU="$TMPDIR/upstreams.toml"
+write_ctrld_config "$LU" abc123 76.76.2.22 doh3
+cat >> "$LU" << 'LUEOF'
+
+[upstream.1]
+    bootstrap_ip = "76.76.2.22"
+    endpoint = "kids5678.dns.controld.com"
+    name = "ControlD-Kids"
+    timeout = 5000
+    type = "doq"
+    send_client_info = true
+
+[upstream.10]
+    endpoint = "https://dns.quad9.net/dns-query"
+    name = "Quad9"
+    type = "doh"
+
+[network.1]
+    cidrs = ["192.168.10.0/24"]
+    name = "Kids"
+
+[listener.0.policy]
+    name = "Split DNS Policy"
+    networks = [
+    {"network.1" = ["upstream.1"]},
+    ]
+    macs = [
+    {"AA:BB:CC:DD:EE:01" = ["upstream.1"]},
+    {"aa:bb:cc:dd:ee:02" = ["upstream.1"]},
+    ]
+LUEOF
+
+LU_OUT="$(list_upstreams "$LU")"
+assert_eq "one line per upstream" "3" "$(printf '%s\n' "$LU_OUT" | wc -l | tr -d ' ')"
+assert_contains "the main upstream carries its name and type" "$LU_OUT" "0.*ControlD.*doh3"
+assert_contains "a policy upstream keeps its own name and type" "$LU_OUT" "1.*ControlD-Kids.*doq"
+# A grep for "[upstream.1]" also matches [upstream.10] — the parse must not.
+assert_contains "a two-digit index is read whole" "$LU_OUT" "10.*Quad9.*doh"
+assert_false "no upstream reports an empty name" \
+    sh -c "printf '%s\n' \"\$LU_OUT\" | grep -qE '^[0-9]+\t\t'"
+
+assert_eq "MAC rules are counted, in either case"  "2" "$(policy_rule_count "$LU" mac)"
+assert_eq "network rules are counted"              "1" "$(policy_rule_count "$LU" network)"
+# A bare config has a policy-free [network.0]; neither count may invent rules.
+assert_eq "a config with no policy reports no MAC rules"     "0" "$(policy_rule_count "$TEST_CONF" mac)"
+assert_eq "a config with no policy reports no network rules" "0" "$(policy_rule_count "$TEST_CONF" network)"
+assert_eq "a missing file reports zero" "0" "$(policy_rule_count "$TMPDIR/no-such.toml" mac)"
+
 describe "resolver_from_endpoint() — identity extraction"
 assert_eq "DoH form"  "abc123" "$(resolver_from_endpoint https://dns.controld.com/abc123)"
 assert_eq "DoQ form"  "abc123" "$(resolver_from_endpoint abc123.dns.controld.com)"

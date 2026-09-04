@@ -98,8 +98,10 @@ for _f in $INSTALL_FILES; do
     fi
 done
 
-# Also check for cron jobs
-if crontab -l 2>/dev/null | grep -q "controld-update\|watchdog"; then
+# Also check for cron jobs. Matched by script path, never by keyword: the
+# router ships "* * * * * /usr/bin/wireguard_watchdog", which the bare word
+# matched — so this reported a ControlD install on a router that had none.
+if cron_has /cfg/watchdog.sh || cron_has /cfg/controld-update.sh; then
     _found=1
 fi
 
@@ -135,11 +137,11 @@ fi
 
 # List cron jobs
 _cron_count=0
-if crontab -l 2>/dev/null | grep -q "controld-update"; then
+if cron_has /cfg/controld-update.sh; then
     printf "    ${RED}remove${RESET}  cron: controld-update (weekly auto-update)\n"
     _cron_count=$((_cron_count + 1))
 fi
-if crontab -l 2>/dev/null | grep -q "watchdog"; then
+if cron_has /cfg/watchdog.sh; then
     printf "    ${RED}remove${RESET}  cron: watchdog (5-min health check)\n"
     _cron_count=$((_cron_count + 1))
 fi
@@ -288,8 +290,13 @@ fi
 # ── Remove cron jobs ──
 
 print_step "Removing cron jobs..."
-if crontab -l 2>/dev/null | grep -q "controld-update\|watchdog"; then
-    crontab -l 2>/dev/null | grep -v "controld-update" | grep -v "watchdog" | crontab - 2>/dev/null || true
+# cron_remove matches the script path. "grep -v watchdog" also matched the
+# router's own /usr/bin/wireguard_watchdog job and deleted it as collateral,
+# with nothing to put it back — the same failure fixed elsewhere in 04815f0,
+# which this caller was missed by.
+if cron_has /cfg/watchdog.sh || cron_has /cfg/controld-update.sh; then
+    cron_remove /cfg/watchdog.sh
+    cron_remove /cfg/controld-update.sh
     print_ok "Cron jobs removed"
 else
     print_ok "No ControlD cron jobs found"

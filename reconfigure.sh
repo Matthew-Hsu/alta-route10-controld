@@ -147,18 +147,16 @@ do_show() {
         # Show upstreams
         UPSTREAM_COUNT=$(grep -c '^\[upstream\.' /cfg/ctrld.toml 2>/dev/null || echo 0)
         printf "\n  ${BOLD}Upstreams (%d):${RESET}\n" "$UPSTREAM_COUNT"
-        grep -A3 '^\[upstream\.' /cfg/ctrld.toml 2>/dev/null | while read -r line; do
-            case "$line" in
-                name*) printf "    %s\n" "$(echo "$line" | sed 's/.*= "//;s/"//')" ;;
-                type*) printf "      protocol: %s\n" "$(echo "$line" | sed 's/.*= "//;s/"//')" ;;
-            esac
+        list_upstreams /cfg/ctrld.toml | while IFS="$(printf '\t')" read -r _ up_name up_type; do
+            printf "    %s\n" "$up_name"
+            printf "      protocol: %s\n" "$(proto_label "$up_type")"
         done
 
         # Show policy
         if grep -q '\[listener.0.policy\]' /cfg/ctrld.toml 2>/dev/null; then
             printf "\n  ${BOLD}Split DNS Policy:${RESET} ${GREEN}active${RESET}\n"
-            MAC_RULES=$(grep -c '=\[' /cfg/ctrld.toml 2>/dev/null || echo 0)
-            NET_RULES=$(grep -c '{"network\.' /cfg/ctrld.toml 2>/dev/null || echo 0)
+            MAC_RULES=$(policy_rule_count /cfg/ctrld.toml mac)
+            NET_RULES=$(policy_rule_count /cfg/ctrld.toml network)
             printf "    MAC rules: %d  |  Network rules: %d\n" "$MAC_RULES" "$NET_RULES"
         else
             printf "\n  ${BOLD}Split DNS Policy:${RESET} ${DIM}none${RESET}\n"

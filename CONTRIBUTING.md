@@ -18,8 +18,14 @@ Co-Authored-By: ...
 maintained with the help of AI coding assistants, including Claude Code.
 That's how a one-person, spare-time fork keeps up with fixes across BusyBox
 quirks, VLAN edge cases, and hardware verification. Commits and PRs may carry
-a `Co-Authored-By` trailer, a session link, or similar tool attribution.
-Leave it.
+a `Co-Authored-By` trailer or similar tool attribution. Leave it.
+
+**No URLs in commit messages or PR bodies.** Not session links, not tool
+homepages, not anything else. A commit message is read in `git log` on a
+router over SSH, years after the link stops resolving, by someone who cannot
+click it — attribution is a name, not a link. If your tool appends one by
+default, strip it before committing. Reference commits by hash and files by
+path; both stay meaningful offline and forever.
 
 What isn't negotiable: nothing merges on an assistant's say-so alone. Every
 change here is read line-by-line by a human, edited where it's wrong, and run

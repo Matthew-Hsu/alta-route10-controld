@@ -424,14 +424,18 @@ assert_contains "a failed restart does not end the run" "$WD_OUT" "falling throu
 assert_contains "it works the protocol fallback chain"  "$WD_OUT" "trying doh"
 assert_contains "and tears the redirects down when nothing resolves" "$WD_OUT" "teardown"
 
-# The healthy path must still stop early — the teardown is a last resort, not
-# something every cycle walks into.
+# A restart that works must not end the cycle either. The health path below is
+# what re-adds the redirects, restores forced DNS and clears the degraded flag,
+# and after a teardown all of that is gone — so exiting on a successful restart
+# left a healthy ctrld with no redirects until some later cycle. Seen on
+# hardware: ctrld answering, 0 redirect rules, 26 drift items. The teardown is
+# still a last resort that a healthy cycle must never walk into.
 cat > "$WD_CFG/lib.sh" << WDLIBEOF2
 . "$SCRIPT_DIR/lib.sh"
 check_dns()                  { return 0; }
-ensure_iptables()            { return 1; }
+ensure_iptables()            { echo "ensure_iptables" >> "\$WD_LOG"; return 1; }
 ensure_firewall_user_rules() { return 1; }
-ensure_forced_dns()          { :; }
+ensure_forced_dns()          { echo "ensure_forced_dns" >> "\$WD_LOG"; }
 do_upgrade_check()           { :; }
 restart_ctrld()              { echo "restart-attempt" >> "\$WD_LOG"; return 0; }
 remove_dns_redirects()       { echo "teardown" >> "\$WD_LOG"; }
@@ -439,8 +443,10 @@ WDLIBEOF2
 : > "$WD_LOG"
 ( PATH="$WD_BIN:$PATH"; WD_LOCK="$TMPDIR/wd.lock"; export WD_LOCK; sh "$WDGEN" ) >/dev/null 2>&1
 WD_OUT2="$(cat "$WD_LOG" 2>/dev/null)"
-assert_contains     "a successful restart ends the cycle" "$WD_OUT2" "ctrld restarted"
-assert_not_contains "and never reaches the teardown"      "$WD_OUT2" "teardown"
+assert_contains     "a successful restart is reported"                 "$WD_OUT2" "ctrld restarted"
+assert_contains     "and the same cycle goes on to restore redirects"  "$WD_OUT2" "ensure_iptables"
+assert_contains     "and to restore forced DNS"                        "$WD_OUT2" "ensure_forced_dns"
+assert_not_contains "without ever reaching the teardown"               "$WD_OUT2" "teardown"
 
 describe "watchdog — one instance at a time"
 

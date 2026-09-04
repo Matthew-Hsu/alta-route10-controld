@@ -879,21 +879,32 @@ MAX_RESTART_ATTEMPTS=3
 
 # Check if ctrld is running.
 #
-# Only a restart that worked ends the cycle here. This used to exit 0 either
-# way, which stranded the most likely way ctrld dies: a binary a bad flash
-# corrupted, or a config a new release will not parse, makes it exit on
-# startup, so pidof keeps failing and the run keeps ending right here. Every
-# recovery below — the fallback chain, and the teardown that hands DNS back to
-# dnsmasq — sits on the path that needs ctrld running but not answering, so
-# none of it was ever reached: port 53 stayed redirected at a closed port and
-# the whole LAN had no DNS, every five minutes, indefinitely.
+# Nothing ends the cycle here any more, either way.
+#
+# A restart that fails used to `exit 0`, which stranded the most likely way
+# ctrld dies: a binary a bad flash corrupted, or a config a new release will
+# not parse, makes it exit on startup, so pidof keeps failing and the run keeps
+# ending right here. The fallback chain and the teardown that hands DNS back to
+# dnsmasq both sit below, on the path that needs ctrld running but not
+# answering, so neither was ever reached: port 53 stayed redirected at a closed
+# port and the whole LAN had no DNS, every five minutes, indefinitely.
+#
+# A restart that *works* used to exit 0 as well, and that is just as wrong once
+# the teardown above can actually fire. The health path below is what re-adds
+# the redirects, restores forced DNS and clears the degraded flag, and after a
+# teardown all of that is gone — so the very cycle that revived ctrld left the
+# router with a healthy resolver and no redirects, and per-device visibility
+# stayed off until some later cycle happened to find ctrld already running.
+# Observed on hardware: ctrld back on PID 9949 and answering, 0 redirect rules,
+# 26 drift items. start_ctrld only returns 0 once DNS has answered, so falling
+# through costs one cheap check and lands in the health path immediately.
 if ! pidof ctrld >/dev/null 2>&1; then
     logger -t watchdog "ctrld not running, restarting"
     if restart_ctrld /cfg/ctrld.toml; then
-        logger -t watchdog "ctrld restarted (${DNS_TYPE})"
-        exit 0
+        logger -t watchdog "ctrld restarted (${DNS_TYPE}) — restoring redirects"
+    else
+        logger -t watchdog "ctrld will not start — falling through to protocol fallback"
     fi
-    logger -t watchdog "ctrld will not start — falling through to protocol fallback"
 fi
 
 # Check DNS resolution

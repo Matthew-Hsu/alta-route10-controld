@@ -1049,6 +1049,52 @@ assert_true "a CRLF policy header is still found" \
     policy_add_rule "$PA_CR" mac "aa:bb:cc:dd:ee:aa" 2
 assert_eq "and the rule is written" "1" "$(policy_rule_count "$PA_CR" mac)"
 
+describe "CURLD_VERSION — an install inherited from the original project"
+
+# The original project misspelled the key in its first commit (f6c81a6); this
+# fork corrected it. An install carried over from upstream must still work: the
+# old spelling is adopted, and retired at the next config rewrite rather than
+# preserved forever by the unmanaged-key carry-over.
+CV="$TMPDIR/curld.env"
+printf 'RESOLVER_ID=abc123\nBOOTSTRAP_IP=76.76.2.22\nCURLD_VERSION=1.5.7\nDNS_TYPE=doh3\n' > "$CV"
+assert_eq "the old spelling is adopted" "1.5.7" \
+    "$(unset CTRLD_VERSION CURLD_VERSION; load_env "$CV" >/dev/null 2>&1; printf '%s' "$CTRLD_VERSION")"
+# The corrected key must win when both are present.
+printf 'CTRLD_VERSION=1.6.0\nCURLD_VERSION=1.5.7\n' > "$TMPDIR/both.env"
+assert_eq "the corrected key wins over the old one" "1.6.0" \
+    "$(unset CTRLD_VERSION CURLD_VERSION; load_env "$TMPDIR/both.env" >/dev/null 2>&1; printf '%s' "$CTRLD_VERSION")"
+
+CV_SAVED_PATH="$PATH"
+mkdir -p "$TMPDIR/cvbin"; printf '#!/bin/sh\nexit 1\n' > "$TMPDIR/cvbin/uci"; chmod +x "$TMPDIR/cvbin/uci"
+PATH="$TMPDIR/cvbin:$PATH"
+( unset CTRLD_VERSION CURLD_VERSION
+  load_env "$CV" >/dev/null 2>&1
+  PREFERRED_PROTOCOL="$DNS_TYPE"
+  write_env_file "$CV" ) 2>/dev/null
+PATH="$CV_SAVED_PATH"
+assert_file_contains "the rewrite records the corrected key" "$CV" '^CTRLD_VERSION=1.5.7$'
+assert_false "and retires the misspelled one" grep -q '^CURLD_VERSION=' "$CV"
+
+# Both generated scripts source controld.env directly, not through load_env.
+SETUP_PC="$(sed -n "/cat > \/cfg\/post-cfg.sh << 'BOOTSCRIPT'/,/^BOOTSCRIPT$/p" "$SCRIPT_DIR/setup.sh")"
+SETUP_UP="$(sed -n "/cat > \/cfg\/controld-update.sh << 'UPDATESCRIPT'/,/^UPDATESCRIPT$/p" "$SCRIPT_DIR/setup.sh")"
+assert_contains "post-cfg.sh adopts the old spelling too"        "$SETUP_PC" 'CURLD_VERSION'
+assert_contains "the weekly updater adopts the old spelling too" "$SETUP_UP" 'CURLD_VERSION'
+
+describe "audit.sh version drift — which way round"
+
+# The else branch hardcoded "the router is behind the checkout", so auditing an
+# up-to-date router from an older checkout reported the drift backwards.
+AD_DIR="$TMPDIR/auditlib"; mkdir -p "$AD_DIR"
+sed "s/^VERSION=.*/VERSION=\"99.0.0\"/" "$SCRIPT_DIR/lib.sh" > "$AD_DIR/lib.sh"
+AD_AHEAD="$(INSTALLED_LIB="$AD_DIR/lib.sh" sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+assert_contains "a router ahead of the checkout is reported as such" \
+    "$AD_AHEAD" "the checkout is behind the router"
+sed "s/^VERSION=.*/VERSION=\"0.0.1\"/" "$SCRIPT_DIR/lib.sh" > "$AD_DIR/lib.sh"
+AD_BEHIND="$(INSTALLED_LIB="$AD_DIR/lib.sh" sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+assert_contains "and a router behind it, the other way" \
+    "$AD_BEHIND" "the router is behind the checkout"
+
 describe "version_gt() — a re-install must not roll ctrld back to the pin"
 
 assert_true  "a newer patch"         version_gt 1.5.8 1.5.7

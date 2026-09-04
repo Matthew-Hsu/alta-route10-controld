@@ -385,6 +385,11 @@ cat > /cfg/post-cfg.sh << 'BOOTSCRIPT'
 
 [ -f /cfg/controld.env ] || { logger -t post-cfg 'controld.env missing, skipping'; exit 0; }
 . /cfg/controld.env
+# The original project misspelled this key as CURLD_VERSION (its first commit,
+# f6c81a6); this fork corrected it. Adopt the old spelling when only it is
+# present so an install inherited from upstream still self-heals. write_env_file
+# drops the old line at the next config rewrite.
+CTRLD_VERSION="${CTRLD_VERSION:-${CURLD_VERSION:-}}"
 
 # Source lib.sh if available (provides helper functions)
 if [ -f /cfg/lib.sh ]; then
@@ -1011,6 +1016,8 @@ cat > /cfg/controld-update.sh << 'UPDATESCRIPT'
 # resolves, and it is put back if it cannot.
 [ -f /cfg/controld.env ] || exit 0
 . /cfg/controld.env
+# Old upstream spelling — see the note in post-cfg.sh above.
+CTRLD_VERSION="${CTRLD_VERSION:-${CURLD_VERSION:-}}"
 
 if [ -f /cfg/lib.sh ]; then
     # shellcheck source=/dev/null

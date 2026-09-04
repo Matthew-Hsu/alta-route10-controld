@@ -86,6 +86,8 @@ if [ -z "$_installed_ver" ]; then
     printf "         this audit is running against lib.sh %s\n" "$VERSION"
 elif [ "$_installed_ver" = "$VERSION" ]; then
     print_ok "Scripts ${_installed_ver}"
+elif version_gt "$_installed_ver" "$VERSION"; then
+    review "Installed scripts are ${_installed_ver}, this audit is ${VERSION} — the checkout is behind the router"
 else
     review "Installed scripts are ${_installed_ver}, this audit is ${VERSION} — the router is behind the checkout"
 fi

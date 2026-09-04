@@ -307,7 +307,13 @@ fi
 # is re-downloaded as before, so re-running setup.sh still repairs a corrupt
 # binary.
 CTRLD_INSTALLED="$(sed -n 's/^CTRLD_VERSION=\([0-9.]*\).*/\1/p' /cfg/controld.env 2>/dev/null | head -1)"
-if [ -x /cfg/ctrld ] && [ -n "$CTRLD_INSTALLED" ] && version_gt "$CTRLD_INSTALLED" "$CTRLD_PIN"; then
+# `-x` alone is not health: a truncated or half-flashed binary still satisfies
+# it, and once the weekly updater has moved past the pin this branch is the
+# steady state — so re-running the installer would have kept a broken binary
+# rather than repairing it. Make it prove it runs.
+if [ -x /cfg/ctrld ] && [ -n "$CTRLD_INSTALLED" ] \
+   && version_gt "$CTRLD_INSTALLED" "$CTRLD_PIN" \
+   && /cfg/ctrld --version >/dev/null 2>&1; then
     print_step "Step 2: Keeping ctrld v${CTRLD_INSTALLED}..."
     print_ok "ctrld ${CTRLD_INSTALLED} is newer than the ${CTRLD_PIN} pin — left as it is"
     CTRLD_VERSION="$CTRLD_INSTALLED"
@@ -331,7 +337,6 @@ else
     rm -rf /tmp/dist /tmp/ctrld.tar.gz
     print_ok "ctrld binary installed to /cfg/ctrld"
     CTRLD_VERSION="${CTRLD_PIN}"
-
 fi
 
 # ── Step 4: Write recovery config ──
@@ -356,7 +361,11 @@ if [ -f /cfg/ctrld.toml ]; then
 fi
 write_ctrld_config /cfg/ctrld.toml "$RESOLVER_ID" "$BOOTSTRAP_IP" "$DNS_TYPE"
 if [ -f /cfg/ctrld.toml.bak ] && carry_policy_blocks /cfg/ctrld.toml /cfg/ctrld.toml.bak; then
-    CARRIED_POLICY=1
+    # carry_policy_blocks returns 0 for any carried upstream or network block,
+    # policy or not. Only a real policy table may set this: it gates the wizard
+    # below, and skipping that over a stray [upstream.N] would cost the user
+    # their only chance to configure split DNS during the install.
+    grep -qE '^\[listener\.0\.policy\][[:space:]]*$' /cfg/ctrld.toml && CARRIED_POLICY=1
     # Carried upstreams keep their own resolver but still name the old
     # transport, so move them onto the protocol being installed.
     retarget_upstreams /cfg/ctrld.toml "$DNS_TYPE"
@@ -1155,6 +1164,11 @@ if _port_in_use "$DNS_PORT"; then
         # Try to find a free port
         _alt_port=$((DNS_PORT + 1))
         while [ "$_alt_port" -lt $((DNS_PORT + 100)) ]; do
+            # Never hand production the benchmark's port: bench_protocol would
+            # then fail to bind and time the production listener instead.
+            if [ "$_alt_port" = "$BENCH_PORT" ]; then
+                _alt_port=$((_alt_port + 1)); continue
+            fi
             _port_in_use "$_alt_port" || break
             _alt_port=$((_alt_port + 1))
         done

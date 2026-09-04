@@ -735,10 +735,21 @@ describe "lib.sh carries no dead code"
 #
 # Every function must be referenced somewhere beyond its own definition and
 # Usage comment: another script, a doc, or a test.
+# The file list is built from globs, using no external tool at all: BusyBox
+# grep has no --include, so `grep -r --include` failed on every real router
+# while passing in CI, and CONTRIBUTING.md documents `sh /cfg/test.sh` as an
+# on-router step. find would work but is one more implementation to depend on.
+LIB_SCAN=""
+for _lp in "$SCRIPT_DIR"/*.sh "$SCRIPT_DIR"/*.md "$SCRIPT_DIR"/docs/*.md \
+           "$SCRIPT_DIR"/config/*.example; do
+    [ -f "$_lp" ] && LIB_SCAN="${LIB_SCAN} ${_lp}"
+done
 LIB_DEAD=""
 for _fn in $(grep -oE '^[a-z_][a-z0-9_]*\(\)' "$SCRIPT_DIR/lib.sh" | tr -d '()'); do
-    _refs=$(grep -rhoE "\b${_fn}\b" \
-                --include='*.sh' --include='*.md' --include='*.example' "$SCRIPT_DIR" 2>/dev/null | wc -l)
+    # </dev/null matters: with an empty file list grep falls back to standard
+    # input and blocks forever, hanging the whole suite instead of failing.
+    # shellcheck disable=SC2086  # the file list must word-split
+    _refs=$(grep -hoE "\b${_fn}\b" $LIB_SCAN </dev/null 2>/dev/null | wc -l)
     _self=$(grep -cE "^${_fn}\(\)|^# Usage: ${_fn}\b" "$SCRIPT_DIR/lib.sh")
     [ "$((_refs - _self))" -gt 0 ] || LIB_DEAD="${LIB_DEAD} ${_fn}"
 done
@@ -750,8 +761,10 @@ describe "audit.sh — report our own artifacts as ours"
 # fell through to the "not installed by this project" arm. It, ctrld.toml.bak
 # and rc.local.pre-controld were also absent from the manifest, so each was
 # reported twice — once as a known leftover, again as unexpected in /cfg.
-assert_true "ctrld.prev is described as the rollback copy" \
-    grep -q 'the previous ctrld the updater kept for rollback' "$SCRIPT_DIR/audit.sh"
+# The arm itself, not its wording: matching the message text passes even if the
+# case label is changed to something else entirely.
+assert_true "ctrld.prev has its own case arm" \
+    grep -qE '^\s*/cfg/ctrld\.prev\)' "$SCRIPT_DIR/audit.sh"
 for _ak in ctrld.prev ctrld.toml.bak rc.local.pre-controld; do
     assert_true "${_ak} is on the manifest" \
         grep -q "^KNOWN=.* ${_ak} " "$SCRIPT_DIR/audit.sh"
@@ -759,8 +772,14 @@ done
 # FORCED_DNS in controld.env is the source of truth (3bc68c3); uci is restored
 # from it. Reading uci alone reported correct port-853 rules as drift in the
 # window after a firmware update wiped /etc/config.
-assert_true "the env flag is preferred over live uci" \
-    grep -q 'FORCE_DNS="${FORCED_DNS:-}"' "$SCRIPT_DIR/audit.sh"
+# audit.sh runs off-device, so this is an outcome test: with uci stubbed to
+# report forced DNS off, an inherited FORCED_DNS=1 must still win.
+AU_BIN="$TMPDIR/auditbin"; mkdir -p "$AU_BIN"
+printf '#!/bin/sh\necho 0\n' > "$AU_BIN/uci"; chmod +x "$AU_BIN/uci"
+AU_OUT="$(PATH="$AU_BIN:$PATH" FORCED_DNS=1 sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+assert_contains "the env flag wins over live uci" "$AU_OUT" "forced DNS 1"
+AU_OUT0="$(PATH="$AU_BIN:$PATH" sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+assert_contains "and uci is the fallback when the flag is unset" "$AU_OUT0" "forced DNS 0"
 
 describe "bench_domain() — the benchmark must query real hostnames"
 
@@ -784,8 +803,17 @@ while [ "$BD_I" -le 12 ]; do
     BD_ALL="${BD_ALL} $(bench_domain "$BD_I")"
     BD_I=$((BD_I + 1))
 done
-assert_false "no query is handed more than one hostname" \
-    sh -c "printf '%s' \"\$BD_ALL\" | grep -qE '[a-z]\.com [a-z]'"
+# Count words per individual call. The previous form shelled out to `sh -c`
+# with an unexported variable, so the child grepped empty input and the
+# assertion passed even against the original all-five-domains bug.
+BD_WORST=0
+BD_I=1
+while [ "$BD_I" -le 12 ]; do
+    BD_W=$(bench_domain "$BD_I" | wc -w | tr -d ' ')
+    [ "$BD_W" -le "$BD_WORST" ] || BD_WORST="$BD_W"
+    BD_I=$((BD_I + 1))
+done
+assert_eq "every query gets exactly one hostname" "1" "$BD_WORST"
 assert_eq "twelve queries yield twelve names" "12" "$(printf '%s' "$BD_ALL" | wc -w | tr -d ' ')"
 
 describe "bench_stop() — never the production resolver"
@@ -872,12 +900,69 @@ assert_false "a missing source is not an error to report as carried" \
 # setup.sh must take the backup and use it, and must not then run the wizard
 # over a carried policy — two [listener.0.policy] tables is invalid TOML and
 # ctrld would not start at all.
-assert_true "setup.sh backs ctrld.toml up before rewriting it" \
-    grep -q 'cp /cfg/ctrld.toml /cfg/ctrld.toml.bak' "$SCRIPT_DIR/setup.sh"
-assert_true "setup.sh carries the policy across" \
-    grep -q 'carry_policy_blocks /cfg/ctrld.toml /cfg/ctrld.toml.bak' "$SCRIPT_DIR/setup.sh"
-assert_true "setup.sh skips the wizard when a policy was carried" \
-    grep -q 'if \[ "$CARRIED_POLICY" = "1" \]' "$SCRIPT_DIR/setup.sh"
+# Run the real thing. Three greps for `cp`, `carry_policy_blocks` and the
+# CARRIED_POLICY guard used to stand in for this; they checked those strings
+# appeared, not that they ran in an order that works — deleting the
+# retarget_upstreams call and moving the .bak removal above the carry gutted
+# the feature with the suite still fully green.
+#
+# The step is pure file manipulation, so it extracts and runs against a sandbox.
+SP_DIR="$TMPDIR/setup-step5"
+mkdir -p "$SP_DIR"
+sed -n '/^CARRIED_POLICY=0$/,/^rm -f \/cfg\/ctrld\.toml\.bak$/p' "$SCRIPT_DIR/setup.sh" \
+    | sed "s|/cfg/|${SP_DIR}/|g" > "$SP_DIR/step5.sh"
+assert_true "the install step extracts and parses" sh -n "$SP_DIR/step5.sh"
+
+# An install that already has a policy, on the old protocol and old resolver.
+write_ctrld_config "$SP_DIR/ctrld.toml" old123 76.76.2.22 doh3
+cat >> "$SP_DIR/ctrld.toml" << 'SPEOF'
+
+[upstream.1]
+    endpoint = "https://dns.controld.com/kids5678"
+    name = "ControlD-Kids"
+    type = "doh3"
+
+[network.1]
+    cidrs = ["192.168.10.0/24"]
+    name = "Kids"
+
+[listener.0.policy]
+    name = "Split DNS Policy"
+    networks = [
+    {"network.1" = ["upstream.1"]},
+    ]
+SPEOF
+( . "$SCRIPT_DIR/lib.sh"
+  RESOLVER_ID=new456; BOOTSTRAP_IP=76.76.2.22; DNS_TYPE=doq; PLABEL="DoQ (QUIC)"
+  . "$SP_DIR/step5.sh"
+  printf '%s' "$CARRIED_POLICY" > "$SP_DIR/carried" ) >/dev/null 2>&1
+
+assert_eq "the re-install reports a carried policy" "1" "$(cat "$SP_DIR/carried" 2>/dev/null)"
+assert_file_contains "the policy table survived"      "$SP_DIR/ctrld.toml" '^\[listener.0.policy\]'
+assert_eq "its routing rule survived"            "1" "$(policy_rule_count "$SP_DIR/ctrld.toml" network)"
+assert_file_contains "the new resolver is in place"   "$SP_DIR/ctrld.toml" 'endpoint = "new456.dns.controld.com"'
+assert_file_contains "the policy keeps its own resolver" "$SP_DIR/ctrld.toml" 'endpoint = "kids5678.dns.controld.com"'
+# The retarget is the half the greps did not cover at all.
+assert_eq "every upstream moved to the new transport" "2" \
+    "$(grep -c 'type = "doq"' "$SP_DIR/ctrld.toml" | tr -d ' ')"
+assert_eq "none was left on the old one" "0" \
+    "$(grep -c 'type = "doh3"' "$SP_DIR/ctrld.toml" | tr -d ' ')"
+assert_false "the backup is cleaned up" [ -f "$SP_DIR/ctrld.toml.bak" ]
+
+# An orphan [upstream.N] and no policy: carry_policy_blocks still returns 0, but
+# CARRIED_POLICY must stay 0 or the installer skips the split-DNS wizard and the
+# user loses their only chance to configure it during the install.
+SP2="$TMPDIR/setup-step5b"
+mkdir -p "$SP2"
+sed -n '/^CARRIED_POLICY=0$/,/^rm -f \/cfg\/ctrld\.toml\.bak$/p' "$SCRIPT_DIR/setup.sh" \
+    | sed "s|/cfg/|${SP2}/|g" > "$SP2/step5.sh"
+write_ctrld_config "$SP2/ctrld.toml" old123 76.76.2.22 doh3
+printf '\n[upstream.1]\n    endpoint = "https://dns.controld.com/orphan99"\n    name = "Orphan"\n    type = "doh3"\n' >> "$SP2/ctrld.toml"
+( . "$SCRIPT_DIR/lib.sh"
+  RESOLVER_ID=new456; BOOTSTRAP_IP=76.76.2.22; DNS_TYPE=doq; PLABEL="DoQ (QUIC)"
+  . "$SP2/step5.sh"
+  printf '%s' "$CARRIED_POLICY" > "$SP2/carried" ) >/dev/null 2>&1
+assert_eq "an orphan upstream is not reported as a policy" "0" "$(cat "$SP2/carried" 2>/dev/null)"
 
 describe "policy_add_rule() — a reported rule must actually be in the file"
 
@@ -947,6 +1032,23 @@ assert_false "a missing file fails rather than reporting success" \
 assert_false "an unknown rule kind is refused" \
     policy_add_rule "$PA3" hostname "example.com" 1
 
+# A file carrying the list header twice must get the rule once. The sed form
+# this replaced had no address restriction and inserted into both, while the
+# before/after count check still passed.
+PA_DBL="$TMPDIR/pol-double.toml"
+printf '[listener.0.policy]\n    macs = [\n    ]\n    macs = [\n    ]\n' > "$PA_DBL"
+assert_true "a duplicated list header still takes one rule" \
+    policy_add_rule "$PA_DBL" mac "aa:bb:cc:dd:ee:99" 1
+assert_eq "inserted exactly once" "1" "$(grep -c 'aa:bb:cc:dd:ee:99' "$PA_DBL" | tr -d ' ')"
+
+# The guard and the awk branch used to match the policy header differently, so
+# a trailing space or CRLF sent this down a path that wrote nothing.
+PA_CR="$TMPDIR/pol-crlf.toml"
+printf '[upstream.0]\r\n    type = "doh3"\r\n[listener.0.policy] \r\n    name = "P"\r\n' > "$PA_CR"
+assert_true "a CRLF policy header is still found" \
+    policy_add_rule "$PA_CR" mac "aa:bb:cc:dd:ee:aa" 2
+assert_eq "and the rule is written" "1" "$(policy_rule_count "$PA_CR" mac)"
+
 describe "version_gt() — a re-install must not roll ctrld back to the pin"
 
 assert_true  "a newer patch"         version_gt 1.5.8 1.5.7
@@ -968,6 +1070,12 @@ assert_true "setup.sh keeps an installed ctrld newer than the pin" \
     grep -q 'version_gt "$CTRLD_INSTALLED" "$CTRLD_PIN"' "$SCRIPT_DIR/setup.sh"
 assert_false "setup.sh no longer records the pin unconditionally" \
     grep -qE '^CTRLD_VERSION="\$\{CTRLD_PIN\}"$' "$SCRIPT_DIR/setup.sh"
+# Deleting this writes an empty CTRLD_VERSION into controld.env, which breaks
+# post-cfg.sh's self-heal and the weekly updater. Nothing covered it.
+assert_true "the keep branch records the version it kept" \
+    grep -q 'CTRLD_VERSION="$CTRLD_INSTALLED"' "$SCRIPT_DIR/setup.sh"
+assert_true "a kept binary must prove it runs" \
+    grep -q '/cfg/ctrld --version' "$SCRIPT_DIR/setup.sh"
 
 describe "write_env_file() — a rewrite must not drop the keys it does not manage"
 
@@ -1020,6 +1128,14 @@ printf '\n# hand-added note\n' >> "$WEF"
 write_env_file "$WEF" 2>/dev/null
 assert_eq "comments are not carried into the key list" "0" \
     "$(grep -c '^#' "$WEF" | tr -d ' ')"
+# controld.env is sourced, so a malformed line like `FOO=bar baz` runs `baz` on
+# every load. Carrying arbitrary KEY=… lines forward made that permanent, where
+# the truncating version at least dropped it on the next rewrite.
+printf 'EVIL=bar baz\nALSO_EVIL=x;touch %s/pwned\n' "$TMPDIR" >> "$WEF"
+write_env_file "$WEF" 2>/dev/null
+assert_false "a value with an unquoted space is not carried" grep -q '^EVIL=' "$WEF"
+assert_false "a value with a command separator is not carried" grep -q '^ALSO_EVIL=' "$WEF"
+assert_file_contains "a quoted multi-word value still is" "$WEF" '^LAN_IFACES_EXCLUDE="br-lan_40"$'
 unset DNS_PORT LAN_IFACES_EXCLUDE POLICY_UPSTREAMS
 
 describe "stop_ctrld() — kills every instance, not one packed argument"
@@ -1097,8 +1213,21 @@ assert_contains "the main upstream carries its name and type" "$LU_OUT" "0.*Cont
 assert_contains "a policy upstream keeps its own name and type" "$LU_OUT" "1.*ControlD-Kids.*doq"
 # A grep for "[upstream.1]" also matches [upstream.10] — the parse must not.
 assert_contains "a two-digit index is read whole" "$LU_OUT" "10.*Quad9.*doh"
-assert_false "no upstream reports an empty name" \
-    sh -c "printf '%s\n' \"\$LU_OUT\" | grep -qE '^[0-9]+\t\t'"
+# Checked on the real tab-separated fields. The previous form used `sh -c` with
+# an unexported variable AND `\t` inside an ERE, where it means a literal "t" —
+# it could not fail, and an empty name shifts the protocol into the name column
+# because tab is IFS whitespace.
+assert_eq "no upstream reports an empty name"     "0" \
+    "$(list_upstreams "$LU" | $AWK -F'\t' '$2 == "" { n++ } END { print n + 0 }')"
+assert_eq "no upstream reports an empty protocol" "0" \
+    "$(list_upstreams "$LU" | $AWK -F'\t' '$3 == "" { n++ } END { print n + 0 }')"
+# A block with no name at all must still occupy its column.
+LU_NONAME="$TMPDIR/noname.toml"
+printf '[upstream.0]\n    type = "doq"\n' > "$LU_NONAME"
+assert_eq "a nameless upstream keeps three fields" "(unnamed)" \
+    "$(list_upstreams "$LU_NONAME" | $AWK -F'\t' '{ print $2 }')"
+assert_eq "and its protocol stays in the protocol column" "doq" \
+    "$(list_upstreams "$LU_NONAME" | $AWK -F'\t' '{ print $3 }')"
 
 assert_eq "MAC rules are counted, in either case"  "2" "$(policy_rule_count "$LU" mac)"
 assert_eq "network rules are counted"              "1" "$(policy_rule_count "$LU" network)"

@@ -5,6 +5,11 @@
 # Version of these scripts, semver: MAJOR for a change that breaks an existing
 # install (a config key or file layout an upgrade cannot read), MINOR for new
 # capability that upgrades cleanly, PATCH for fixes with no new behavior.
+#
+# Only a release commit on master moves this, paired with a tag. Branches never
+# bump it, however much they change: unmerged work is not released, and a
+# branch that raises it either collides with the next branch to do the same or
+# ships a version that was never cut. See CONTRIBUTING.md, "Releases".
 VERSION="1.9.0"
 
 # The ctrld release a fresh install pins. Deliberately separate from VERSION:
@@ -315,17 +320,30 @@ next_toml_index() {
 list_upstreams() {
     [ -f "$1" ] || return 0
     $AWK '
+        function emit() {
+            # Never an empty middle field: tab is IFS whitespace, so a shell
+            # `IFS=<tab> read -r idx name type` collapses the run and shifts the
+            # protocol into the name column. status.sh printed "upstream.1: doq ()".
+            printf "%s\t%s\t%s\n", idx, (name == "" ? "(unnamed)" : name),
+                                      (type == "" ? "(unset)" : type)
+        }
+        { sub(/\r$/, "") }                       # tolerate CRLF
         substr($0, 1, 1) == "[" {
-            if (inb && idx != "") printf "%s\t%s\t%s\n", idx, name, type
+            if (inb && idx != "") emit()
             inb = (index($0, "[upstream.") == 1)
             idx = ""; name = ""; type = ""
-            # between "[upstream." (10 chars) and the closing "]"
-            if (inb) idx = substr($0, 11, length($0) - 11)
+            # Strip the known prefix and everything from "]" on, rather than
+            # assuming "]" is the last character: a trailing space or comment
+            # after the header used to be read into the index.
+            if (inb) { idx = $0; sub(/^\[upstream\./, "", idx); sub(/\].*$/, "", idx) }
             next
         }
-        inb && $1 == "name" { name = $0; sub(/^[^=]*=[ \t]*/, "", name); gsub(/"/, "", name) }
-        inb && $1 == "type" { type = $0; sub(/^[^=]*=[ \t]*/, "", type); gsub(/"/, "", type) }
-        END { if (inb && idx != "") printf "%s\t%s\t%s\n", idx, name, type }
+        inb && $1 ~ /^name$/ { name = $0; sub(/^[^=]*=[ \t]*/, "", name); gsub(/"/, "", name) }
+        inb && $1 ~ /^type$/ { type = $0; sub(/^[^=]*=[ \t]*/, "", type); gsub(/"/, "", type) }
+        # `name="x"` with no spaces is one field, so $1 is the whole assignment
+        inb && $1 ~ /^name=/  { name = $0; sub(/^[^=]*=[ \t]*/, "", name); gsub(/"/, "", name) }
+        inb && $1 ~ /^type=/  { type = $0; sub(/^[^=]*=[ \t]*/, "", type); gsub(/"/, "", type) }
+        END { if (inb && idx != "") emit() }
     ' "$1"
 }
 
@@ -400,7 +418,11 @@ policy_add_rule() {
     _par_entry="    {\"${_par_key}\" = [\"upstream.${_par_up}\"]},"
     _par_before="$(grep -cF "\"${_par_key}\"" "$_par_file" 2>/dev/null || true)"
 
-    if ! grep -q '^\[listener\.0\.policy\]' "$_par_file" 2>/dev/null; then
+    # One matcher for the header, shared with the awk branch below. They used
+    # to disagree — an unanchored grep here, an exact string compare there — so
+    # a trailing space or a CRLF line ending put this function down a path that
+    # found no policy and silently wrote nothing.
+    if ! grep -qE '^\[listener\.0\.policy\][[:space:]]*\r?$' "$_par_file" 2>/dev/null; then
         # No policy table yet — create it around this rule
         {
             printf '\n[listener.0.policy]\n'
@@ -410,16 +432,29 @@ policy_add_rule() {
             printf '    ]\n'
         } >> "$_par_file"
     elif grep -q "^[[:space:]]*${_par_list}[[:space:]]*=[[:space:]]*\[" "$_par_file"; then
-        sed -i "/^[[:space:]]*${_par_list}[[:space:]]*=[[:space:]]*\[/a\\${_par_entry}" "$_par_file"
+        # Inserted after the FIRST matching list header only. The sed form this
+        # replaces had no address restriction, so a file carrying the header
+        # twice got the rule twice — and the count check still passed.
+        _par_tmp="${_par_file}.policy.$$"
+        if ! $AWK -v list="$_par_list" -v entry="$_par_entry" '
+            { sub(/\r$/, "") }
+            !ins && $0 ~ ("^[ \t]*" list "[ \t]*=[ \t]*\\[") { print; print entry; ins = 1; next }
+            { print }
+        ' "$_par_file" > "$_par_tmp"; then
+            rm -f "$_par_tmp"
+            return 1
+        fi
+        mv "$_par_tmp" "$_par_file"
     else
         # A policy exists but has no list of this kind. It has to go inside the
         # policy table: appending to the end of the file would land it in
         # whatever table happens to follow.
         _par_tmp="${_par_file}.policy.$$"
         if ! $AWK -v list="$_par_list" -v entry="$_par_entry" '
+            { sub(/\r$/, "") }
             substr($0, 1, 1) == "[" {
                 if (inpol) { printf "    %s = [\n%s\n    ]\n", list, entry; inpol = 0 }
-                if ($0 == "[listener.0.policy]") inpol = 1
+                if ($0 ~ /^\[listener\.0\.policy\][ \t]*$/) inpol = 1
             }
             { print }
             END { if (inpol) printf "    %s = [\n%s\n    ]\n", list, entry }
@@ -501,8 +536,40 @@ BENCH_CONF="${BENCH_CONF:-/tmp/ctrld-bench.toml}"
 # and every protocol reported FAILED (0/10) before setup fell back to DoH3.
 # The index is computed in the shell so awk is only ever handed a number.
 bench_domain() {
-    _bd_i=$(( ($1 - 1) % BENCH_DOMAIN_COUNT + 1 ))
+    # Clamp: awk's $0 is the whole record and a negative field index is a fatal
+    # awk error, so index 0 would reproduce exactly the bug this replaced and a
+    # negative one would abort. No caller passes either today.
+    _bd_n="$1"
+    [ "${_bd_n:-0}" -ge 1 ] 2>/dev/null || _bd_n=1
+    _bd_i=$(( (_bd_n - 1) % BENCH_DOMAIN_COUNT + 1 ))
     printf '%s\n' "$BENCH_DOMAINS" | $AWK -v i="$_bd_i" '{ print $i }'
+}
+
+# Milliseconds since the epoch. Non-zero (and no output) if the clock cannot be
+# read at all.
+#
+# `date +%s%N 2>/dev/null || date +%s` looked like a fallback and was not.
+# BusyBox date does not fail on an unsupported %N unless built with
+# FEATURE_DATE_NANO — it succeeds and prints "1788539662%N", so the `||` never
+# fired. A length check then fed that string to $(( )), and an arithmetic error
+# is fatal to the whole shell in ash and dash: neither `|| true` nor `if !`
+# contains it, so the benchmark would have taken setup.sh down mid-install.
+# Validate the digits instead of measuring the length of whatever came back.
+now_ms() {
+    _nm="$(date +%s%N 2>/dev/null)"
+    case "$_nm" in
+        ''|*[!0-9]*) _nm="" ;;
+    esac
+    # 10 digits is seconds (the platform dropped %N); ~19 is nanoseconds.
+    if [ -n "$_nm" ] && [ "${#_nm}" -gt 12 ]; then
+        printf '%s' $((_nm / 1000000))
+        return 0
+    fi
+    _nm="$(date +%s 2>/dev/null)"
+    case "$_nm" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    printf '%s' $((_nm * 1000))
 }
 
 # Write the throwaway config for one protocol.
@@ -575,6 +642,15 @@ bench_protocol() {
         BENCH_AVG="FAIL"; BENCH_OK=0; BENCH_FAIL="$_bp_queries"
         return 1
     fi
+    # Something answered on the test port — confirm it is the daemon we started.
+    # If the port was already taken (production can land on it: setup.sh's
+    # fallback scan covers DNS_PORT+1..+100, which spans BENCH_PORT) our ctrld
+    # fails to bind and exits, the probe above succeeds against the other
+    # listener, and every protocol reports that listener's latency instead.
+    if ! ps w 2>/dev/null | grep -q "[c]trld run -c ${_bp_conf}"; then
+        BENCH_AVG="FAIL"; BENCH_OK=0; BENCH_FAIL="$_bp_queries"
+        return 1
+    fi
 
     # A while loop, not a literal `for _i in 1 2 3 ... 30`: that silently
     # capped --queries at 30 while still printing the requested total, so
@@ -582,16 +658,14 @@ bench_protocol() {
     _bp_total=0; _bp_ok=0; _bp_bad=0; _bp_i=1
     while [ "$_bp_i" -le "$_bp_queries" ]; do
         _bp_dom="$(bench_domain "$_bp_i")"
-        _bp_s1=$(date +%s%N 2>/dev/null || date +%s)
+        _bp_s1="$(now_ms)" || _bp_s1=""
         if nslookup "$_bp_dom" "127.0.0.1#${_bp_port}" >/dev/null 2>&1; then
-            _bp_s2=$(date +%s%N 2>/dev/null || date +%s)
-            # date +%s%N is nanoseconds where supported; a 10-digit result means
-            # it fell back to whole seconds.
-            if [ "${#_bp_s1}" -gt 9 ]; then
-                _bp_el=$(( (_bp_s2 - _bp_s1) / 1000000 ))
-            else
-                _bp_el=$(( (_bp_s2 - _bp_s1) * 1000 ))
+            _bp_s2="$(now_ms)" || _bp_s2=""
+            if [ -n "$_bp_s1" ] && [ -n "$_bp_s2" ]; then
+                _bp_el=$((_bp_s2 - _bp_s1))
                 [ "$_bp_el" -gt 0 ] || _bp_el=1
+            else
+                _bp_el=1
             fi
             _bp_total=$((_bp_total + _bp_el)); _bp_ok=$((_bp_ok + 1))
         else
@@ -1016,10 +1090,18 @@ write_env_file() {
     # protocol change.
     _wef_keep=""
     if [ -f "$_wef_path" ]; then
+        # Only well-formed assignments are carried. The file is sourced, so a
+        # malformed line like `FOO=bar baz` runs `baz` on every load; carrying
+        # such a line forward would make that permanent, where previously the
+        # next rewrite dropped it. A value is kept when it is fully
+        # double-quoted or contains nothing that the shell would act on.
         _wef_keep="$($AWK -v managed=" $WEF_MANAGED " '
             /^[A-Za-z_][A-Za-z0-9_]*=/ {
-                k = substr($0, 1, index($0, "=") - 1)
-                if (index(managed, " " k " ") == 0) print
+                eq = index($0, "=")
+                k = substr($0, 1, eq - 1)
+                if (index(managed, " " k " ") != 0) next
+                v = substr($0, eq + 1)
+                if (v ~ /^"[^"]*"$/ || v ~ /^[A-Za-z0-9_.:\/@%+-]*$/) print
             }
         ' "$_wef_path")"
     fi

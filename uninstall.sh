@@ -148,7 +148,7 @@ fi
 
 # List iptables rules
 _ipt_count=0
-_ipt_count=$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c "$DNS_PORT" || true)
+_ipt_count=$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c "redir ports ${DNS_PORT}$" || true)
 if [ "$_ipt_count" -gt 0 ]; then
     printf "    ${RED}flush${RESET}   iptables: %d DNS redirect rule(s)\n" "$_ipt_count"
 fi
@@ -219,7 +219,7 @@ iptables-save -t nat 2>/dev/null \
         iptables -t nat -D PREROUTING ${_rule#-A PREROUTING } 2>/dev/null || true
     done
 
-_left="$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c "$DNS_PORT")"
+_left="$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c "redir ports ${DNS_PORT}$" || true)"
 if [ "$_left" -eq 0 ]; then
     print_ok "ControlD redirect rules removed (other firewall rules untouched)"
 else

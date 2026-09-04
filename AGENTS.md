@@ -16,7 +16,11 @@ environment almost certainly has none of that.
   stubbed. A green run proves the logic, not the on-router behavior.
 - Anything touching iptables, cron, `/etc/firewall.user`, or boot persistence
   (`rc.local`, `post-cfg.sh`) cannot be verified from a sandbox. Say so
-  explicitly in your PR description instead of claiming it's tested. Three
+  explicitly in your PR description instead of claiming it's tested.
+- The generated `watchdog.sh` is the exception: the suite extracts it from
+  `setup.sh`, redirects its `/cfg` and `/tmp` paths into a sandbox and runs it
+  against stubs, so its control flow *can* be tested off-device. What it does
+  to iptables still cannot. Three
   real bugs in this project's history were invisible to CI and only surfaced
   on hardware (see `CONTRIBUTING.md`'s "Testing on hardware").
 - Run the suite under both awks before proposing a change:

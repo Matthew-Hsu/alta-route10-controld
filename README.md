@@ -289,6 +289,11 @@ All scripts source `lib.sh` which provides:
 - Protocol utilities (`proto_label`, `next_proto`) and per-upstream protocol switching (`retarget_upstreams`, `resolver_from_endpoint`)
 - Degraded-mode handling (`remove_dns_redirects`) and config editing (`toml_blocks`, `next_toml_index`)
 - Cron entries matched by script path (`cron_has`, `cron_remove`) and rule hygiene (`prune_stale_redirects`)
+- Split-DNS writing (`policy_add_rule`) and preservation across a config rewrite (`carry_policy_blocks`)
+- Config reporting (`list_upstreams`, `policy_rule_count`): what `status.sh` and `reconfigure.sh --show` print
+- Env file rewriting (`write_env_file`), which carries keys it does not manage rather than truncating them
+- Benchmarking (`bench_protocol`, `bench_stop`), shared by all three entry points and never run against production DNS
+- Version comparison (`version_gt`), so a re-install does not roll `ctrld` back to the pin
 
 ### How It Works
 
@@ -501,7 +506,11 @@ sh test.sh    # works locally and on-router
 - Input validation (resolver IDs, MACs, CIDRs, protocols)
 - TOML config generation and table index allocation
 - LAN bridge discovery, subnet math, and generated redirect rules
-- Env file parsing with defaults
+- Env file parsing with defaults, and rewriting without dropping unmanaged keys
+- Split-DNS rule writing against every shape a policy table can be in, and policy preservation across a config rewrite
+- Config readouts: upstream names and protocols, MAC and network rule counts
+- Benchmark domain selection and version comparison
+- The generated `watchdog.sh`, extracted from `setup.sh` and executed against stubs in a sandbox — including that a `ctrld` which will not start still reaches the redirect teardown
 - `--help` and `--version` flags on all scripts
 - Invalid input rejection
 

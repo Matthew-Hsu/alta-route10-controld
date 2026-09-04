@@ -425,23 +425,13 @@ do_policy() {
     send_client_info = true
 EOF
 
-                # Add or append to policy section
-                if grep -q '\[listener.0.policy\]' /cfg/ctrld.toml; then
-                    # Find the macs line and append
-                    sed -i "/^    macs = \[/a\\    {\"${mac}\" = [\"upstream.${next_idx}\"]}," /cfg/ctrld.toml
-                else
-                    cat >> /cfg/ctrld.toml << EOF
-
-[listener.0.policy]
-    name = "Split DNS Policy"
-    macs = [
-        {"${mac}" = ["upstream.${next_idx}"]},
-    ]
-EOF
+                # Creates the policy table, or the macs list inside an
+                # existing one, or inserts into it — and fails loudly rather
+                # than reporting a rule it did not write.
+                if ! policy_add_rule /cfg/ctrld.toml mac "$mac" "$next_idx"; then
+                    print_fail "Could not add the MAC rule — /cfg/ctrld.toml left as it was"
+                    continue
                 fi
-
-                # Remove trailing comma on last macs entry
-                sed -i ':a;N;$!ba;s/,\n    \]/\n    \]/' /cfg/ctrld.toml
 
                 stop_ctrld; start_ctrld /cfg/ctrld.toml || die "ctrld failed to start"
                 print_ok "Device rule added. MAC ${mac} -> ${policy_name}"
@@ -492,20 +482,10 @@ EOF
     send_client_info = true
 EOF
 
-                if grep -q '\[listener.0.policy\]' /cfg/ctrld.toml; then
-                    sed -i "/^    networks = \[/a\\    {\"network.${next_net}\" = [\"upstream.${next_up}\"]}," /cfg/ctrld.toml
-                else
-                    cat >> /cfg/ctrld.toml << EOF
-
-[listener.0.policy]
-    name = "Split DNS Policy"
-    networks = [
-        {"network.${next_net}" = ["upstream.${next_up}"]},
-    ]
-EOF
+                if ! policy_add_rule /cfg/ctrld.toml network "network.${next_net}" "$next_up"; then
+                    print_fail "Could not add the network rule — /cfg/ctrld.toml left as it was"
+                    continue
                 fi
-
-                sed -i ':a;N;$!ba;s/,\n    \]/\n    \]/' /cfg/ctrld.toml
 
                 stop_ctrld; start_ctrld /cfg/ctrld.toml || die "ctrld failed to start"
                 print_ok "Network rule added. ${cidr} -> ${policy_name}"

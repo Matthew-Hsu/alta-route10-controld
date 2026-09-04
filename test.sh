@@ -726,6 +726,74 @@ retarget_upstreams "$RT" doh3
 assert_file_contains "round-trips to the DoH form"        "$RT" 'endpoint = "https://dns.controld.com/main1234"'
 assert_file_contains "policy resolver round-trips too"    "$RT" 'endpoint = "https://dns.controld.com/kids5678"'
 
+describe "policy_add_rule() — a reported rule must actually be in the file"
+
+# The callers anchored an insert on the list header, so adding the first rule
+# of a kind the policy did not already carry was a silent no-op: sed matched
+# nothing, exited 0, and "Device rule added" was printed over a config that had
+# gained an orphan upstream and no rule. Both orderings are reachable from a
+# first run of the setup wizard, which writes macs-only or networks-only
+# depending on the route type chosen.
+
+# 1. No policy table at all — one must be created around the rule
+PA1="$TMPDIR/pol-none.toml"
+write_ctrld_config "$PA1" abc123 76.76.2.22 doh3
+assert_true "a first MAC rule creates the policy" \
+    policy_add_rule "$PA1" mac "aa:bb:cc:dd:ee:01" 1
+assert_file_contains "the policy table is there" "$PA1" '^\[listener.0.policy\]'
+assert_eq "and carries the rule" "1" "$(policy_rule_count "$PA1" mac)"
+
+# 2. A networks-only policy, adding a MAC rule — the case that silently failed
+PA2="$TMPDIR/pol-net-only.toml"
+write_ctrld_config "$PA2" abc123 76.76.2.22 doh3
+cat >> "$PA2" << 'PA2EOF'
+
+[listener.0.policy]
+    name = "Split DNS Policy"
+    networks = [
+    {"network.1" = ["upstream.1"]},
+    ]
+PA2EOF
+assert_true "a MAC rule lands in a networks-only policy" \
+    policy_add_rule "$PA2" mac "aa:bb:cc:dd:ee:02" 2
+assert_eq "the MAC rule is counted"        "1" "$(policy_rule_count "$PA2" mac)"
+assert_eq "the network rule is untouched"  "1" "$(policy_rule_count "$PA2" network)"
+# The new list must sit inside the policy table, not after the file's last one.
+assert_eq "the macs list is inside the policy table" "1" \
+    "$(toml_blocks "$PA2" '[listener.0.policy]' | grep -c 'aa:bb:cc:dd:ee:02')"
+
+# 3. A macs-only policy, adding a network rule — the mirror case
+PA3="$TMPDIR/pol-mac-only.toml"
+write_ctrld_config "$PA3" abc123 76.76.2.22 doh3
+cat >> "$PA3" << 'PA3EOF'
+
+[listener.0.policy]
+    name = "Split DNS Policy"
+    macs = [
+    {"aa:bb:cc:dd:ee:03" = ["upstream.1"]},
+    ]
+PA3EOF
+assert_true "a network rule lands in a macs-only policy" \
+    policy_add_rule "$PA3" network "network.5" 2
+assert_eq "the network rule is counted" "1" "$(policy_rule_count "$PA3" network)"
+assert_eq "the MAC rule is untouched"   "1" "$(policy_rule_count "$PA3" mac)"
+assert_eq "the networks list is inside the policy table" "1" \
+    "$(toml_blocks "$PA3" '[listener.0.policy]' | grep -c 'network.5')"
+
+# 4. Adding to a list that already exists still works, and accumulates
+assert_true "a second MAC rule is added" \
+    policy_add_rule "$PA3" mac "aa:bb:cc:dd:ee:04" 3
+assert_eq "both MAC rules are present" "2" "$(policy_rule_count "$PA3" mac)"
+
+# A policy table must never be created twice — that is invalid TOML.
+assert_eq "exactly one policy table" "1" \
+    "$(grep -c '^\[listener.0.policy\]' "$PA3" | tr -d ' ')"
+
+assert_false "a missing file fails rather than reporting success" \
+    policy_add_rule "$TMPDIR/no-such.toml" mac "aa:bb:cc:dd:ee:05" 1
+assert_false "an unknown rule kind is refused" \
+    policy_add_rule "$PA3" hostname "example.com" 1
+
 describe "version_gt() — a re-install must not roll ctrld back to the pin"
 
 assert_true  "a newer patch"         version_gt 1.5.8 1.5.7

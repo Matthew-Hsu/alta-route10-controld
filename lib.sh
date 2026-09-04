@@ -359,6 +359,67 @@ policy_rule_count() {
     printf '%s' "$_prc_n"
 }
 
+# Add one split-DNS rule, creating whatever structure is missing.
+#
+# The callers anchored an insert on the list header — sed "/^    macs = \[/a..."
+# — which silently does nothing when the policy carries only the other kind of
+# list. That is the shape the setup wizard writes whenever route type 1 (CIDR
+# only) or 2 (MAC only) is chosen, so adding the first rule of the other kind
+# was a no-op: the [upstream.N] block had already been appended, ctrld was
+# restarted, and "Device rule added" was printed over a config that had gained
+# an orphan upstream and no rule.
+#
+# Returns non-zero if the rule is not in the file afterwards, so a caller can
+# never report a write that did not happen.
+# Usage: policy_add_rule <config> <mac|network> <key> <upstream-index>
+policy_add_rule() {
+    _par_file="$1"; _par_kind="$2"; _par_key="$3"; _par_up="$4"
+    [ -f "$_par_file" ] || return 1
+    case "$_par_kind" in
+        mac)     _par_list="macs" ;;
+        network) _par_list="networks" ;;
+        *)       return 1 ;;
+    esac
+    _par_entry="    {\"${_par_key}\" = [\"upstream.${_par_up}\"]},"
+    _par_before="$(grep -cF "\"${_par_key}\"" "$_par_file" 2>/dev/null || true)"
+
+    if ! grep -q '^\[listener\.0\.policy\]' "$_par_file" 2>/dev/null; then
+        # No policy table yet — create it around this rule
+        {
+            printf '\n[listener.0.policy]\n'
+            printf '    name = "Split DNS Policy"\n'
+            printf '    %s = [\n' "$_par_list"
+            printf '%s\n' "$_par_entry"
+            printf '    ]\n'
+        } >> "$_par_file"
+    elif grep -q "^[[:space:]]*${_par_list}[[:space:]]*=[[:space:]]*\[" "$_par_file"; then
+        sed -i "/^[[:space:]]*${_par_list}[[:space:]]*=[[:space:]]*\[/a\\${_par_entry}" "$_par_file"
+    else
+        # A policy exists but has no list of this kind. It has to go inside the
+        # policy table: appending to the end of the file would land it in
+        # whatever table happens to follow.
+        _par_tmp="${_par_file}.policy.$$"
+        if ! $AWK -v list="$_par_list" -v entry="$_par_entry" '
+            substr($0, 1, 1) == "[" {
+                if (inpol) { printf "    %s = [\n%s\n    ]\n", list, entry; inpol = 0 }
+                if ($0 == "[listener.0.policy]") inpol = 1
+            }
+            { print }
+            END { if (inpol) printf "    %s = [\n%s\n    ]\n", list, entry }
+        ' "$_par_file" > "$_par_tmp"; then
+            rm -f "$_par_tmp"
+            return 1
+        fi
+        mv "$_par_tmp" "$_par_file"
+    fi
+
+    # Trailing commas are legal in TOML arrays, so the entry is written with
+    # one and left alone. The `sed ':a;N;$!ba;s/,\n    \]/'` this replaces had
+    # no /g and only ever cleaned the first of the two lists anyway.
+    _par_after="$(grep -cF "\"${_par_key}\"" "$_par_file" 2>/dev/null || true)"
+    [ "${_par_after:-0}" -gt "${_par_before:-0}" ]
+}
+
 # True when version <a> is strictly newer than version <b>.
 #
 # Compared field by field as numbers, so 1.10.0 beats 1.9.0 — a string compare

@@ -81,6 +81,31 @@ sh /tmp/controld/test.sh     # unit tests plus on-router integration tests
 sh /cfg/status.sh            # per-bridge redirect coverage
 ```
 
+## Releases
+
+`VERSION` in `lib.sh` is the version of these scripts. **Only a release commit
+on `master` moves it, and that commit is tagged.** A branch never bumps it, no
+matter how much it changes.
+
+Two reasons. Unmerged work is not released, so a branch that raises `VERSION`
+is claiming a version that does not exist yet — and if it is never merged, or
+merged after something else that did the same, the number is simply wrong. And
+two branches that both bump collide on the one line guaranteed to conflict.
+
+So: land the work with `VERSION` untouched. When you decide to cut a release,
+one commit on `master` sets the number and one tag records it:
+
+```sh
+git tag -a v1.6.0 -m "..."      # the tag is what makes it a release
+```
+
+Pick the number from what accumulated since the last tag, using the scheme in
+`lib.sh`: MAJOR for a change an existing install cannot upgrade into, MINOR for
+new capability that upgrades cleanly, PATCH for fixes that add no behaviour.
+
+`CTRLD_PIN` is not a release number and moves independently, whenever you
+deliberately adopt a newer upstream `ctrld`.
+
 ## Style
 
 POSIX `sh`, not bash. The router runs BusyBox ash. No process substitution,

@@ -778,8 +778,16 @@ AU_BIN="$TMPDIR/auditbin"; mkdir -p "$AU_BIN"
 printf '#!/bin/sh\necho 0\n' > "$AU_BIN/uci"; chmod +x "$AU_BIN/uci"
 AU_OUT="$(PATH="$AU_BIN:$PATH" FORCED_DNS=1 sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
 assert_contains "the env flag wins over live uci" "$AU_OUT" "forced DNS 1"
-AU_OUT0="$(PATH="$AU_BIN:$PATH" sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
-assert_contains "and uci is the fallback when the flag is unset" "$AU_OUT0" "forced DNS 0"
+# The fallback can only be exercised where nothing supplies the flag: audit.sh
+# reads /cfg/controld.env through load_env, and on a configured router that file
+# sets FORCED_DNS — so this asserted something the environment controls, and
+# failed on a real install with forced DNS on. Skip rather than assert a lie.
+if [ -f /cfg/controld.env ] && grep -q '^FORCED_DNS=' /cfg/controld.env 2>/dev/null; then
+    skip "uci fallback (this router's controld.env supplies FORCED_DNS)"
+else
+    AU_OUT0="$(PATH="$AU_BIN:$PATH" sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+    assert_contains "and uci is the fallback when the flag is unset" "$AU_OUT0" "forced DNS 0"
+fi
 
 describe "bench_domain() — the benchmark must query real hostnames"
 
@@ -1643,18 +1651,36 @@ else
         assert_true "$f exists" [ -f "$f" ]
     done
 
-    # Integration: self-healing (delete toml, regenerate from env)
-    BACKUP_TOML=$(cat /cfg/ctrld.toml)
-    rm /cfg/ctrld.toml
-    sh /cfg/post-cfg.sh >/dev/null 2>&1 || true
-    assert_true "self-healing restored ctrld.toml" [ -f /cfg/ctrld.toml ]
-    assert_true "DNS still works after self-heal"   check_dns "127.0.0.1#5354"
-    # Restore original in case self-heal used different proto
-    printf "%s" "$BACKUP_TOML" > /cfg/ctrld.toml
+    # Integration: self-healing (delete toml, regenerate from env).
+    #
+    # Opt-in, because this is surgery on a live router, not a test. It deletes
+    # /cfg/ctrld.toml and runs the whole boot sequence: post-cfg.sh restarts
+    # https-dns-proxy, rewrites dhcp uci and restarts dnsmasq, then stops and
+    # starts ctrld — so the LAN loses DNS for the duration. Worse, post-cfg.sh
+    # waits on `while ! ping -c1 "$BOOTSTRAP_IP"` with no attempt limit, so if
+    # the bootstrap host does not answer ICMP this never returns; interrupting
+    # it then skips the restore below and leaves the config as post-cfg
+    # regenerated it. CONTRIBUTING.md documents `sh /cfg/test.sh` as a routine
+    # step, and a routine step must not do any of that.
+    if [ "${CONTROLD_TEST_DESTRUCTIVE:-0}" = "1" ]; then
+        BACKUP_TOML=$(cat /cfg/ctrld.toml)
+        rm /cfg/ctrld.toml
+        sh /cfg/post-cfg.sh >/dev/null 2>&1 || true
+        assert_true "self-healing restored ctrld.toml" [ -f /cfg/ctrld.toml ]
+        assert_true "DNS still works after self-heal"   check_dns "127.0.0.1#5354"
+        # Restore original in case self-heal used different proto
+        printf "%s" "$BACKUP_TOML" > /cfg/ctrld.toml
+    else
+        skip "self-healing (destructive: set CONTROLD_TEST_DESTRUCTIVE=1 to run)"
+        skip "DNS after self-heal (same)"
+    fi
 
 
-    # Integration: benchmark runs successfully
-    if [ -f /cfg/benchmark.sh ]; then
+    # Integration: benchmark runs successfully. Also opt-in: it starts and stops
+    # a ctrld per protocol and takes a minute or more, which reads as a hang.
+    if [ "${CONTROLD_TEST_DESTRUCTIVE:-0}" != "1" ]; then
+        skip "benchmark (slow: set CONTROLD_TEST_DESTRUCTIVE=1 to run)"
+    elif [ -f /cfg/benchmark.sh ]; then
         BENCH_OUT=$(sh /cfg/benchmark.sh --queries 3 2>&1)
         assert_contains "benchmark produces results" "$BENCH_OUT" "avg"
         assert_contains "benchmark shows recommendation" "$BENCH_OUT" "Recommended"

@@ -25,7 +25,8 @@ Sections displayed:
   services    ctrld and https-dns-proxy process status
   dns         DNS resolution through ctrld and system resolver
   iptables    NAT redirect rules for per-device visibility
-  upstreams   Upstream count and policy status from ctrld.toml
+  upstreams   Each upstream's name and protocol, and split-DNS rule counts
+  endpoint    Resolver ID, active and preferred protocol, ctrld version
   cron        Auto-update and watchdog cron entries
   watchdog    Last few watchdog log entries
 EOF

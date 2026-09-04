@@ -69,11 +69,16 @@ rm -rf /tmp/dist ctrld.tar.gz
 **Symptom:** `status.sh` reports no redirect rules and a warning that ctrld was
 unrecoverable. DNS still works for everyone, but no device appears in ControlD.
 
-**Cause:** this is deliberate. When ctrld dies and the watchdog cannot revive it
-on any protocol, it removes the redirects. Leaving them in place would point
-port 53 at a closed port and take DNS down for every client on every bridge;
-removing them hands resolution back to dnsmasq → https-dns-proxy, which is still
-encrypted ControlD, just without per-device visibility.
+**Cause:** this is deliberate. When ctrld cannot be revived on any protocol —
+whether it died and will not restart, or will not start at all because the
+binary or its config is broken — the watchdog removes the redirects. Leaving
+them in place would point port 53 at a closed port and take DNS down for every
+client on every bridge; removing them hands resolution back to dnsmasq →
+https-dns-proxy, which is still encrypted ControlD, just without per-device
+visibility.
+
+Look for `ctrld will not start` in the log below: that means the binary or
+`/cfg/ctrld.toml` is the problem, not the upstream protocol.
 
 **Fix:** get ctrld running again — the rules restore themselves within 5 minutes.
 

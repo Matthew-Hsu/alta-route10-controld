@@ -776,13 +776,25 @@ else
         for _kp in $(pidof ctrld 2>/dev/null); do kill "$_kp" 2>/dev/null || true; done
         sleep 1
     }
+    port_in_use() {
+        netstat -tulnp 2>/dev/null | grep -q ":${1} " && return 0
+        if command -v ss >/dev/null 2>&1; then
+            ss -tulnp 2>/dev/null | grep -q ":${1} " && return 0
+        fi
+        return 1
+    }
     start_ctrld() {
         _config="${1:-/cfg/ctrld.toml}"
-        _timeout="${2:-10}"
+        _timeout="${2:-15}"
         nohup /cfg/ctrld run -c "$_config" -d >/dev/null 2>&1 &
         _n=0
         while [ "$_n" -lt "$_timeout" ]; do
-            check_dns "127.0.0.1#${DNS_PORT}" && return 0
+            # Only pay for a DNS query once the port is open. Probing a closed
+            # port costs the resolver's timeout (~5s here), which turned this
+            # loop into ~90 seconds rather than the seconds it names.
+            if port_in_use "$DNS_PORT" && check_dns "127.0.0.1#${DNS_PORT}"; then
+                return 0
+            fi
             sleep 1; _n=$((_n + 1))
         done
         return 1
@@ -1151,15 +1163,7 @@ fi
 
 # ── Step 9c: Port conflict detection ──
 
-_port_in_use() {
-    netstat -tulnp 2>/dev/null | grep -q ":${1} " && return 0
-    if command -v ss >/dev/null 2>&1; then
-        ss -tulnp 2>/dev/null | grep -q ":${1} " && return 0
-    fi
-    return 1
-}
-
-if _port_in_use "$DNS_PORT"; then
+if port_in_use "$DNS_PORT"; then
     # Check if it's our own ctrld from a previous install
     if pidof ctrld >/dev/null 2>&1; then
         print_warn "Port ${DNS_PORT} is occupied by an existing ctrld process"
@@ -1176,7 +1180,7 @@ if _port_in_use "$DNS_PORT"; then
             if [ "$_alt_port" = "$BENCH_PORT" ]; then
                 _alt_port=$((_alt_port + 1)); continue
             fi
-            _port_in_use "$_alt_port" || break
+            port_in_use "$_alt_port" || break
             _alt_port=$((_alt_port + 1))
         done
         if [ -z "$FLAG_RESOLVER" ]; then

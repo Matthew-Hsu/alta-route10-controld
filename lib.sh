@@ -774,16 +774,56 @@ stop_ctrld() {
     sleep 1
 }
 
-# Start ctrld and wait for it to be ready
+# Is anything listening on a TCP or UDP port?
+#
+# start_ctrld probes this before paying for a DNS query, and setup.sh's
+# port-conflict step carried a private copy of the same two commands.
+# Usage: port_in_use <port>
+port_in_use() {
+    local port="${1:-$DNS_PORT}"
+    netstat -tulnp 2>/dev/null | grep -q ":${port} " && return 0
+    if command -v ss >/dev/null 2>&1; then
+        ss -tulnp 2>/dev/null | grep -q ":${port} " && return 0
+    fi
+    return 1
+}
+
+# Start ctrld and wait until it answers on the DNS port.
+#
+# `timeout` is seconds of wall clock. It used to be an iteration count, and
+# every iteration ran an nslookup against the DNS port: when ctrld exits during
+# startup that port is closed and each probe costs the resolver's own timeout
+# — about 5s on a Route 10 — so a "15 second" start actually took ~90. The
+# watchdog's worst case is one start plus three fallback attempts, which put a
+# full recovery cycle over six minutes, longer than its own five-minute cron
+# interval, and the overlapping instances then raced each other over the
+# fail-count file and the config. Gating the query on the port being open keeps
+# a failed start close to the time the caller asked for.
 # Usage: start_ctrld <config_file> [timeout_secs]
 start_ctrld() {
     local config="${1:-/cfg/ctrld.toml}"
     local timeout="${2:-15}"
     nohup /cfg/ctrld run -c "$config" -d >/dev/null 2>&1 &
+    local started
+    started="$(date +%s 2>/dev/null)"
+    case "$started" in ''|*[!0-9]*) started="" ;; esac
+    local now
+    local elapsed
     local n=0
-    while [ "$n" -lt "$timeout" ]; do
-        if check_dns "127.0.0.1#${DNS_PORT}"; then
+    # The iteration cap is a backstop, not the bound. This router has no RTC
+    # and its clock jumps when NTP first syncs, so a wall clock that steps
+    # backwards must not be able to stall the loop.
+    while [ "$n" -lt $((timeout * 4)) ]; do
+        if port_in_use "$DNS_PORT" && check_dns "127.0.0.1#${DNS_PORT}"; then
             return 0
+        fi
+        elapsed=""
+        if [ -n "$started" ]; then
+            now="$(date +%s 2>/dev/null)"
+            case "$now" in ''|*[!0-9]*) : ;; *) elapsed=$((now - started)) ;; esac
+        fi
+        if [ -n "$elapsed" ] && [ "$elapsed" -ge "$timeout" ]; then
+            return 1
         fi
         sleep 1
         n=$((n + 1))

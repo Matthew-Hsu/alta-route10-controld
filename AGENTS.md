@@ -38,10 +38,15 @@ behavior, say plainly what you verified and what you couldn't.
 
 ## Attribution
 
-Commits and PRs you make here may carry your tool's attribution trailer.
+Commits and PRs you make here may carry your tool's `Co-Authored-By` trailer.
 This project welcomes that disclosure, see `CONTRIBUTING.md`. Don't strip it,
 and don't apply a stricter attribution policy of your own that contradicts
 what's written there.
+
+**But never put a URL in a commit message or PR body**, including a session
+link your harness adds automatically. Many harnesses append one; remove it.
+This is not optional and it is not a matter of taste — see `CONTRIBUTING.md`
+for why. Cite commits by hash and files by path instead.
 
 ## Scope discipline
 

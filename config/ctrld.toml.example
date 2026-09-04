@@ -14,7 +14,7 @@
     # Client discovery methods - all enabled for best hostname visibility
     discover_dhcp = true
     discover_ptr = true
-    discover_mdns = false
+    discover_mdns = true
     discover_arp = true
     discover_hosts = true
     discover_refresh_interval = 60

@@ -172,11 +172,18 @@ The Route 10's `/etc/config/` is reset on boot. Only `/cfg/` persists. Make sure
 
 ## Firmware update wiped everything
 
-Re-upload your backed-up files:
+Re-run the installer. It is faster than restoring by hand and cannot leave a
+partial install behind:
+
 ```sh
-scp ctrld ctrld.toml post-cfg.sh root@<router-ip>:/cfg/
-ssh root@<router-ip> "chmod +x /cfg/ctrld /cfg/post-cfg.sh && /cfg/post-cfg.sh"
+wget -O /tmp/setup.sh https://raw.githubusercontent.com/Matthew-Hsu/alta-route10-controld/master/setup.sh
+sh /tmp/setup.sh --resolver <your-id> --protocol doh3
 ```
+
+Copying a handful of files across is what the old `backup.sh` did, and its list
+had fallen five files behind what an install actually needs — restoring from it
+produced a router with no watchdog, no boot hook and no cron jobs. A re-install
+keeps your forced-DNS setting and any split-DNS policy.
 
 ## QUIC / DoQ / DoH3 not connecting
 
@@ -199,11 +206,14 @@ ssh root@<router-ip> "chmod +x /cfg/ctrld /cfg/post-cfg.sh && /cfg/post-cfg.sh"
 
 3. Switch to DoH as a fallback test:
    ```sh
-   sed -i 's/type = "doq"/type = "doh"/' /cfg/ctrld.toml
-   sed -i 's/endpoint = ".*"/endpoint = "https:\/\/dns.controld.com\/<YOUR_RESOLVER_ID>"/' /cfg/ctrld.toml
-   kill $(pidof ctrld); sleep 1
-   /cfg/ctrld run -c /cfg/ctrld.toml -d &
+   sh /cfg/reconfigure.sh --protocol --to doh
    ```
+
+   Do not do this with `sed`. An unanchored `s/endpoint = ".*"/.../` rewrites
+   *every* upstream in the file to one resolver, so on a config with split DNS
+   the kids and guest profiles are silently repointed at the unfiltered one,
+   with nothing failing and nothing logged. `reconfigure.sh` switches each
+   upstream's transport while keeping the resolver it points at.
 
 4. If DoH works but QUIC doesn't, your ISP may be blocking UDP. Stick with DoH or DoH3 which can fall back to TCP.
 
@@ -240,10 +250,10 @@ policy, restarts `ctrld`, and confirms DNS still resolves before returning.
 Nothing else on the router refers to the old ID, so there is no stale state to
 clean up afterwards, with two things worth knowing:
 
-- **`https-dns-proxy` keeps the old resolver URL.** It is the fallback that
-  answers if `ctrld` dies, and `setup.sh` — not `reconfigure.sh` — is what
-  points it at ControlD. Re-run `setup.sh` with the new ID, or set it by hand,
-  or leave it: it only ever serves traffic while `ctrld` is down.
+- **The `https-dns-proxy` fallback moves with it.** `reconfigure.sh --resolver`
+  points it at the new profile and restarts it, so the retired ID stops
+  answering everywhere on the router. (Earlier versions left this to
+  `setup.sh`; since 2dbfa2a it is part of the resolver change.)
 - **A failed change can leave `/cfg/ctrld.toml.bak`**, the rollback copy, which
   still contains the old ID. It is removed automatically on success;
   `audit.sh` reports it if one survives.

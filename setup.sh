@@ -918,6 +918,11 @@ if check_dns "127.0.0.1#${DNS_PORT}"; then
         logger -t watchdog "dhcp.leases stale (>2h) — device discovery may degrade"
     fi
     rm -f "$FAIL_COUNT_FILE"
+    # A snapshot left in /cfg means an earlier fallback was interrupted before
+    # it could restore or discard it. DNS is healthy on the config that is
+    # there now, so the snapshot is stale; audit.sh would otherwise report it
+    # for the life of the install.
+    rm -f /cfg/ctrld.toml.fallback
     command -v do_upgrade_check >/dev/null 2>&1 && do_upgrade_check
     exit 0
 fi
@@ -937,6 +942,19 @@ logger -t watchdog "DNS failed on ${DNS_TYPE} after ${FAIL_THRESHOLD} consecutiv
 ensure_iptables "$DNS_PORT"
 logger -t watchdog "restored iptables rules"
 
+# Snapshot the config before the loop starts rewriting it.
+#
+# Each attempt retargets ctrld.toml before it knows whether the restart works,
+# so falling out of the loop left the file on whichever protocol happened to be
+# tried last while controld.env still named the original. With the chain
+# "doh3 doh" and three attempts that lands on DoH, and nothing reconciles the
+# two afterwards: the next cycle restarts ctrld from the toml and logs the env's
+# protocol, so the router runs DoH while status.sh reports DoH3 — across
+# reboots, since both files are on /cfg. Restoring the snapshot leaves the pair
+# consistent on the protocol that was at least known to have worked once.
+_wd_snapshot=/cfg/ctrld.toml.fallback
+cp /cfg/ctrld.toml "$_wd_snapshot" 2>/dev/null || _wd_snapshot=""
+
 _proto="$DNS_TYPE"; _attempt=0
 while [ "$_attempt" -lt "$MAX_RESTART_ATTEMPTS" ]; do
     _proto="$(next_proto "$_proto")"; _attempt=$((_attempt + 1))
@@ -948,15 +966,24 @@ while [ "$_attempt" -lt "$MAX_RESTART_ATTEMPTS" ]; do
         retarget_upstreams /cfg/ctrld.toml "$_proto"
     else
         logger -t watchdog "lib.sh missing — cannot switch protocol safely, restarting on ${DNS_TYPE}"
-        restart_ctrld /cfg/ctrld.toml && exit 0
+        if restart_ctrld /cfg/ctrld.toml; then
+            [ -n "$_wd_snapshot" ] && rm -f "$_wd_snapshot"
+            exit 0
+        fi
         break
     fi
     if restart_ctrld /cfg/ctrld.toml; then
         sed -i "s|DNS_TYPE=.*|DNS_TYPE=${_proto}|" /cfg/controld.env
+        [ -n "$_wd_snapshot" ] && rm -f "$_wd_snapshot"
         logger -t watchdog "fallback to ${_proto} succeeded"
         exit 0
     fi
 done
+
+if [ -n "$_wd_snapshot" ] && [ -f "$_wd_snapshot" ]; then
+    mv "$_wd_snapshot" /cfg/ctrld.toml
+    logger -t watchdog "no protocol worked — ctrld.toml restored to ${DNS_TYPE}"
+fi
 
 # Every protocol failed and ctrld is not resolving. The redirects now point
 # port 53 at a closed port, so every client on every bridge has no DNS at all.

@@ -783,9 +783,35 @@ preserved_forced_dns() {
 # fallback inside preserved_forced_dns kept forced DNS alive across a re-install
 # — until a firmware update wiped /etc/config, when the setting vanished with it.
 # Usage: write_env_file [path]
+WEF_MANAGED="RESOLVER_ID BOOTSTRAP_IP CTRLD_VERSION DNS_TYPE PREFERRED_PROTOCOL FORCED_DNS"
+
 write_env_file() {
     _wef_path="${1:-/cfg/controld.env}"
     _wef_forced="$(preserved_forced_dns "$_wef_path")"
+
+    # Everything the file carries that this function does not manage, read
+    # before the redirect below truncates it.
+    #
+    # This used to emit six keys and nothing else, so every rewrite — any
+    # reconfigure.sh --protocol/--resolver/--benchmark, and every setup.sh
+    # re-install — silently deleted the rest. DNS_PORT went, while ctrld.toml
+    # kept the moved port: at the next boot post-cfg.sh probed 5354, failed its
+    # health check, added no redirects, and the watchdog then read a failing
+    # DNS check every five minutes and churned the protocol chain against a
+    # problem that was never the protocol. LAN_IFACES_EXCLUDE went too — the
+    # documented way to leave a guest VLAN on its own DNS — so the watchdog
+    # started intercepting that VLAN within five minutes of an unrelated
+    # protocol change.
+    _wef_keep=""
+    if [ -f "$_wef_path" ]; then
+        _wef_keep="$($AWK -v managed=" $WEF_MANAGED " '
+            /^[A-Za-z_][A-Za-z0-9_]*=/ {
+                k = substr($0, 1, index($0, "=") - 1)
+                if (index(managed, " " k " ") == 0) print
+            }
+        ' "$_wef_path")"
+    fi
+
     cat > "$_wef_path" << WEFEOF
 RESOLVER_ID=${RESOLVER_ID}
 BOOTSTRAP_IP=${BOOTSTRAP_IP}
@@ -794,6 +820,7 @@ DNS_TYPE=${DNS_TYPE}
 PREFERRED_PROTOCOL=${PREFERRED_PROTOCOL:-$DNS_TYPE}
 FORCED_DNS=${_wef_forced}
 WEFEOF
+    [ -z "$_wef_keep" ] || printf '%s\n' "$_wef_keep" >> "$_wef_path"
 }
 
 # ── Fallback resolver ──

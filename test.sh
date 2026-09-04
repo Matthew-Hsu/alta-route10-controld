@@ -726,6 +726,59 @@ retarget_upstreams "$RT" doh3
 assert_file_contains "round-trips to the DoH form"        "$RT" 'endpoint = "https://dns.controld.com/main1234"'
 assert_file_contains "policy resolver round-trips too"    "$RT" 'endpoint = "https://dns.controld.com/kids5678"'
 
+describe "write_env_file() — a rewrite must not drop the keys it does not manage"
+
+# The six managed keys were emitted and everything else was truncated away, so
+# any reconfigure.sh --protocol/--resolver/--benchmark, and every setup.sh
+# re-install, silently deleted DNS_PORT, LAN_IFACES and LAN_IFACES_EXCLUDE —
+# the documented overrides — along with POLICY_UPSTREAMS.
+WEF="$TMPDIR/wef.env"
+cat > "$WEF" << 'WEFTESTEOF'
+RESOLVER_ID=old123
+BOOTSTRAP_IP=76.76.2.22
+CTRLD_VERSION=1.5.7
+DNS_TYPE=doh3
+PREFERRED_PROTOCOL=doh3
+FORCED_DNS=1
+DNS_PORT=5355
+LAN_IFACES_EXCLUDE="br-lan_40"
+POLICY_UPSTREAMS=2
+WEFTESTEOF
+
+WEF_SAVED_PATH="$PATH"
+mkdir -p "$TMPDIR/wefbin"
+printf '#!/bin/sh\nexit 1\n' > "$TMPDIR/wefbin/uci"   # no uci to fall back to
+chmod +x "$TMPDIR/wefbin/uci"
+PATH="$TMPDIR/wefbin:$PATH"
+
+RESOLVER_ID=new456
+BOOTSTRAP_IP=76.76.2.22
+CTRLD_VERSION=1.5.7
+DNS_TYPE=doq
+PREFERRED_PROTOCOL=doq
+write_env_file "$WEF"
+PATH="$WEF_SAVED_PATH"
+
+assert_file_contains "the managed keys are updated"       "$WEF" '^RESOLVER_ID=new456$'
+assert_file_contains "the protocol change is recorded"    "$WEF" '^DNS_TYPE=doq$'
+assert_file_contains "forced DNS is still preserved"      "$WEF" '^FORCED_DNS=1$'
+assert_file_contains "a moved DNS port survives"          "$WEF" '^DNS_PORT=5355$'
+assert_file_contains "an excluded VLAN survives"          "$WEF" '^LAN_IFACES_EXCLUDE="br-lan_40"$'
+assert_file_contains "unknown keys survive"               "$WEF" '^POLICY_UPSTREAMS=2$'
+assert_eq "no key is duplicated" "9" "$(grep -c '=' "$WEF" | tr -d ' ')"
+assert_eq "the old resolver is gone" "0" "$(grep -c 'old123' "$WEF" | tr -d ' ')"
+
+# Round-tripping must be stable: a second rewrite may not keep growing the file.
+write_env_file "$WEF" 2>/dev/null
+assert_eq "a second rewrite changes nothing" "9" "$(grep -c '=' "$WEF" | tr -d ' ')"
+
+# A comment or a blank line is not a key and must not be re-emitted as one.
+printf '\n# hand-added note\n' >> "$WEF"
+write_env_file "$WEF" 2>/dev/null
+assert_eq "comments are not carried into the key list" "0" \
+    "$(grep -c '^#' "$WEF" | tr -d ' ')"
+unset DNS_PORT LAN_IFACES_EXCLUDE POLICY_UPSTREAMS
+
 describe "stop_ctrld() — kills every instance, not one packed argument"
 
 # pidof prints every PID on one line, and `kill "$(pidof ctrld)"` quoted them

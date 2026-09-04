@@ -97,6 +97,13 @@ load_env() {
     [ -f "$env_file" ] || return 1
     # shellcheck source=/dev/null
     . "$env_file"
+    # The original project — CookieTyrant's, which this is a fork of — misspelled
+    # this key as CURLD_VERSION in its very first commit (f6c81a6). This fork
+    # corrected it in d0bc3b0. Adopt the old spelling when only it is present, so
+    # an install carried over from the upstream repo keeps working instead of
+    # needing a manual migration. Nothing writes it any more, and write_env_file
+    # drops it, so the next config rewrite retires it for good.
+    CTRLD_VERSION="${CTRLD_VERSION:-${CURLD_VERSION:-}}"
     DNS_TYPE="${DNS_TYPE:-doh3}"
     PREFERRED_PROTOCOL="${PREFERRED_PROTOCOL:-$DNS_TYPE}"
     BOOTSTRAP_IP="${BOOTSTRAP_IP:-76.76.2.22}"
@@ -1069,7 +1076,10 @@ preserved_forced_dns() {
 # fallback inside preserved_forced_dns kept forced DNS alive across a re-install
 # — until a firmware update wiped /etc/config, when the setting vanished with it.
 # Usage: write_env_file [path]
-WEF_MANAGED="RESOLVER_ID BOOTSTRAP_IP CTRLD_VERSION DNS_TYPE PREFERRED_PROTOCOL FORCED_DNS"
+# CURLD_VERSION is listed so it is never carried forward: an env file inherited
+# from the original project has it, load_env adopts its value, and the first
+# rewrite then drops the misspelled line rather than preserving it forever.
+WEF_MANAGED="RESOLVER_ID BOOTSTRAP_IP CTRLD_VERSION CURLD_VERSION DNS_TYPE PREFERRED_PROTOCOL FORCED_DNS"
 
 write_env_file() {
     _wef_path="${1:-/cfg/controld.env}"

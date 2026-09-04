@@ -503,6 +503,94 @@ kill -TERM "$WD_BGPID" 2>/dev/null || true
 wait "$WD_BGPID" 2>/dev/null || true
 assert_false "an interrupted run releases it" test -d "$WD_LOCKDIR"
 
+describe "watchdog — a failed fallback must not leave the config diverged"
+
+# Every attempt retargets ctrld.toml before it knows whether the restart works,
+# so falling out of the loop left the file on whichever protocol was tried last
+# while controld.env still named the original. With the chain "doh3 doh" and
+# three attempts that is DoH, and nothing reconciled the two: the next cycle
+# restarts ctrld from the toml and logs the env's protocol, so the router runs
+# DoH while status.sh reports DoH3, across reboots. Reproduced in a sandbox
+# before it was fixed.
+WD_DIV="$TMPDIR/wd-divergence"
+rm -rf "$WD_DIV"; mkdir -p "$WD_DIV"
+
+WDGEN_DIV="$TMPDIR/watchdog-divergence.sh"
+sed -n "/^cat > \/cfg\/watchdog.sh << 'WATCHDOG'/,/^WATCHDOG$/p" "$SCRIPT_DIR/setup.sh" \
+    | sed '1d;$d' \
+    | sed -e "s|/cfg/|${WD_DIV}/|g" \
+          -e "s|/tmp/controld-dns-fail.count|${TMPDIR}/wd-div-fail.count|g" > "$WDGEN_DIV"
+
+cat > "$WD_DIV/controld.env" << 'WDDIVENV'
+RESOLVER_ID=abc123
+BOOTSTRAP_IP=76.76.2.22
+DNS_TYPE=doh3
+PREFERRED_PROTOCOL=doh3
+FORCED_DNS=0
+WDDIVENV
+
+# retarget_upstreams stays real — it is what rewrites the file — while ctrld can
+# never start, which is the case that walks the whole loop.
+cat > "$WD_DIV/lib.sh" << WDDIVLIB
+. "$SCRIPT_DIR/lib.sh"
+check_dns()                  { return 1; }
+stop_ctrld()                 { :; }
+start_ctrld()                { return 1; }
+restart_ctrld()              { return 1; }
+ensure_iptables()            { return 1; }
+ensure_firewall_user_rules() { return 1; }
+ensure_forced_dns()          { :; }
+do_upgrade_check()           { :; }
+remove_dns_redirects()       { :; }
+WDDIVLIB
+
+write_ctrld_config "$WD_DIV/ctrld.toml" abc123 76.76.2.22 doh3
+assert_file_contains "the sandbox starts on doh3" "$WD_DIV/ctrld.toml" 'type = "doh3"'
+
+( PATH="$WD_BIN:$PATH"; WD_LOCK="$TMPDIR/wd-div.lock"; FAIL_THRESHOLD=1
+  export WD_LOCK FAIL_THRESHOLD; sh "$WDGEN_DIV" ) >/dev/null 2>&1
+
+WD_DIV_TYPE="$(grep -o 'type = "[a-z0-9]*"' "$WD_DIV/ctrld.toml" | head -1)"
+WD_DIV_ENV="$(grep '^DNS_TYPE=' "$WD_DIV/controld.env")"
+assert_eq "the config is back on the protocol the env still names" 'type = "doh3"' "$WD_DIV_TYPE"
+assert_eq "and the env is untouched"                              'DNS_TYPE=doh3'  "$WD_DIV_ENV"
+assert_false "the snapshot is not left behind" test -f "$WD_DIV/ctrld.toml.fallback"
+
+# A fallback that works must keep its new protocol, not roll it back. ctrld has
+# to look alive here, or the dead-ctrld branch restarts it and exits before the
+# fallback loop is ever reached.
+WD_DIV_BIN="$TMPDIR/wd-div-bin"
+mkdir -p "$WD_DIV_BIN"
+printf '#!/bin/sh\necho 4143\n' > "$WD_DIV_BIN/pidof"
+printf '#!/bin/sh\nexit 0\n'    > "$WD_DIV_BIN/logger"
+chmod +x "$WD_DIV_BIN/pidof" "$WD_DIV_BIN/logger"
+
+write_ctrld_config "$WD_DIV/ctrld.toml" abc123 76.76.2.22 doh3
+cat > "$WD_DIV/lib.sh" << WDDIVLIB2
+. "$SCRIPT_DIR/lib.sh"
+check_dns()                  { return 1; }
+stop_ctrld()                 { :; }
+start_ctrld()                { return 0; }
+restart_ctrld()              { return 0; }
+ensure_iptables()            { return 1; }
+ensure_firewall_user_rules() { return 1; }
+ensure_forced_dns()          { :; }
+do_upgrade_check()           { :; }
+remove_dns_redirects()       { :; }
+WDDIVLIB2
+( PATH="$WD_DIV_BIN:$PATH"; WD_LOCK="$TMPDIR/wd-div.lock"; FAIL_THRESHOLD=1
+  export WD_LOCK FAIL_THRESHOLD; sh "$WDGEN_DIV" ) >/dev/null 2>&1
+
+assert_file_contains "a working fallback keeps its protocol" "$WD_DIV/ctrld.toml" 'type = "doh"'
+assert_file_contains "and records it in the env"             "$WD_DIV/controld.env" 'DNS_TYPE=doh'
+assert_false "the snapshot is cleaned up on success" test -f "$WD_DIV/ctrld.toml.fallback"
+
+# audit.sh and uninstall.sh must both know the snapshot by name, or an
+# interrupted recovery leaves a file that is reported as foreign and never
+# removed.
+assert_true "audit.sh names the snapshot"     grep -q 'ctrld.toml.fallback' "$SCRIPT_DIR/audit.sh"
+assert_true "uninstall.sh removes it"         grep -q 'ctrld.toml.fallback' "$SCRIPT_DIR/uninstall.sh"
+
 describe "uninstall.sh — a full purge, not just file removal"
 
 # Leaving force_dns set means https-dns-proxy keeps hijacking 53 and 853 after

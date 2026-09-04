@@ -257,12 +257,14 @@ print_header "Leftovers"
 found=0
 for _p in /etc/controld /etc/ctrld.toml /etc/init.d/ctrld /root/.ctrld \
           /var/log/ctrld.log /cfg/ctrld.toml.bak /cfg/ctrld.prev \
+          /cfg/ctrld.toml.fallback \
           /cfg/controld-backup /cfg/rc.local.pre-controld "$DEGRADED_FLAG"; do
     if [ -e "$_p" ]; then
         case "$_p" in
             /etc/controld)            review "${_p} — created by ctrld while running; uninstall removes it" ;;
             /cfg/ctrld.toml.bak)      review "${_p} — leftover from an interrupted reconfigure; holds the previous resolver ID" ;;
             /cfg/ctrld.prev)          review "${_p} — the previous ctrld the updater kept for rollback; expected after an update" ;;
+            /cfg/ctrld.toml.fallback) review "${_p} — the watchdog's pre-fallback config, left by an interrupted recovery; the next healthy cycle removes it" ;;
             /cfg/controld-backup)     review "${_p} — from the removed backup.sh; uninstall deletes it" ;;
             /cfg/rc.local.pre-controld) review "${_p} — your pre-install boot hook, restored by uninstall" ;;
             "$DEGRADED_FLAG")         review "${_p} — $(cat "$_p" 2>/dev/null)" ;;
@@ -277,7 +279,7 @@ done
 # Everything this project can create in /cfg. Paths the leftovers block above
 # already names belong here too, or each one is reported twice — once as a
 # known leftover and again as unexpected.
-KNOWN=" controld.env ctrld ctrld.toml post-cfg.sh controld-update.sh watchdog.sh lib.sh status.sh benchmark.sh reconfigure.sh audit.sh uninstall.sh rc.local ctrld.prev ctrld.toml.bak rc.local.pre-controld "
+KNOWN=" controld.env ctrld ctrld.toml post-cfg.sh controld-update.sh watchdog.sh lib.sh status.sh benchmark.sh reconfigure.sh audit.sh uninstall.sh rc.local ctrld.prev ctrld.toml.bak ctrld.toml.fallback rc.local.pre-controld "
 unknown=""
 for _e in /cfg/*ctrld* /cfg/*controld* /cfg/*.sh /cfg/rc.local*; do
     [ -e "$_e" ] || continue

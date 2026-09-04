@@ -44,7 +44,7 @@ INSTALL_FILES="/cfg/ctrld /cfg/ctrld.toml /cfg/post-cfg.sh \
                /cfg/controld.env /cfg/controld-update.sh /cfg/watchdog.sh \
                /cfg/ctrld.prev \
                /cfg/status.sh /cfg/benchmark.sh /cfg/reconfigure.sh \
-               /cfg/audit.sh /cfg/ctrld.toml.bak \
+               /cfg/audit.sh /cfg/ctrld.toml.bak /cfg/ctrld.toml.fallback \
                /cfg/lib.sh /cfg/uninstall.sh"
 # /cfg/rc.local is handled separately: it is only ours if it carries our
 # marker, and a pre-install copy may need restoring in its place.

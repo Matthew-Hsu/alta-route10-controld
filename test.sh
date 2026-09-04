@@ -358,6 +358,90 @@ assert_false "generated hook has no exit"   grep -qE '^[[:space:]]*exit' "$RCGEN
 assert_false "generated hook has no set -e" grep -qE '^[[:space:]]*set -e' "$RCGEN"
 assert_true  "generated hook warns that it is sourced" grep -q 'sources' "$RCGEN"
 
+describe "watchdog — a ctrld that will not start must still reach the teardown"
+
+# The generated watchdog is heredoc text inside setup.sh, so nothing in this
+# repo has ever executed it. Extract it, point its /cfg and /tmp paths at a
+# sandbox, and run it for real against stubs.
+#
+# The failure being guarded: the dead-ctrld branch used to `exit 0` whether or
+# not the restart worked, so a ctrld that exits on startup (corrupt binary, a
+# config a new release will not parse) ended every run right there. The
+# fallback chain and the redirect teardown both sit further down, on the path
+# that needs ctrld running but not answering, so neither was ever reached and
+# port 53 stayed pointed at a closed port.
+WD_CFG="$TMPDIR/wd-cfg"
+WD_BIN="$TMPDIR/wd-bin"
+WD_LOG="$TMPDIR/wd.log"
+mkdir -p "$WD_CFG" "$WD_BIN"
+export WD_LOG
+
+WDGEN="$TMPDIR/watchdog-generated.sh"
+sed -n "/^cat > \/cfg\/watchdog.sh << 'WATCHDOG'/,/^WATCHDOG$/p" "$SCRIPT_DIR/setup.sh" \
+    | sed '1d;$d' \
+    | sed -e "s|/cfg/|${WD_CFG}/|g" \
+          -e "s|/tmp/controld-dns-fail.count|${TMPDIR}/wd-fail.count|g" > "$WDGEN"
+
+assert_true "the generated watchdog is valid sh" sh -n "$WDGEN"
+
+# Side-effecting helpers are replaced; next_proto and retarget_upstreams stay
+# real, so the fallback loop exercises the code the router would run.
+cat > "$WD_CFG/lib.sh" << WDLIBEOF
+. "$SCRIPT_DIR/lib.sh"
+check_dns()                  { return 1; }
+stop_ctrld()                 { :; }
+start_ctrld()                { return 1; }
+restart_ctrld()              { echo "restart-attempt" >> "\$WD_LOG"; return 1; }
+ensure_iptables()            { echo "ensure_iptables" >> "\$WD_LOG"; return 1; }
+ensure_firewall_user_rules() { return 1; }
+ensure_forced_dns()          { :; }
+do_upgrade_check()           { :; }
+remove_dns_redirects()       { echo "teardown" >> "\$WD_LOG"; }
+WDLIBEOF
+
+cat > "$WD_CFG/controld.env" << 'WDENVEOF'
+RESOLVER_ID=abc123
+BOOTSTRAP_IP=76.76.2.22
+CTRLD_VERSION=1.5.7
+DNS_TYPE=doh3
+PREFERRED_PROTOCOL=doh3
+FORCED_DNS=0
+WDENVEOF
+
+write_ctrld_config "$WD_CFG/ctrld.toml" abc123 76.76.2.22 doh3
+
+printf '#!/bin/sh\nexit 1\n' > "$WD_BIN/pidof"          # ctrld is not running
+printf '#!/bin/sh\necho "$*" >> "$WD_LOG"\n' > "$WD_BIN/logger"
+chmod +x "$WD_BIN/pidof" "$WD_BIN/logger"
+
+# FAIL_THRESHOLD=1 skips the debounce; on a router this costs one extra cycle.
+: > "$WD_LOG"
+( PATH="$WD_BIN:$PATH"; FAIL_THRESHOLD=1; export FAIL_THRESHOLD; sh "$WDGEN" ) >/dev/null 2>&1
+WD_OUT="$(cat "$WD_LOG" 2>/dev/null)"
+
+assert_contains "it tries to restart the dead ctrld" "$WD_OUT" "restart-attempt"
+assert_contains "a failed restart does not end the run" "$WD_OUT" "falling through"
+assert_contains "it works the protocol fallback chain"  "$WD_OUT" "trying doh"
+assert_contains "and tears the redirects down when nothing resolves" "$WD_OUT" "teardown"
+
+# The healthy path must still stop early — the teardown is a last resort, not
+# something every cycle walks into.
+cat > "$WD_CFG/lib.sh" << WDLIBEOF2
+. "$SCRIPT_DIR/lib.sh"
+check_dns()                  { return 0; }
+ensure_iptables()            { return 1; }
+ensure_firewall_user_rules() { return 1; }
+ensure_forced_dns()          { :; }
+do_upgrade_check()           { :; }
+restart_ctrld()              { echo "restart-attempt" >> "\$WD_LOG"; return 0; }
+remove_dns_redirects()       { echo "teardown" >> "\$WD_LOG"; }
+WDLIBEOF2
+: > "$WD_LOG"
+( PATH="$WD_BIN:$PATH"; sh "$WDGEN" ) >/dev/null 2>&1
+WD_OUT2="$(cat "$WD_LOG" 2>/dev/null)"
+assert_contains     "a successful restart ends the cycle" "$WD_OUT2" "ctrld restarted"
+assert_not_contains "and never reaches the teardown"      "$WD_OUT2" "teardown"
+
 describe "uninstall.sh — a full purge, not just file removal"
 
 # Leaving force_dns set means https-dns-proxy keeps hijacking 53 and 853 after

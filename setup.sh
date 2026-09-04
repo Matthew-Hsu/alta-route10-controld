@@ -842,11 +842,23 @@ fi
 DNS_TYPE="${DNS_TYPE:-doh3}"
 MAX_RESTART_ATTEMPTS=3
 
-# Check if ctrld is running
+# Check if ctrld is running.
+#
+# Only a restart that worked ends the cycle here. This used to exit 0 either
+# way, which stranded the most likely way ctrld dies: a binary a bad flash
+# corrupted, or a config a new release will not parse, makes it exit on
+# startup, so pidof keeps failing and the run keeps ending right here. Every
+# recovery below — the fallback chain, and the teardown that hands DNS back to
+# dnsmasq — sits on the path that needs ctrld running but not answering, so
+# none of it was ever reached: port 53 stayed redirected at a closed port and
+# the whole LAN had no DNS, every five minutes, indefinitely.
 if ! pidof ctrld >/dev/null 2>&1; then
     logger -t watchdog "ctrld not running, restarting"
-    restart_ctrld /cfg/ctrld.toml && logger -t watchdog "ctrld restarted (${DNS_TYPE})"
-    exit 0
+    if restart_ctrld /cfg/ctrld.toml; then
+        logger -t watchdog "ctrld restarted (${DNS_TYPE})"
+        exit 0
+    fi
+    logger -t watchdog "ctrld will not start — falling through to protocol fallback"
 fi
 
 # Check DNS resolution

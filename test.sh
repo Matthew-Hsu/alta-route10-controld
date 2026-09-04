@@ -726,6 +726,24 @@ retarget_upstreams "$RT" doh3
 assert_file_contains "round-trips to the DoH form"        "$RT" 'endpoint = "https://dns.controld.com/main1234"'
 assert_file_contains "policy resolver round-trips too"    "$RT" 'endpoint = "https://dns.controld.com/kids5678"'
 
+describe "audit.sh — report our own artifacts as ours"
+
+# ctrld.prev is the updater's rollback copy and the README documents it, but it
+# fell through to the "not installed by this project" arm. It, ctrld.toml.bak
+# and rc.local.pre-controld were also absent from the manifest, so each was
+# reported twice — once as a known leftover, again as unexpected in /cfg.
+assert_true "ctrld.prev is described as the rollback copy" \
+    grep -q 'the previous ctrld the updater kept for rollback' "$SCRIPT_DIR/audit.sh"
+for _ak in ctrld.prev ctrld.toml.bak rc.local.pre-controld; do
+    assert_true "${_ak} is on the manifest" \
+        grep -q "^KNOWN=.* ${_ak} " "$SCRIPT_DIR/audit.sh"
+done
+# FORCED_DNS in controld.env is the source of truth (3bc68c3); uci is restored
+# from it. Reading uci alone reported correct port-853 rules as drift in the
+# window after a firmware update wiped /etc/config.
+assert_true "the env flag is preferred over live uci" \
+    grep -q 'FORCE_DNS="${FORCED_DNS:-}"' "$SCRIPT_DIR/audit.sh"
+
 describe "bench_domain() — the benchmark must query real hostnames"
 
 # setup.sh's copy read: awk "{print \$(((_bi - 1) % 5 + 1))}". _bi is a shell

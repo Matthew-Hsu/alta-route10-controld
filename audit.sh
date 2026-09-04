@@ -62,7 +62,15 @@ review() { REVIEW=$((REVIEW + 1)); print_warn "$1"; }
 print_banner
 load_env >/dev/null 2>&1 || true
 DNS_PORT="${DNS_PORT:-5354}"
-FORCE_DNS="$(uci -q get https-dns-proxy.config.force_dns 2>/dev/null || echo 0)"
+# controld.env is the source of truth for this, not uci — that is the point of
+# 3bc68c3, and ensure_forced_dns restores uci from it. Reading uci alone meant
+# that after a firmware update wiped /etc/config, but before the watchdog's
+# next cycle put it back, the port-853 rules this project had correctly kept
+# were reported as unexpected drift.
+FORCE_DNS="${FORCED_DNS:-}"
+if [ -z "$FORCE_DNS" ]; then
+    FORCE_DNS="$(uci -q get https-dns-proxy.config.force_dns 2>/dev/null || echo 0)"
+fi
 
 # ── Installed versions ───────────────────────────────────────────────────────
 
@@ -252,6 +260,7 @@ for _p in /etc/controld /etc/ctrld.toml /etc/init.d/ctrld /root/.ctrld \
         case "$_p" in
             /etc/controld)            review "${_p} — created by ctrld while running; uninstall removes it" ;;
             /cfg/ctrld.toml.bak)      review "${_p} — leftover from an interrupted reconfigure; holds the previous resolver ID" ;;
+            /cfg/ctrld.prev)          review "${_p} — the previous ctrld the updater kept for rollback; expected after an update" ;;
             /cfg/controld-backup)     review "${_p} — from the removed backup.sh; uninstall deletes it" ;;
             /cfg/rc.local.pre-controld) review "${_p} — your pre-install boot hook, restored by uninstall" ;;
             "$DEGRADED_FLAG")         review "${_p} — $(cat "$_p" 2>/dev/null)" ;;
@@ -263,7 +272,10 @@ done
 [ "$found" -eq 0 ] && print_ok "No known leftover paths present"
 
 # Anything in /cfg that looks like ours but is not on the install manifest.
-KNOWN=" controld.env ctrld ctrld.toml post-cfg.sh controld-update.sh watchdog.sh lib.sh status.sh benchmark.sh reconfigure.sh audit.sh uninstall.sh rc.local "
+# Everything this project can create in /cfg. Paths the leftovers block above
+# already names belong here too, or each one is reported twice — once as a
+# known leftover and again as unexpected.
+KNOWN=" controld.env ctrld ctrld.toml post-cfg.sh controld-update.sh watchdog.sh lib.sh status.sh benchmark.sh reconfigure.sh audit.sh uninstall.sh rc.local ctrld.prev ctrld.toml.bak rc.local.pre-controld "
 unknown=""
 for _e in /cfg/*ctrld* /cfg/*controld* /cfg/*.sh /cfg/rc.local*; do
     [ -e "$_e" ] || continue

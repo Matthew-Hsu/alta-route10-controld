@@ -266,6 +266,8 @@ fi
 
 # Runtime state, so the router is clean without waiting for a reboot
 rm -f /tmp/controld-degraded /tmp/controld-dns-fail.count /tmp/controld-upgrade.count
+# The watchdog's lock is a directory, not a file
+rm -rf /tmp/controld-watchdog.lock
 
 # The ctrld binary creates /etc/controld for its own state. rmdir only removes
 # it when empty, so anything the daemon actually left there is preserved.

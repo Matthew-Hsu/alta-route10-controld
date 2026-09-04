@@ -416,7 +416,7 @@ chmod +x "$WD_BIN/pidof" "$WD_BIN/logger"
 
 # FAIL_THRESHOLD=1 skips the debounce; on a router this costs one extra cycle.
 : > "$WD_LOG"
-( PATH="$WD_BIN:$PATH"; FAIL_THRESHOLD=1; export FAIL_THRESHOLD; sh "$WDGEN" ) >/dev/null 2>&1
+( PATH="$WD_BIN:$PATH"; FAIL_THRESHOLD=1; WD_LOCK="$TMPDIR/wd.lock"; export FAIL_THRESHOLD WD_LOCK; sh "$WDGEN" ) >/dev/null 2>&1
 WD_OUT="$(cat "$WD_LOG" 2>/dev/null)"
 
 assert_contains "it tries to restart the dead ctrld" "$WD_OUT" "restart-attempt"
@@ -437,10 +437,71 @@ restart_ctrld()              { echo "restart-attempt" >> "\$WD_LOG"; return 0; }
 remove_dns_redirects()       { echo "teardown" >> "\$WD_LOG"; }
 WDLIBEOF2
 : > "$WD_LOG"
-( PATH="$WD_BIN:$PATH"; sh "$WDGEN" ) >/dev/null 2>&1
+( PATH="$WD_BIN:$PATH"; WD_LOCK="$TMPDIR/wd.lock"; export WD_LOCK; sh "$WDGEN" ) >/dev/null 2>&1
 WD_OUT2="$(cat "$WD_LOG" 2>/dev/null)"
 assert_contains     "a successful restart ends the cycle" "$WD_OUT2" "ctrld restarted"
 assert_not_contains "and never reaches the teardown"      "$WD_OUT2" "teardown"
+
+describe "watchdog — one instance at a time"
+
+# A recovery cycle used to run longer than the watchdog's own cron interval, so
+# instances overlapped on any real ctrld failure: three were alive at once in a
+# router's syslog, sharing the fail-count file — where one instance's reset
+# erases another's debounce — and rewriting ctrld.toml underneath each other
+# through the fallback loop. b1b5fbd made the cycle short, but a stalled
+# resolver can still stretch one past five minutes, so the invariant is
+# enforced rather than left to timing.
+WD_LOCKDIR="$TMPDIR/wd-lock-test"
+
+# A live owner: the second run must decline, and do nothing else.
+rm -rf "$WD_LOCKDIR"; mkdir -p "$WD_LOCKDIR"
+printf '%s\n' "$$" > "$WD_LOCKDIR/pid"     # this suite is certainly running
+: > "$WD_LOG"
+( PATH="$WD_BIN:$PATH"; WD_LOCK="$WD_LOCKDIR"; export WD_LOCK; sh "$WDGEN" ) >/dev/null 2>&1
+WD_LOCKED="$(cat "$WD_LOG" 2>/dev/null)"
+assert_contains     "a second instance says why it is standing down" \
+    "$WD_LOCKED" "another watchdog is still running"
+assert_not_contains "and does no work at all"  "$WD_LOCKED" "restart-attempt"
+assert_true         "the running instance keeps its lock" test -d "$WD_LOCKDIR"
+
+# A stale lock must be cleared, not honoured, or one interrupted run wedges the
+# watchdog until the next reboot. A PID that has been reaped is the real case.
+( : ) & WD_DEADPID=$!
+wait "$WD_DEADPID" 2>/dev/null || true
+rm -rf "$WD_LOCKDIR"; mkdir -p "$WD_LOCKDIR"
+printf '%s\n' "$WD_DEADPID" > "$WD_LOCKDIR/pid"
+: > "$WD_LOG"
+( PATH="$WD_BIN:$PATH"; WD_LOCK="$WD_LOCKDIR"; export WD_LOCK; sh "$WDGEN" ) >/dev/null 2>&1
+WD_STALE="$(cat "$WD_LOG" 2>/dev/null)"
+assert_contains "a stale lock is reported, not obeyed" "$WD_STALE" "clearing a stale lock"
+assert_contains "and the cycle runs"                   "$WD_STALE" "restart-attempt"
+assert_false    "a completed run releases the lock"    test -d "$WD_LOCKDIR"
+
+# An interrupted run must release it too. Not hypothetical: a manual run was
+# Ctrl-C'd mid-fallback during hardware verification, which under the old code
+# left nothing behind only because there was no lock to leave.
+#
+# The stub blocks in one-second steps rather than a single long sleep: a trap is
+# handled between commands, so a shell sitting in `sleep 20` would not run it
+# until the sleep returned.
+cat > "$WD_CFG/lib.sh" << WDLIBEOF4
+. "$SCRIPT_DIR/lib.sh"
+check_dns()                  { return 1; }
+ensure_iptables()            { return 1; }
+ensure_firewall_user_rules() { return 1; }
+ensure_forced_dns()          { :; }
+do_upgrade_check()           { :; }
+restart_ctrld()              { _i=0; while [ "\$_i" -lt 20 ]; do sleep 1; _i=\$((_i + 1)); done; return 0; }
+remove_dns_redirects()       { :; }
+WDLIBEOF4
+rm -rf "$WD_LOCKDIR"
+PATH="$WD_BIN:$PATH" WD_LOCK="$WD_LOCKDIR" sh "$WDGEN" >/dev/null 2>&1 &
+WD_BGPID=$!
+sleep 2
+assert_true "a running instance holds the lock" test -d "$WD_LOCKDIR"
+kill -TERM "$WD_BGPID" 2>/dev/null || true
+wait "$WD_BGPID" 2>/dev/null || true
+assert_false "an interrupted run releases it" test -d "$WD_LOCKDIR"
 
 describe "uninstall.sh — a full purge, not just file removal"
 

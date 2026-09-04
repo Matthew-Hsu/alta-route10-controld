@@ -261,7 +261,7 @@ if [ -z "$DNS_TYPE" ]; then
     port = ${BENCH_PORT}
 EOF
 
-                kill "$(pidof ctrld 2>/dev/null)" 2>/dev/null || true
+                for _kp in $(pidof ctrld 2>/dev/null); do kill "$_kp" 2>/dev/null || true; done
                 sleep 1
                 /cfg/ctrld run -c /tmp/ctrld-bench.toml -d >/dev/null 2>&1 &
 
@@ -274,7 +274,7 @@ EOF
 
                 if [ "$_bn" -eq 10 ]; then
                     printf "  %-18s ${RED}FAILED${RESET}  (could not connect)\n" "$BLABEL"
-                    kill "$(pidof ctrld 2>/dev/null)" 2>/dev/null || true
+                    for _kp in $(pidof ctrld 2>/dev/null); do kill "$_kp" 2>/dev/null || true; done
                     continue
                 fi
 
@@ -297,7 +297,7 @@ EOF
                     fi
                 done
 
-                kill "$(pidof ctrld 2>/dev/null)" 2>/dev/null || true
+                for _kp in $(pidof ctrld 2>/dev/null); do kill "$_kp" 2>/dev/null || true; done
                 sleep 1
 
                 if [ "$_bs" -eq 0 ]; then
@@ -458,7 +458,7 @@ TOMLINNER
         fi
     }
     stop_ctrld() {
-        kill "$(pidof ctrld 2>/dev/null)" 2>/dev/null || true
+        for _kp in $(pidof ctrld 2>/dev/null); do kill "$_kp" 2>/dev/null || true; done
         sleep 1
     }
     start_ctrld() {
@@ -779,7 +779,7 @@ else
         fi
     }
     stop_ctrld() {
-        kill "$(pidof ctrld 2>/dev/null)" 2>/dev/null || true
+        for _kp in $(pidof ctrld 2>/dev/null); do kill "$_kp" 2>/dev/null || true; done
         sleep 1
     }
     start_ctrld() {
@@ -1081,7 +1081,7 @@ tar xzf /tmp/ctrld.tar.gz -C /tmp || exit 1
 # Keep the running binary so a rollback needs no network
 cp /cfg/ctrld /cfg/ctrld.prev 2>/dev/null || true
 
-kill "$(pidof ctrld 2>/dev/null)" 2>/dev/null
+for _kp in $(pidof ctrld 2>/dev/null); do kill "$_kp" 2>/dev/null || true; done
 sleep 1
 mv "/tmp/dist/ctrld_${VER}_linux_arm64/ctrld" /cfg/ctrld
 chmod +x /cfg/ctrld
@@ -1096,7 +1096,7 @@ fi
 # New binary will not resolve — put the old one back and leave the recorded
 # version alone so next week retries.
 logger -t controld-update "${LATEST} failed to resolve after install — rolling back to ${CURRENT}"
-kill "$(pidof ctrld 2>/dev/null)" 2>/dev/null
+for _kp in $(pidof ctrld 2>/dev/null); do kill "$_kp" 2>/dev/null || true; done
 sleep 1
 if [ -f /cfg/ctrld.prev ]; then
     mv /cfg/ctrld.prev /cfg/ctrld

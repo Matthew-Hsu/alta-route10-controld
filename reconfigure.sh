@@ -282,7 +282,7 @@ do_benchmark() {
     port = ${bench_port}
 EOF
 
-        kill "$(pidof ctrld 2>/dev/null)" 2>/dev/null || true
+        for _kp in $(pidof ctrld 2>/dev/null); do kill "$_kp" 2>/dev/null || true; done
         sleep 1
         /cfg/ctrld run -c /tmp/ctrld-bench.toml -d >/dev/null 2>&1 &
 
@@ -294,7 +294,7 @@ EOF
 
         if [ "$n" -eq 10 ]; then
             printf "  %-18s ${RED}FAILED${RESET}\n" "$label"
-            kill "$(pidof ctrld 2>/dev/null)" 2>/dev/null || true
+            for _kp in $(pidof ctrld 2>/dev/null); do kill "$_kp" 2>/dev/null || true; done
             continue
         fi
 
@@ -313,7 +313,7 @@ EOF
             fi
         done
 
-        kill "$(pidof ctrld 2>/dev/null)" 2>/dev/null || true
+        for _kp in $(pidof ctrld 2>/dev/null); do kill "$_kp" 2>/dev/null || true; done
         sleep 1
 
         [ "$success" -eq 0 ] && { printf "  %-18s ${RED}FAILED${RESET}\n" "$label"; continue; }

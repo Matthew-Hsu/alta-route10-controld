@@ -726,6 +726,36 @@ retarget_upstreams "$RT" doh3
 assert_file_contains "round-trips to the DoH form"        "$RT" 'endpoint = "https://dns.controld.com/main1234"'
 assert_file_contains "policy resolver round-trips too"    "$RT" 'endpoint = "https://dns.controld.com/kids5678"'
 
+describe "stop_ctrld() — kills every instance, not one packed argument"
+
+# pidof prints every PID on one line, and `kill "$(pidof ctrld)"` quoted them
+# into a single argument: kill rejects "4143 4144" wholesale and nothing dies.
+# It only bites once a second ctrld exists — a benchmark, or the self-upgrade
+# probe — which is exactly when stopping cleanly matters, and why a single
+# instance made it look fine for so long.
+#
+# kill is a builtin, so a PATH stub cannot see it; overriding it as a function
+# does, in both dash and BusyBox ash. The defect is the argument packing, so
+# the calls made are the thing to assert on.
+SC_LOG="$TMPDIR/kill-calls.log"
+: > "$SC_LOG"
+(
+    kill()  { printf '%s\n' "$*" >> "$SC_LOG"; }
+    pidof() { echo "4143 4144"; }
+    sleep() { :; }
+    stop_ctrld
+)
+assert_eq "one kill call per PID"  "2"    "$(grep -c . "$SC_LOG" | tr -d ' ')"
+assert_eq "the first PID, alone"   "4143" "$(sed -n 1p "$SC_LOG")"
+assert_eq "the second PID, alone"  "4144" "$(sed -n 2p "$SC_LOG")"
+
+# The same expression was copied into the generated scripts and the benchmark
+# and update paths, so no caller may reintroduce it.
+for _ks in lib.sh setup.sh reconfigure.sh uninstall.sh benchmark.sh status.sh audit.sh; do
+    assert_false "${_ks} does not pack multiple PIDs into one kill" \
+        grep -qE 'kill (-9 )?"\$\(pidof' "$SCRIPT_DIR/$_ks"
+done
+
 describe "list_upstreams() / policy_rule_count() — what the readouts report"
 
 # status.sh and reconfigure.sh --show both walked upstream blocks with

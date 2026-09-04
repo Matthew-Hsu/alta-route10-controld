@@ -845,6 +845,35 @@ else
     }
 fi
 
+# Only one watchdog at a time.
+#
+# A recovery cycle is one start plus three fallback attempts. That is about a
+# minute now, but it used to be over six against a five-minute cron interval,
+# so instances overlapped on any real ctrld failure and raced each other: they
+# share the fail-count file, where one instance's reset erases another's
+# debounce, and they rewrite ctrld.toml underneath each other through the
+# fallback loop. Three at once were observed on a router. Timing alone is not a
+# guarantee — a stalled resolver can still stretch a cycle past five minutes —
+# so the invariant is enforced rather than assumed.
+#
+# mkdir is the atomic primitive available everywhere; BusyBox is not always
+# built with flock. A lock whose owner is gone is cleared rather than honoured,
+# so an interrupted run cannot wedge the watchdog until the next reboot. A
+# recycled PID can cost one skipped cycle, which the next cron run recovers.
+WD_LOCK="${WD_LOCK:-/tmp/controld-watchdog.lock}"
+if ! mkdir "$WD_LOCK" 2>/dev/null; then
+    _wd_owner="$(cat "${WD_LOCK}/pid" 2>/dev/null || true)"
+    if [ -n "$_wd_owner" ] && [ -d "/proc/${_wd_owner}" ]; then
+        logger -t watchdog "another watchdog is still running (pid ${_wd_owner}) — skipping this cycle"
+        exit 0
+    fi
+    logger -t watchdog "clearing a stale lock left by pid ${_wd_owner:-unknown}"
+    rm -rf "$WD_LOCK"
+    mkdir "$WD_LOCK" 2>/dev/null || exit 0
+fi
+printf '%s\n' "$$" > "${WD_LOCK}/pid" 2>/dev/null || true
+trap 'rm -rf "$WD_LOCK"' EXIT INT TERM
+
 DNS_TYPE="${DNS_TYPE:-doh3}"
 MAX_RESTART_ATTEMPTS=3
 

@@ -241,92 +241,43 @@ do_resolver() {
 
 do_benchmark() {
     print_header "Benchmarking Protocols"
-    printf "  ${DIM}Testing 10 queries per protocol...${RESET}\n\n"
+    printf "  ${DIM}Testing 10 queries per protocol on port %s...${RESET}\n" "$BENCH_PORT"
+    printf "  ${DIM}Production DNS on port %s keeps answering throughout.${RESET}\n\n" "$DNS_PORT"
 
-    local bench_port=5360
     local bench_queries=10
     local fastest="" fastest_ms=999999
 
     for proto in doq doh3 doh; do
-        local label endpoint
+        local label
         label=$(proto_label "$proto")
-        endpoint=$(get_endpoint "$proto" "$RESOLVER_ID")
 
-        cat > /tmp/ctrld-bench.toml << EOF
-[service]
-    log_level = "error"
-    cache_enable = false
-[network.0]
-    cidrs = ["0.0.0.0/0"]
-    name = "bench"
-[upstream.0]
-    bootstrap_ip = "${BOOTSTRAP_IP}"
-    endpoint = "${endpoint}"
-    name = "bench"
-    timeout = 5000
-    type = "${proto}"
-    send_client_info = false
-[listener.0]
-    ip = "127.0.0.1"
-    port = ${bench_port}
-EOF
-
-        for _kp in $(pidof ctrld 2>/dev/null); do kill "$_kp" 2>/dev/null || true; done
-        sleep 1
-        /cfg/ctrld run -c /tmp/ctrld-bench.toml -d >/dev/null 2>&1 &
-
-        local n=0
-        while [ "$n" -lt 10 ]; do
-            nslookup google.com "127.0.0.1#${bench_port}" >/dev/null 2>&1 && break
-            sleep 1; n=$((n + 1))
-        done
-
-        if [ "$n" -eq 10 ]; then
+        # This used to kill production ctrld before each of the three
+        # protocols, while the port-53 redirects still pointed at it — so the
+        # whole LAN had no DNS for the length of the run, and a failure between
+        # the kill and the restart below left it that way until the watchdog's
+        # next cycle. bench_protocol uses a loopback listener on its own port
+        # and only ever stops the daemon it started.
+        if ! bench_protocol "$proto" "$RESOLVER_ID" "$BOOTSTRAP_IP" "$bench_queries"; then
             printf "  %-18s ${RED}FAILED${RESET}\n" "$label"
-            for _kp in $(pidof ctrld 2>/dev/null); do kill "$_kp" 2>/dev/null || true; done
             continue
         fi
 
-        local total=0 success=0 ms=0
-        for i in $(seq 1 "$bench_queries"); do
-            local s1 s2 elapsed
-            s1=$(date +%s%N 2>/dev/null || date +%s)
-            if nslookup google.com "127.0.0.1#${bench_port}" >/dev/null 2>&1; then
-                s2=$(date +%s%N 2>/dev/null || date +%s)
-                if [ "${#s1}" -gt 9 ]; then
-                    elapsed=$(( (s2 - s1) / 1000000 ))
-                else
-                    elapsed=$(( (s2 - s1) * 1000 )); [ "$elapsed" -eq 0 ] && elapsed=1
-                fi
-                total=$((total + elapsed)); success=$((success + 1))
-            fi
-        done
-
-        for _kp in $(pidof ctrld 2>/dev/null); do kill "$_kp" 2>/dev/null || true; done
-        sleep 1
-
-        [ "$success" -eq 0 ] && { printf "  %-18s ${RED}FAILED${RESET}\n" "$label"; continue; }
-        ms=$((total / success))
-
-        if [ "$ms" -lt "$fastest_ms" ]; then
-            fastest_ms=$ms; fastest=$proto
-            printf "  %-18s ${GREEN}%dms${RESET} avg   %d/%d ok   ${DIM}<-- fastest${RESET}\n" "$label" "$ms" "$success" "$bench_queries"
+        if [ "$BENCH_AVG" -lt "$fastest_ms" ]; then
+            fastest_ms=$BENCH_AVG; fastest=$proto
+            printf "  %-18s ${GREEN}%dms${RESET} avg   %d/%d ok   ${DIM}<-- fastest${RESET}\n" \
+                "$label" "$BENCH_AVG" "$BENCH_OK" "$bench_queries"
         else
-            printf "  %-18s %dms avg   %d/%d ok\n" "$label" "$ms" "$success" "$bench_queries"
+            printf "  %-18s %dms avg   %d/%d ok\n" \
+                "$label" "$BENCH_AVG" "$BENCH_OK" "$bench_queries"
         fi
     done
 
-    rm -f /tmp/ctrld-bench.toml
+    rm -f "$BENCH_CONF"
 
     if [ -z "$fastest" ]; then
         print_fail "All protocols failed. No changes made."
-        # Restart the original ctrld
-        start_ctrld /cfg/ctrld.toml || true
         return
     fi
-
-    # Restart original ctrld
-    start_ctrld /cfg/ctrld.toml || true
 
     if [ "$fastest" = "$DNS_TYPE" ]; then
         printf "\n  ${GREEN}Current protocol $(proto_label "$DNS_TYPE") is already fastest (${fastest_ms}ms).${RESET}\n"

@@ -358,30 +358,47 @@ fi
 
 # ── Step 3: Download ctrld ──
 
-print_step "Step 2: Installing ctrld v${CTRLD_PIN}..."
+# CTRLD_PIN is where a fresh install starts, not a version to hold the router
+# at: the weekly updater moves CTRLD_VERSION forward from it. Downloading the
+# pin unconditionally therefore rolled a re-install back to it and rewrote the
+# recorded version down to match, undoing however many updates had landed —
+# silently, and on the operation the README calls the upgrade path.
+#
+# Only a strictly newer install is kept. An install sitting exactly on the pin
+# is re-downloaded as before, so re-running setup.sh still repairs a corrupt
+# binary.
+CTRLD_INSTALLED="$(sed -n 's/^CTRLD_VERSION=\([0-9.]*\).*/\1/p' /cfg/controld.env 2>/dev/null | head -1)"
+if [ -x /cfg/ctrld ] && [ -n "$CTRLD_INSTALLED" ] && version_gt "$CTRLD_INSTALLED" "$CTRLD_PIN"; then
+    print_step "Step 2: Keeping ctrld v${CTRLD_INSTALLED}..."
+    print_ok "ctrld ${CTRLD_INSTALLED} is newer than the ${CTRLD_PIN} pin — left as it is"
+    CTRLD_VERSION="$CTRLD_INSTALLED"
+else
+    print_step "Step 2: Installing ctrld v${CTRLD_PIN}..."
 
-CTRLD_ASSET="ctrld_${CTRLD_PIN}_linux_arm64.tar.gz"
-wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${CTRLD_PIN}/${CTRLD_ASSET}" || {
-    die "Download failed. Check internet connectivity."
-}
-# set -e is on: capture the status rather than aborting on a non-zero return
-VERIFY_RC=0; verify_ctrld_download /tmp/ctrld.tar.gz "$CTRLD_ASSET" "$CTRLD_PIN" || VERIFY_RC=$?
-case "$VERIFY_RC" in
-    0) print_ok "Download verified against published SHA-256" ;;
-    1) rm -f /tmp/ctrld.tar.gz; die "Checksum mismatch on ctrld download — refusing to install" ;;
-    2) print_warn "Could not verify download checksum (continuing)" ;;
-esac
-tar xzf /tmp/ctrld.tar.gz -C /tmp
-mv "/tmp/dist/ctrld_${CTRLD_PIN}_linux_arm64/ctrld" /cfg/ctrld
-chmod +x /cfg/ctrld
-rm -rf /tmp/dist /tmp/ctrld.tar.gz
-print_ok "ctrld binary installed to /cfg/ctrld"
+    CTRLD_ASSET="ctrld_${CTRLD_PIN}_linux_arm64.tar.gz"
+    wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${CTRLD_PIN}/${CTRLD_ASSET}" || {
+        die "Download failed. Check internet connectivity."
+    }
+    # set -e is on: capture the status rather than aborting on a non-zero return
+    VERIFY_RC=0; verify_ctrld_download /tmp/ctrld.tar.gz "$CTRLD_ASSET" "$CTRLD_PIN" || VERIFY_RC=$?
+    case "$VERIFY_RC" in
+        0) print_ok "Download verified against published SHA-256" ;;
+        1) rm -f /tmp/ctrld.tar.gz; die "Checksum mismatch on ctrld download — refusing to install" ;;
+        2) print_warn "Could not verify download checksum (continuing)" ;;
+    esac
+    tar xzf /tmp/ctrld.tar.gz -C /tmp
+    mv "/tmp/dist/ctrld_${CTRLD_PIN}_linux_arm64/ctrld" /cfg/ctrld
+    chmod +x /cfg/ctrld
+    rm -rf /tmp/dist /tmp/ctrld.tar.gz
+    print_ok "ctrld binary installed to /cfg/ctrld"
+    CTRLD_VERSION="${CTRLD_PIN}"
+
+fi
 
 # ── Step 4: Write recovery config ──
 
 print_step "Step 3: Writing configuration files..."
 
-CTRLD_VERSION="${CTRLD_PIN}"
 PREFERRED_PROTOCOL="${DNS_TYPE}"
 write_env_file /cfg/controld.env
 print_ok "/cfg/controld.env written"

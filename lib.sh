@@ -359,6 +359,25 @@ policy_rule_count() {
     printf '%s' "$_prc_n"
 }
 
+# True when version <a> is strictly newer than version <b>.
+#
+# Compared field by field as numbers, so 1.10.0 beats 1.9.0 — a string compare
+# gets that backwards. sort -V would do it but is not in BusyBox's sort.
+# Usage: version_gt 1.6.0 1.5.7
+version_gt() {
+    $AWK -v a="$1" -v b="$2" 'BEGIN {
+        na = split(a, x, "."); nb = split(b, y, ".")
+        n = (na > nb) ? na : nb
+        for (i = 1; i <= n; i++) {
+            xi = (i <= na) ? x[i] + 0 : 0
+            yi = (i <= nb) ? y[i] + 0 : 0
+            if (xi > yi) exit 0
+            if (xi < yi) exit 1
+        }
+        exit 1
+    }'
+}
+
 # ── Release Download Verification ──
 
 # Pull one asset's SHA-256 out of a checksums.txt body ("<sha>  <filename>")

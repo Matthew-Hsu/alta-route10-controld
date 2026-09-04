@@ -726,6 +726,28 @@ retarget_upstreams "$RT" doh3
 assert_file_contains "round-trips to the DoH form"        "$RT" 'endpoint = "https://dns.controld.com/main1234"'
 assert_file_contains "policy resolver round-trips too"    "$RT" 'endpoint = "https://dns.controld.com/kids5678"'
 
+describe "version_gt() — a re-install must not roll ctrld back to the pin"
+
+assert_true  "a newer patch"         version_gt 1.5.8 1.5.7
+assert_true  "a newer minor"         version_gt 1.6.0 1.5.7
+assert_true  "a newer major"         version_gt 2.0.0 1.9.9
+assert_false "the same version"      version_gt 1.5.7 1.5.7
+assert_false "an older patch"        version_gt 1.5.6 1.5.7
+assert_false "an older minor"        version_gt 1.4.9 1.5.7
+# A string compare gets this backwards, and it is the case the updater reaches
+# first once ctrld passes 1.9.
+assert_true  "1.10.0 is newer than 1.9.0"  version_gt 1.10.0 1.9.0
+assert_false "1.9.0 is not newer than 1.10.0" version_gt 1.9.0 1.10.0
+assert_true  "a shorter version compares by field" version_gt 1.6 1.5.7
+assert_false "trailing zeros are not newer"        version_gt 1.5.7 1.5.7.0
+
+# The pin is a starting point; the weekly updater moves CTRLD_VERSION past it.
+# Downloading it unconditionally rewound both the binary and the record.
+assert_true "setup.sh keeps an installed ctrld newer than the pin" \
+    grep -q 'version_gt "$CTRLD_INSTALLED" "$CTRLD_PIN"' "$SCRIPT_DIR/setup.sh"
+assert_false "setup.sh no longer records the pin unconditionally" \
+    grep -qE '^CTRLD_VERSION="\$\{CTRLD_PIN\}"$' "$SCRIPT_DIR/setup.sh"
+
 describe "write_env_file() — a rewrite must not drop the keys it does not manage"
 
 # The six managed keys were emitted and everything else was truncated away, so

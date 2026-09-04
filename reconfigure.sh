@@ -353,7 +353,11 @@ do_policy() {
                 read -r confirm
                 case "$confirm" in n|N|no|NO) continue ;; esac
 
-                # Append upstream
+                # The upstream is appended before the rule is written, so a
+                # failed write would leave an orphan [upstream.N] behind while
+                # the message below claimed the file was untouched. Snapshot
+                # first and restore on failure, so the message is true.
+                cp /cfg/ctrld.toml /cfg/ctrld.toml.polbak
                 cat >> /cfg/ctrld.toml << EOF
 
 [upstream.${next_idx}]
@@ -369,9 +373,11 @@ EOF
                 # existing one, or inserts into it — and fails loudly rather
                 # than reporting a rule it did not write.
                 if ! policy_add_rule /cfg/ctrld.toml mac "$mac" "$next_idx"; then
-                    print_fail "Could not add the MAC rule — /cfg/ctrld.toml left as it was"
+                    mv /cfg/ctrld.toml.polbak /cfg/ctrld.toml
+                    print_fail "Could not add the MAC rule — /cfg/ctrld.toml rolled back"
                     continue
                 fi
+                rm -f /cfg/ctrld.toml.polbak
 
                 stop_ctrld; start_ctrld /cfg/ctrld.toml || die "ctrld failed to start"
                 print_ok "Device rule added. MAC ${mac} -> ${policy_name}"
@@ -406,7 +412,7 @@ EOF
                 read -r confirm
                 case "$confirm" in n|N|no|NO) continue ;; esac
 
-                # Append network and upstream
+                cp /cfg/ctrld.toml /cfg/ctrld.toml.polbak
                 cat >> /cfg/ctrld.toml << EOF
 
 [network.${next_net}]
@@ -423,9 +429,11 @@ EOF
 EOF
 
                 if ! policy_add_rule /cfg/ctrld.toml network "network.${next_net}" "$next_up"; then
-                    print_fail "Could not add the network rule — /cfg/ctrld.toml left as it was"
+                    mv /cfg/ctrld.toml.polbak /cfg/ctrld.toml
+                    print_fail "Could not add the network rule — /cfg/ctrld.toml rolled back"
                     continue
                 fi
+                rm -f /cfg/ctrld.toml.polbak
 
                 stop_ctrld; start_ctrld /cfg/ctrld.toml || die "ctrld failed to start"
                 print_ok "Network rule added. ${cidr} -> ${policy_name}"

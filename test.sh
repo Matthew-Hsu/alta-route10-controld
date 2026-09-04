@@ -726,6 +726,56 @@ retarget_upstreams "$RT" doh3
 assert_file_contains "round-trips to the DoH form"        "$RT" 'endpoint = "https://dns.controld.com/main1234"'
 assert_file_contains "policy resolver round-trips too"    "$RT" 'endpoint = "https://dns.controld.com/kids5678"'
 
+describe "bench_domain() — the benchmark must query real hostnames"
+
+# setup.sh's copy read: awk "{print \$(((_bi - 1) % 5 + 1))}". _bi is a shell
+# variable and awk never saw it, so awk evaluated an uninitialised zero, the
+# expression came out as $0, and every query looked up all five domains joined
+# by spaces as a single hostname. All ten failed, every protocol reported
+# FAILED (0/10), and setup fell through to "All protocols failed benchmark.
+# Defaulting to DoH3." — the menu option never once produced a result.
+assert_eq "the first domain"  "google.com"     "$(bench_domain 1)"
+assert_eq "the second"        "cloudflare.com" "$(bench_domain 2)"
+assert_eq "the fifth"         "github.com"     "$(bench_domain 5)"
+assert_eq "wraps to the first" "google.com"    "$(bench_domain 6)"
+assert_eq "and keeps wrapping" "cloudflare.com" "$(bench_domain 7)"
+assert_eq "past thirty, where the old loop stopped" "google.com" "$(bench_domain 31)"
+
+# One hostname per query, never the whole list.
+BD_ALL=""
+BD_I=1
+while [ "$BD_I" -le 12 ]; do
+    BD_ALL="${BD_ALL} $(bench_domain "$BD_I")"
+    BD_I=$((BD_I + 1))
+done
+assert_false "no query is handed more than one hostname" \
+    sh -c "printf '%s' \"\$BD_ALL\" | grep -qE '[a-z]\.com [a-z]'"
+assert_eq "twelve queries yield twelve names" "12" "$(printf '%s' "$BD_ALL" | wc -w | tr -d ' ')"
+
+describe "bench_stop() — never the production resolver"
+
+# reconfigure.sh's benchmark ran `kill $(pidof ctrld)` before each of three
+# protocols. That is the resolver every LAN client is redirected to, so the
+# whole network lost DNS for the run — and a failure between the kill and the
+# restart left it that way until the watchdog's next cycle. The throwaway
+# daemon is identified by the config path it was started with instead.
+assert_true "bench_stop matches on the config path" \
+    grep -q 'trld run -c ${_bs_conf}' "$SCRIPT_DIR/lib.sh"
+# Scoped to the benchmark regions: a stop_ctrld elsewhere is meant to stop the
+# production daemon, and only a benchmark must never do so.
+SETUP_BENCH="$(sed -n '/── Inline benchmark ──/,/rm -f "\$BENCH_CONF"/p' "$SCRIPT_DIR/setup.sh")"
+RECONF_BENCH="$(sed -n '/^do_benchmark() {/,/^}/p' "$SCRIPT_DIR/reconfigure.sh")"
+assert_not_contains "setup.sh's benchmark does not reach for pidof"     "$SETUP_BENCH"  "pidof"
+assert_not_contains "reconfigure.sh's benchmark does not reach for pidof" "$RECONF_BENCH" "pidof"
+assert_contains     "setup.sh's benchmark uses the shared runner"       "$SETUP_BENCH"  "bench_protocol"
+assert_contains     "reconfigure.sh's benchmark uses the shared runner" "$RECONF_BENCH" "bench_protocol"
+assert_eq "benchmark.sh never kills ctrld by pidof" "" \
+    "$(grep -n 'pidof ctrld' "$SCRIPT_DIR/benchmark.sh" || true)"
+# netstat prints the local address before the PID column, so the old
+# leftover-sweep pattern could never match.
+assert_false "no PID-to-port correlation is left" \
+    grep -q 'netstat -tlnp.*\${_p}' "$SCRIPT_DIR/benchmark.sh"
+
 describe "carry_policy_blocks() — a config rewrite must not drop split DNS"
 
 # setup.sh Step 5 overwrote ctrld.toml outright, with no backup and no

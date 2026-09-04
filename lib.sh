@@ -491,6 +491,134 @@ verify_ctrld_download() {
     [ "$_vcd_want" = "$_vcd_got" ]
 }
 
+# ── Protocol Benchmark ──
+#
+# One implementation, because there were three: benchmark.sh, reconfigure.sh's
+# --benchmark, and setup.sh's menu option 4, each with a different bug.
+
+BENCH_DOMAINS="google.com cloudflare.com amazon.com wikipedia.org github.com"
+BENCH_DOMAIN_COUNT=5
+# A throwaway listener on loopback, so production DNS on DNS_PORT is untouched.
+BENCH_PORT="${BENCH_PORT:-5360}"
+BENCH_CONF="${BENCH_CONF:-/tmp/ctrld-bench.toml}"
+
+# The Nth benchmark domain, 1-based and wrapping.
+#
+# setup.sh's copy read: awk "{print \$(((_bi - 1) % 5 + 1))}". _bi is a shell
+# variable and awk never saw it, so awk evaluated an uninitialised zero and the
+# expression came out as $0 — the whole record. Every query then looked up a
+# single hostname made of all five domains joined by spaces, all ten failed,
+# and every protocol reported FAILED (0/10) before setup fell back to DoH3.
+# The index is computed in the shell so awk is only ever handed a number.
+bench_domain() {
+    _bd_i=$(( ($1 - 1) % BENCH_DOMAIN_COUNT + 1 ))
+    printf '%s\n' "$BENCH_DOMAINS" | $AWK -v i="$_bd_i" '{ print $i }'
+}
+
+# Write the throwaway config for one protocol.
+# Usage: bench_write_config <file> <proto> <resolver> <bootstrap> <port>
+bench_write_config() {
+    cat > "$1" << BWCEOF
+[service]
+    log_level = "error"
+    cache_enable = false
+[network.0]
+    cidrs = ["0.0.0.0/0"]
+    name = "bench"
+[upstream.0]
+    bootstrap_ip = "${4}"
+    endpoint = "$(get_endpoint "$2" "$3")"
+    name = "bench"
+    timeout = 5000
+    type = "${2}"
+    send_client_info = false
+[listener.0]
+    ip = "127.0.0.1"
+    port = ${5}
+BWCEOF
+}
+
+# Stop the throwaway daemon, identified by the config it was started with, and
+# print how many were stopped.
+#
+# Never by pidof. That is the production resolver for every LAN client, and
+# killing it while the port-53 redirects still point at DNS_PORT is not a
+# fallback but a black hole — reconfigure.sh's benchmark did exactly that
+# before each of three protocols, taking the whole LAN's DNS down for the run.
+#
+# Nor by correlating PID to port: benchmark.sh swept leftovers with
+# `netstat -tlnp | grep "${pid}.*${port}"`, but netstat prints the local
+# address before the PID column, so that pattern could never match. `ctrld -d`
+# daemonizes, so the $! it also killed may be a parent whose child survives. A
+# leaked daemon keeps BENCH_PORT, the next protocol's ctrld fails to bind and
+# exits, the readiness probe then succeeds against the stale listener, and all
+# three rows of the table report the first protocol's latency.
+# Usage: bench_stop [config]
+bench_stop() {
+    _bs_conf="${1:-$BENCH_CONF}"
+    _bs_n=0
+    for _bs_pid in $(ps w 2>/dev/null | grep "[c]trld run -c ${_bs_conf}" | $AWK '{ print $1 }'); do
+        kill "$_bs_pid" 2>/dev/null || true
+        _bs_n=$((_bs_n + 1))
+    done
+    printf '%s' "$_bs_n"
+}
+
+# Time <queries> lookups against one protocol on the test port.
+# Sets BENCH_AVG (milliseconds, or "FAIL"), BENCH_OK and BENCH_FAIL.
+# Usage: bench_protocol <proto> <resolver> <bootstrap> <queries> [port] [config]
+bench_protocol() {
+    _bp_proto="$1"; _bp_resolver="$2"; _bp_boot="$3"; _bp_queries="$4"
+    _bp_port="${5:-$BENCH_PORT}"; _bp_conf="${6:-$BENCH_CONF}"
+
+    bench_stop "$_bp_conf" >/dev/null
+    bench_write_config "$_bp_conf" "$_bp_proto" "$_bp_resolver" "$_bp_boot" "$_bp_port"
+    /cfg/ctrld run -c "$_bp_conf" -d >/dev/null 2>&1 &
+
+    _bp_n=0
+    while [ "$_bp_n" -lt 10 ]; do
+        nslookup google.com "127.0.0.1#${_bp_port}" >/dev/null 2>&1 && break
+        sleep 1; _bp_n=$((_bp_n + 1))
+    done
+    if [ "$_bp_n" -ge 10 ]; then
+        bench_stop "$_bp_conf" >/dev/null
+        BENCH_AVG="FAIL"; BENCH_OK=0; BENCH_FAIL="$_bp_queries"
+        return 1
+    fi
+
+    # A while loop, not a literal `for _i in 1 2 3 ... 30`: that silently
+    # capped --queries at 30 while still printing the requested total, so
+    # "--queries 50" reported 30/50 with 0 failures.
+    _bp_total=0; _bp_ok=0; _bp_bad=0; _bp_i=1
+    while [ "$_bp_i" -le "$_bp_queries" ]; do
+        _bp_dom="$(bench_domain "$_bp_i")"
+        _bp_s1=$(date +%s%N 2>/dev/null || date +%s)
+        if nslookup "$_bp_dom" "127.0.0.1#${_bp_port}" >/dev/null 2>&1; then
+            _bp_s2=$(date +%s%N 2>/dev/null || date +%s)
+            # date +%s%N is nanoseconds where supported; a 10-digit result means
+            # it fell back to whole seconds.
+            if [ "${#_bp_s1}" -gt 9 ]; then
+                _bp_el=$(( (_bp_s2 - _bp_s1) / 1000000 ))
+            else
+                _bp_el=$(( (_bp_s2 - _bp_s1) * 1000 ))
+                [ "$_bp_el" -gt 0 ] || _bp_el=1
+            fi
+            _bp_total=$((_bp_total + _bp_el)); _bp_ok=$((_bp_ok + 1))
+        else
+            _bp_bad=$((_bp_bad + 1))
+        fi
+        _bp_i=$((_bp_i + 1))
+    done
+
+    bench_stop "$_bp_conf" >/dev/null
+    if [ "$_bp_ok" -eq 0 ]; then
+        BENCH_AVG="FAIL"; BENCH_OK=0; BENCH_FAIL="$_bp_queries"
+        return 1
+    fi
+    BENCH_AVG=$((_bp_total / _bp_ok)); BENCH_OK="$_bp_ok"; BENCH_FAIL="$_bp_bad"
+    return 0
+}
+
 # ── Upstream Protocol Switching ──
 
 # Resolver ID out of a ControlD endpoint, in either protocol's form.

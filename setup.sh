@@ -213,9 +213,7 @@ if [ -z "$DNS_TYPE" ]; then
             print_step "Benchmarking DNS protocols..."
             printf "  ${DIM}Testing 10 queries per protocol against your ControlD endpoint...${RESET}\n\n"
 
-            BENCH_PORT=5360
             BENCH_QUERIES=10
-            BENCH_DOMAINS="google.com cloudflare.com amazon.com wikipedia.org github.com"
             BENCH_FASTEST=""
             BENCH_FASTEST_MS=999999
 
@@ -237,86 +235,27 @@ if [ -z "$DNS_TYPE" ]; then
                 rm -rf /tmp/dist /tmp/ctrld.tar.gz
             fi
 
+            # Shared with benchmark.sh and reconfigure.sh. The copy that lived
+            # here picked its query domain with an awk program that referenced
+            # a shell variable awk could not see, so every lookup asked for all
+            # five domains as one hostname and failed: all three protocols
+            # reported FAILED (0/10) and setup fell through to DoH3 every time.
             for BPROTO in doq doh3 doh; do
                 BLABEL=$(proto_label "$BPROTO")
-                BENDPOINT=$(get_endpoint "$BPROTO" "$RESOLVER_ID")
-
-                # Write temp config
-                cat > /tmp/ctrld-bench.toml << EOF
-[service]
-    log_level = "error"
-    cache_enable = false
-[network.0]
-    cidrs = ["0.0.0.0/0"]
-    name = "bench"
-[upstream.0]
-    bootstrap_ip = "${BOOTSTRAP_IP}"
-    endpoint = "${BENDPOINT}"
-    name = "bench"
-    timeout = 5000
-    type = "${BPROTO}"
-    send_client_info = false
-[listener.0]
-    ip = "127.0.0.1"
-    port = ${BENCH_PORT}
-EOF
-
-                for _kp in $(pidof ctrld 2>/dev/null); do kill "$_kp" 2>/dev/null || true; done
-                sleep 1
-                /cfg/ctrld run -c /tmp/ctrld-bench.toml -d >/dev/null 2>&1 &
-
-                # Wait for ready
-                _bn=0
-                while [ "$_bn" -lt 10 ]; do
-                    nslookup google.com "127.0.0.1#${BENCH_PORT}" >/dev/null 2>&1 && break
-                    sleep 1; _bn=$((_bn + 1))
-                done
-
-                if [ "$_bn" -eq 10 ]; then
-                    printf "  %-18s ${RED}FAILED${RESET}  (could not connect)\n" "$BLABEL"
-                    for _kp in $(pidof ctrld 2>/dev/null); do kill "$_kp" 2>/dev/null || true; done
+                if ! bench_protocol "$BPROTO" "$RESOLVER_ID" "$BOOTSTRAP_IP" "$BENCH_QUERIES"; then
+                    printf "  %-18s ${RED}FAILED${RESET}  (%s/%s succeeded)\n" "$BLABEL" "$BENCH_OK" "$BENCH_QUERIES"
                     continue
                 fi
-
-                # Run queries
-                _bt=0; _bs=0; _bf=0
-                for _bi in $(seq 1 "$BENCH_QUERIES"); do
-                    _bd=$(echo "$BENCH_DOMAINS" | awk "{print \$(((_bi - 1) % 5 + 1))}")
-                    _bs1=$(date +%s%N 2>/dev/null || date +%s)
-                    if nslookup "$_bd" "127.0.0.1#${BENCH_PORT}" >/dev/null 2>&1; then
-                        _bs2=$(date +%s%N 2>/dev/null || date +%s)
-                        if [ -n "$_bs1" ] && [ "${#_bs1}" -gt 9 ]; then
-                            _bel=$(( (_bs2 - _bs1) / 1000000 ))
-                        else
-                            _bel=$(( (_bs2 - _bs1) * 1000 ))
-                            [ "$_bel" -eq 0 ] && _bel=1
-                        fi
-                        _bt=$((_bt + _bel)); _bs=$((_bs + 1))
-                    else
-                        _bf=$((_bf + 1))
-                    fi
-                done
-
-                for _kp in $(pidof ctrld 2>/dev/null); do kill "$_kp" 2>/dev/null || true; done
-                sleep 1
-
-                if [ "$_bs" -eq 0 ]; then
-                    printf "  %-18s ${RED}FAILED${RESET}  (0/${BENCH_QUERIES} succeeded)\n" "$BLABEL"
-                    continue
-                fi
-
-                _bavg=$((_bt / _bs))
-
-                if [ "$_bavg" -lt "$BENCH_FASTEST_MS" ]; then
-                    BENCH_FASTEST_MS=$_bavg
+                if [ "$BENCH_AVG" -lt "$BENCH_FASTEST_MS" ]; then
+                    BENCH_FASTEST_MS=$BENCH_AVG
                     BENCH_FASTEST=$BPROTO
-                    printf "  %-18s ${GREEN}%dms${RESET} avg   %d/%d ok   ${DIM}<-- fastest${RESET}\n" "$BLABEL" "$_bavg" "$_bs" "$BENCH_QUERIES"
+                    printf "  %-18s ${GREEN}%dms${RESET} avg   %d/%d ok   ${DIM}<-- fastest${RESET}\n" "$BLABEL" "$BENCH_AVG" "$BENCH_OK" "$BENCH_QUERIES"
                 else
-                    printf "  %-18s ${BOLD}%dms${RESET} avg   %d/%d ok\n" "$BLABEL" "$_bavg" "$_bs" "$BENCH_QUERIES"
+                    printf "  %-18s ${BOLD}%dms${RESET} avg   %d/%d ok\n" "$BLABEL" "$BENCH_AVG" "$BENCH_OK" "$BENCH_QUERIES"
                 fi
             done
 
-            rm -f /tmp/ctrld-bench.toml
+            rm -f "$BENCH_CONF"
 
             if [ -n "$BENCH_FASTEST" ]; then
                 DNS_TYPE="$BENCH_FASTEST"

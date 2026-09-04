@@ -498,11 +498,49 @@ assert_true  "our update job is found"                cron_has /cfg/controld-upd
 printf '%s\n' '*/5 * * * * /cfg/watchdog.sh' >> "$CRONFIX"
 assert_true  "our watchdog is found once present"     cron_has /cfg/watchdog.sh "$CRONFIX"
 
-# and no caller may go back to the loose match
-assert_false "setup.sh does not grep the bare word" \
-    grep -qE "grep -v watchdog|grep -q \"watchdog\"" "$SCRIPT_DIR/setup.sh"
-assert_false "status.sh does not grep the bare word" \
-    grep -q "grep -q 'watchdog'" "$SCRIPT_DIR/status.sh"
+# cron_remove must delete only our entry. "grep -v watchdog" took the router's
+# wireguard_watchdog job with it, and nothing puts that back. Run the real
+# function against a stub crontab and assert on what the crontab ends up as.
+CRONBIN="$TMPDIR/cronbin"
+mkdir -p "$CRONBIN"
+cat > "$CRONBIN/crontab" << 'CRONSTUBEOF'
+#!/bin/sh
+# Minimal crontab over $CRON_STORE: -l lists, - replaces from stdin
+case "${1:-}" in
+    -l) cat "$CRON_STORE" 2>/dev/null ;;
+    -)  cat > "${CRON_STORE}.t" && mv "${CRON_STORE}.t" "$CRON_STORE" ;;
+    *)  exit 1 ;;
+esac
+CRONSTUBEOF
+chmod +x "$CRONBIN/crontab"
+CRON_STORE="$TMPDIR/crontab.store"; export CRON_STORE
+cat > "$CRON_STORE" << 'CRONSTOREEOF'
+0 3 * * * logrotate /etc/logrotate.conf
+* * * * * /usr/bin/wireguard_watchdog
+*/5 * * * * /cfg/watchdog.sh
+0 3 * * 1 /cfg/controld-update.sh
+CRONSTOREEOF
+
+CRON_SAVED_PATH="$PATH"
+PATH="$CRONBIN:$PATH"
+cron_remove /cfg/watchdog.sh
+cron_remove /cfg/controld-update.sh
+CRON_LEFT="$(crontab -l)"
+PATH="$CRON_SAVED_PATH"
+
+assert_contains     "the router's own wireguard_watchdog survives" "$CRON_LEFT" "wireguard_watchdog"
+assert_contains     "unrelated jobs survive"                       "$CRON_LEFT" "logrotate"
+assert_not_contains "our watchdog job is gone"                     "$CRON_LEFT" "/cfg/watchdog.sh"
+assert_not_contains "our update job is gone"                       "$CRON_LEFT" "/cfg/controld-update.sh"
+unset CRON_STORE
+
+# and no caller may go back to the loose match. Scoped to lines that touch the
+# crontab, so status.sh grepping syslog for watchdog messages is not caught.
+for _cs in setup.sh status.sh uninstall.sh reconfigure.sh audit.sh; do
+    assert_eq "${_cs} matches cron jobs by script path, not the bare word" "" \
+        "$(grep -vE '^[[:space:]]*#' "$SCRIPT_DIR/$_cs" \
+           | grep 'crontab' | grep -E '(watchdog|controld-update)' | grep -v '/cfg/')"
+done
 
 describe "preserved_forced_dns() — a re-install must not disable forced DNS"
 

@@ -19,6 +19,15 @@ LIB_DIR="$(dirname "$0")"
     fi
 }
 
+# The redirect port is per-install, not a constant: setup.sh moves off 5354
+# when something else holds it and records the choice as DNS_PORT here. Every
+# other script loads this before touching iptables; this one did not, so on a
+# moved install it deleted rules for 5354 (there are none), left the real
+# redirects in place pointing at a port with nothing behind it, and then
+# reported success — the router's own lookups do not traverse PREROUTING, so
+# even the closing DNS check passed while every LAN client was dark.
+load_env >/dev/null 2>&1 || true
+
 # ── Defaults ──
 
 FORCE=0
@@ -137,7 +146,7 @@ fi
 
 # List iptables rules
 _ipt_count=0
-_ipt_count=$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c "5354" || true)
+_ipt_count=$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c "$DNS_PORT" || true)
 if [ "$_ipt_count" -gt 0 ]; then
     printf "    ${RED}flush${RESET}   iptables: %d DNS redirect rule(s)\n" "$_ipt_count"
 fi

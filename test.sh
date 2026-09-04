@@ -467,6 +467,22 @@ assert_false "rc.local is not in the blind removal list" \
 assert_true "setup backs up a foreign rc.local" \
     grep -q 'rc.local.pre-controld' "$SCRIPT_DIR/setup.sh"
 
+# The redirect port is per-install (setup.sh moves off 5354 when it is taken),
+# so uninstall must read controld.env before it removes anything. Without it,
+# DNS_PORT was lib.sh's 5354 default and a moved install kept every redirect —
+# pointing at a port with nothing behind it. A source assertion because the
+# behaviour needs /cfg, uci and iptables; it checks ordering, not presence,
+# since a load_env below the first use would be no better than none.
+UNINST_LOADS=$(grep -n '^load_env' "$SCRIPT_DIR/uninstall.sh" | head -1 | cut -d: -f1)
+UNINST_USES=$(grep -n 'remove_dns_redirects "' "$SCRIPT_DIR/uninstall.sh" | head -1 | cut -d: -f1)
+UNINST_ORDER=no
+if [ -n "$UNINST_LOADS" ] && [ -n "$UNINST_USES" ] && [ "$UNINST_LOADS" -lt "$UNINST_USES" ]; then
+    UNINST_ORDER=yes
+fi
+assert_eq "uninstall loads the install's config before removing rules" "yes" "$UNINST_ORDER"
+assert_false "uninstall does not hardcode the default port" \
+    grep -qE 'grep -c "5354"|--to-ports 5354' "$SCRIPT_DIR/uninstall.sh"
+
 describe "cron_has() — must not confuse another service's job for ours"
 
 # The router ships "* * * * * /usr/bin/wireguard_watchdog". Matching the bare

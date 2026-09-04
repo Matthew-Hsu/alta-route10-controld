@@ -794,7 +794,7 @@ assert_eq "status.sh does not invoke logread itself" "" \
     "$(grep -vE '^[[:space:]]*#' "$SCRIPT_DIR/status.sh" \
        | grep -E '\$\(logread|logread[[:space:]]*\||^[[:space:]]*logread' || true)"
 assert_true  "status.sh goes through the helper" \
-    grep -q 'log_lines watchdog' "$SCRIPT_DIR/status.sh"
+    grep -q 'log_lines ' "$SCRIPT_DIR/status.sh"
 
 describe "audit.sh — report our own artifacts as ours"
 

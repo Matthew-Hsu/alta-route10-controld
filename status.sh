@@ -28,7 +28,7 @@ Sections displayed:
   upstreams   Each upstream's name and protocol, and split-DNS rule counts
   endpoint    Resolver ID, active and preferred protocol, ctrld version
   cron        Auto-update and watchdog cron entries
-  watchdog    Last few watchdog log entries
+  activity    Recent log lines from this project's own scripts
 EOF
 }
 
@@ -205,18 +205,24 @@ else
     print_fail "No watchdog cron job"
 fi
 
-# ── Watchdog Logs ────────────────────────────────────────────────────────────
+# ── Recent Activity ──────────────────────────────────────────────────────────
 
 if [ -f /cfg/watchdog.sh ]; then
     # The header prints unconditionally now. It used to appear only when
     # logread returned something, so on a router where logread cannot work
     # — the Route 10 runs syslogd without -C — the whole section vanished with
     # no indication that anything had been looked for.
-    print_header "Recent Watchdog Activity"
-    log_entries="$(log_lines watchdog 3 || true)"
+    print_header "Recent ControlD Activity"
+    # Matched on our own syslog tags, with the leading space that a syslog line
+    # puts before the tag. A bare "watchdog" also matched the router's
+    # wireguard_watchdog and crond's "cmd /cfg/watchdog.sh" execution notices,
+    # so this section showed another service's logs under our heading — the
+    # same bare-word trap as the cron guard in 04815f0.
+    log_entries="$(log_lines '[[:space:]](watchdog|post-cfg|rc\.local|controld-update):' 5 || true)"
     if [ -n "$log_entries" ]; then
+        # Drop the hostname and syslog facility; keep the timestamp and tag.
         echo "$log_entries" | while read -r line; do
-            printf "         %s\n" "$(echo "$line" | sed 's/.*watchdog:/watchdog:/')"
+            printf "         %s\n" "$(echo "$line" | sed 's/ [^ ]* [a-z][a-z]*\.[a-z][a-z]* / /')"
         done
     else
         print_info "No watchdog entries found (checked logread and ${LOG_FILES})"

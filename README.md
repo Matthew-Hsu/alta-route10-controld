@@ -69,7 +69,7 @@ sh /tmp/setup.sh --resolver abc123 --protocol doh3
 
 Re-running the installer later is the documented upgrade path, and is safe over
 an existing install: it keeps your forced-DNS choice and any split-DNS policy,
-and leaves a `ctrld` newer than the pinned release alone. You are asked for your
+and leaves a `ctrld` newer than the pinned release alone, provided that binary still runs — one that does not is replaced, so a re-install remains the way to repair a damaged install. You are asked for your
 resolver ID again — it is not read back from the existing install — so have it
 to hand, or pass `--resolver`.
 
@@ -510,7 +510,8 @@ sh test.sh    # works locally and on-router
 - Split-DNS rule writing against every shape a policy table can be in, and policy preservation across a config rewrite
 - Config readouts: upstream names and protocols, MAC and network rule counts
 - Benchmark domain selection and version comparison
-- The generated `watchdog.sh`, extracted from `setup.sh` and executed against stubs in a sandbox — including that a `ctrld` which will not start still reaches the redirect teardown
+- The generated `watchdog.sh` and the installer's config step, extracted from `setup.sh` and executed against a sandbox — that a `ctrld` which will not start still reaches the redirect teardown, and that a re-install carries a split-DNS policy across and retargets it
+- That `lib.sh` carries no function without a caller
 - `--help` and `--version` flags on all scripts
 - Invalid input rejection
 
@@ -570,10 +571,12 @@ Two versions live in `lib.sh` and move independently:
 
 | Variable | Means | Moves when |
 |---|---|---|
-| `VERSION` | version of these scripts | you change the scripts |
+| `VERSION` | version of these scripts | a release is cut on `master`, and tagged |
 | `CTRLD_PIN` | the `ctrld` release a fresh install gets | you deliberately adopt a newer upstream release |
 
-`VERSION` follows semver: **MAJOR** for a change an existing install cannot upgrade into (a config key or file layout that older state cannot be read into), **MINOR** for new capability that upgrades cleanly, **PATCH** for fixes that add no behavior.
+**Branches never bump `VERSION`.** Unmerged work is not released, so a branch that raises it claims a version that does not exist — and two branches that both bump collide on the one line guaranteed to conflict. It moves in a release commit on `master`, paired with a tag, and that tag is what makes the number real. See [CONTRIBUTING.md](CONTRIBUTING.md#releases).
+
+`VERSION` follows semver: **MAJOR** for a change an existing install cannot upgrade into (a config key or file layout that older state cannot be read into), **MINOR** for new capability that upgrades cleanly, **PATCH** for fixes that add no behavior. Pick the number from everything that accumulated since the last tag, not from a single branch.
 
 They used to be one variable, which meant bumping the tools version silently repointed `setup.sh` at a `ctrld` release that does not exist. `test.sh` now asserts they are distinct and that no download URL is built from `VERSION`.
 

@@ -726,6 +726,24 @@ retarget_upstreams "$RT" doh3
 assert_file_contains "round-trips to the DoH form"        "$RT" 'endpoint = "https://dns.controld.com/main1234"'
 assert_file_contains "policy resolver round-trips too"    "$RT" 'endpoint = "https://dns.controld.com/kids5678"'
 
+describe "lib.sh carries no dead code"
+
+# check_port_in_use and proto_port were each defined, documented in a Usage
+# comment, and never called from anywhere — setup.sh carried its own private
+# _port_in_use rather than using the shared one. A library function with no
+# caller still has to be read and maintained, and reads as available API.
+#
+# Every function must be referenced somewhere beyond its own definition and
+# Usage comment: another script, a doc, or a test.
+LIB_DEAD=""
+for _fn in $(grep -oE '^[a-z_][a-z0-9_]*\(\)' "$SCRIPT_DIR/lib.sh" | tr -d '()'); do
+    _refs=$(grep -rhoE "\b${_fn}\b" \
+                --include='*.sh' --include='*.md' --include='*.example' "$SCRIPT_DIR" 2>/dev/null | wc -l)
+    _self=$(grep -cE "^${_fn}\(\)|^# Usage: ${_fn}\b" "$SCRIPT_DIR/lib.sh")
+    [ "$((_refs - _self))" -gt 0 ] || LIB_DEAD="${LIB_DEAD} ${_fn}"
+done
+assert_eq "every lib.sh function has a caller" "" "$LIB_DEAD"
+
 describe "audit.sh — report our own artifacts as ours"
 
 # ctrld.prev is the updater's rollback copy and the README documents it, but it

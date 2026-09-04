@@ -1263,6 +1263,79 @@ for _ks in lib.sh setup.sh reconfigure.sh uninstall.sh benchmark.sh status.sh au
         grep -qE 'kill (-9 )?"\$\(pidof' "$SCRIPT_DIR/$_ks"
 done
 
+describe "start_ctrld() — a timeout in seconds, not one per slow probe"
+
+# `timeout` was an iteration count, and every iteration ran an nslookup against
+# the DNS port. On a Route 10 a query to a closed port costs the resolver's own
+# timeout — about 5s — so start_ctrld(15) took roughly 90 seconds. The watchdog's
+# worst case is one start plus three fallback attempts, which put a full recovery
+# cycle at over six minutes against a five-minute cron interval: instances
+# overlapped, raced over the fail-count file, and the teardown was never reached.
+# Invisible in a sandbox, where a query to a closed local port fails instantly.
+#
+# Both halves of the fix are asserted: no query is made while the port is closed,
+# and a slow query cannot outrun the timeout.
+SC_PROBES="$TMPDIR/start-probes.log"
+
+: > "$SC_PROBES"
+SC_T0=$(date +%s)
+if (
+    DNS_PORT=15354
+    port_in_use() { return 1; }
+    check_dns()   { echo probe >> "$SC_PROBES"; sleep 3; return 1; }
+    nohup()       { :; }
+    start_ctrld /dev/null 2
+); then SC_R=0; else SC_R=1; fi
+SC_ELAPSED=$(( $(date +%s) - SC_T0 ))
+
+assert_eq "a start that never binds is reported as failed" "1" "$SC_R"
+assert_eq "no DNS query is made while the port is closed" "0" \
+    "$(grep -c . "$SC_PROBES" | tr -d ' ')"
+SC_FAST=no; [ "$SC_ELAPSED" -le 6 ] && SC_FAST=yes
+assert_eq "a failed start costs about the timeout, not a probe timeout per iteration" \
+    "yes" "$SC_FAST"
+
+# Port open but the resolver slow to answer: the wall-clock bound must still hold,
+# so the loop stops at the first probe that crosses the deadline rather than
+# running `timeout` probes of unknown cost.
+: > "$SC_PROBES"
+SC_T0=$(date +%s)
+if (
+    DNS_PORT=15354
+    port_in_use() { return 0; }
+    check_dns()   { echo probe >> "$SC_PROBES"; sleep 3; return 1; }
+    nohup()       { :; }
+    start_ctrld /dev/null 2
+); then SC_R=0; else SC_R=1; fi
+SC_ELAPSED=$(( $(date +%s) - SC_T0 ))
+
+assert_eq "a slow probe stops at the deadline, not after timeout probes" "1" \
+    "$(grep -c . "$SC_PROBES" | tr -d ' ')"
+SC_BOUNDED=no; [ "$SC_ELAPSED" -le 6 ] && SC_BOUNDED=yes
+assert_eq "a slow probe cannot outrun the timeout" "yes" "$SC_BOUNDED"
+
+# The success path still works, and costs nothing extra.
+if (
+    DNS_PORT=15354
+    port_in_use() { return 0; }
+    check_dns()   { return 0; }
+    nohup()       { :; }
+    start_ctrld /dev/null 2
+); then SC_R=0; else SC_R=1; fi
+assert_eq "a listener that answers is reported ready" "0" "$SC_R"
+
+# The generated watchdog carries its own copy of start_ctrld for the case where
+# lib.sh is missing. It ran the same unguarded loop, so it needs the same gate —
+# that copy is heredoc text and nothing else in this suite executes it.
+assert_eq "the generated watchdog's inline start_ctrld gates on the port too" "1" \
+    "$(sed -n "/^cat > \/cfg\/watchdog.sh << 'WATCHDOG'/,/^WATCHDOG$/p" "$SCRIPT_DIR/setup.sh" \
+        | grep -c 'port_in_use "$DNS_PORT" && check_dns' | tr -d ' ')"
+
+# setup.sh carried a private _port_in_use with the same two commands. The dead-code
+# scan only catches an unused function, not a duplicated one.
+assert_false "setup.sh no longer carries a private copy of the port check" \
+    grep -q '_port_in_use()' "$SCRIPT_DIR/setup.sh"
+
 describe "list_upstreams() / policy_rule_count() — what the readouts report"
 
 # status.sh and reconfigure.sh --show both walked upstream blocks with

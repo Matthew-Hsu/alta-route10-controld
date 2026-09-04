@@ -726,6 +726,73 @@ retarget_upstreams "$RT" doh3
 assert_file_contains "round-trips to the DoH form"        "$RT" 'endpoint = "https://dns.controld.com/main1234"'
 assert_file_contains "policy resolver round-trips too"    "$RT" 'endpoint = "https://dns.controld.com/kids5678"'
 
+describe "carry_policy_blocks() — a config rewrite must not drop split DNS"
+
+# setup.sh Step 5 overwrote ctrld.toml outright, with no backup and no
+# carry-over, so a re-install deleted every policy upstream, network block and
+# routing rule — on the operation the README calls "always safe", and silently
+# in the non-interactive form, which never reaches the wizard.
+CPB_OLD="$TMPDIR/carry-old.toml"
+write_ctrld_config "$CPB_OLD" old123 76.76.2.22 doh3
+cat >> "$CPB_OLD" << 'CPBEOF'
+
+[upstream.1]
+    bootstrap_ip = "76.76.2.22"
+    endpoint = "https://dns.controld.com/kids5678"
+    name = "ControlD-Kids"
+    type = "doh3"
+
+[network.1]
+    cidrs = ["192.168.10.0/24"]
+    name = "Kids"
+
+[listener.0.policy]
+    name = "Split DNS Policy"
+    networks = [
+    {"network.1" = ["upstream.1"]},
+    ]
+CPBEOF
+
+# What a re-install does: regenerate from scratch, then carry the rest across.
+CPB_NEW="$TMPDIR/carry-new.toml"
+write_ctrld_config "$CPB_NEW" new456 76.76.2.22 doq
+assert_true "something is carried when a policy exists" \
+    carry_policy_blocks "$CPB_NEW" "$CPB_OLD"
+retarget_upstreams "$CPB_NEW" doq
+
+assert_eq "the policy upstream survives"      "2" "$(list_upstreams "$CPB_NEW" | wc -l | tr -d ' ')"
+assert_eq "its routing rule survives"         "1" "$(policy_rule_count "$CPB_NEW" network)"
+assert_file_contains "the network block survives" "$CPB_NEW" 'cidrs = \["192.168.10.0/24"\]'
+assert_file_contains "the new main resolver is in place" "$CPB_NEW" 'endpoint = "new456.dns.controld.com"'
+# A profile's resolver is its identity: the rewrite moves transports, never IDs.
+assert_file_contains "the policy keeps its own resolver" "$CPB_NEW" 'endpoint = "kids5678.dns.controld.com"'
+assert_eq "both upstreams moved to the new transport" "2" \
+    "$(grep -c 'type = "doq"' "$CPB_NEW" | tr -d ' ')"
+assert_eq "exactly one policy table" "1" \
+    "$(grep -c '^\[listener.0.policy\]' "$CPB_NEW" | tr -d ' ')"
+assert_eq "the old main resolver is gone" "0" \
+    "$(grep -c 'old123' "$CPB_NEW" | tr -d ' ')"
+
+# A plain config has nothing to carry, and the caller must be able to tell.
+CPB_PLAIN="$TMPDIR/carry-plain.toml"
+CPB_TARGET="$TMPDIR/carry-target.toml"
+write_ctrld_config "$CPB_PLAIN" abc123 76.76.2.22 doh3
+write_ctrld_config "$CPB_TARGET" abc123 76.76.2.22 doh3
+assert_false "nothing to carry from a policy-free config" \
+    carry_policy_blocks "$CPB_TARGET" "$CPB_PLAIN"
+assert_false "a missing source is not an error to report as carried" \
+    carry_policy_blocks "$CPB_TARGET" "$TMPDIR/no-such.toml"
+
+# setup.sh must take the backup and use it, and must not then run the wizard
+# over a carried policy — two [listener.0.policy] tables is invalid TOML and
+# ctrld would not start at all.
+assert_true "setup.sh backs ctrld.toml up before rewriting it" \
+    grep -q 'cp /cfg/ctrld.toml /cfg/ctrld.toml.bak' "$SCRIPT_DIR/setup.sh"
+assert_true "setup.sh carries the policy across" \
+    grep -q 'carry_policy_blocks /cfg/ctrld.toml /cfg/ctrld.toml.bak' "$SCRIPT_DIR/setup.sh"
+assert_true "setup.sh skips the wizard when a policy was carried" \
+    grep -q 'if \[ "$CARRIED_POLICY" = "1" \]' "$SCRIPT_DIR/setup.sh"
+
 describe "policy_add_rule() — a reported rule must actually be in the file"
 
 # The callers anchored an insert on the list header, so adding the first rule

@@ -359,6 +359,33 @@ policy_rule_count() {
     printf '%s' "$_prc_n"
 }
 
+# Carry the split-DNS tables of <source> into a freshly written <target>.
+#
+# Whole tables, in TOML order: the extra upstreams and networks first, then the
+# policy that references them. (Copying just the header lines, as reconfigure
+# once did, left ctrld with empty [upstream.N] tables and a policy pointing at
+# nothing.) Returns 0 when something was carried, 1 when there was nothing to
+# carry — so a caller can stay quiet on a config that never had policies.
+#
+# The caller retargets afterwards: preserved upstreams still carry the old
+# protocol, and leaving them means a policy keeps using a transport the user
+# just moved off, failing for exactly the devices the policy targets.
+# Usage: carry_policy_blocks <target-config> <source-config>
+carry_policy_blocks() {
+    _cpb_target="$1"; _cpb_source="$2"
+    [ -f "$_cpb_source" ] || return 1
+    _cpb_up="$(toml_blocks "$_cpb_source" '[upstream.' '[upstream.0]')"
+    _cpb_net="$(toml_blocks "$_cpb_source" '[network.' '[network.0]')"
+    _cpb_pol="$(toml_blocks "$_cpb_source" '[listener.0.policy]')"
+    [ -n "$_cpb_up" ] || [ -n "$_cpb_net" ] || [ -n "$_cpb_pol" ] || return 1
+    {
+        [ -z "$_cpb_up" ]  || printf '\n%s\n' "$_cpb_up"
+        [ -z "$_cpb_net" ] || printf '\n%s\n' "$_cpb_net"
+        [ -z "$_cpb_pol" ] || printf '\n%s\n' "$_cpb_pol"
+    } >> "$_cpb_target"
+    return 0
+}
+
 # Add one split-DNS rule, creating whatever structure is missing.
 #
 # The callers anchored an insert on the list header — sed "/^    macs = \[/a..."

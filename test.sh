@@ -755,6 +755,47 @@ for _fn in $(grep -oE '^[a-z_][a-z0-9_]*\(\)' "$SCRIPT_DIR/lib.sh" | tr -d '()')
 done
 assert_eq "every lib.sh function has a caller" "" "$LIB_DEAD"
 
+describe "log_lines() — logread is not available on every router"
+
+# logread reads the shared-memory ring buffer that syslogd -C creates. The
+# Route 10 runs `syslogd -n -b 2 -t -u` — no -C — so logread fails outright and
+# every logger call this project makes appeared lost. They are not: syslogd
+# defaults to a file. status.sh printed no watchdog section at all there, with
+# nothing to say it had looked.
+LL_DIR="$TMPDIR/logs"; mkdir -p "$LL_DIR"
+printf 'Sep 4 12:00 h watchdog: added DNS redirect rules\nSep 4 12:05 h watchdog: ctrld will not start\nSep 4 12:06 h other: noise\n' > "$LL_DIR/messages"
+LL_BIN="$TMPDIR/logbin"; mkdir -p "$LL_BIN"
+
+# A router where logread cannot work
+printf '#!/bin/sh\necho "logread: can%s find syslogd buffer" >&2\nexit 1\n' "'t" > "$LL_BIN/logread"
+chmod +x "$LL_BIN/logread"
+LL_OUT="$(PATH="$LL_BIN:$PATH" LOG_FILES="$LL_DIR/messages" sh -c ". '$SCRIPT_DIR/lib.sh'; log_lines watchdog 5")"
+assert_contains "falls back to the syslog file"   "$LL_OUT" "added DNS redirect rules"
+assert_contains "and finds the F-01 log line"     "$LL_OUT" "ctrld will not start"
+assert_not_contains "the pattern still filters"   "$LL_OUT" "noise"
+assert_eq "the count is honoured" "1" \
+    "$(PATH="$LL_BIN:$PATH" LOG_FILES="$LL_DIR/messages" sh -c ". '$SCRIPT_DIR/lib.sh'; log_lines watchdog 1" | wc -l | tr -d ' ')"
+
+# A router where it does work: logread wins, the file is not consulted
+printf '#!/bin/sh\necho "Sep 4 13:00 h watchdog: from the ring buffer"\n' > "$LL_BIN/logread"
+chmod +x "$LL_BIN/logread"
+LL_OUT2="$(PATH="$LL_BIN:$PATH" LOG_FILES="$LL_DIR/messages" sh -c ". '$SCRIPT_DIR/lib.sh'; log_lines watchdog 5")"
+assert_contains     "logread is preferred when it works" "$LL_OUT2" "from the ring buffer"
+assert_not_contains "and the file is not read as well"   "$LL_OUT2" "added DNS redirect rules"
+
+# Neither source available
+assert_false "reports failure when there is no log at all" \
+    sh -c "PATH='$LL_BIN:\$PATH' LOG_FILES='$TMPDIR/no-such-log' sh -c \". '$SCRIPT_DIR/lib.sh'; logread() { return 1; }; log_lines watchdog\""
+
+# An actual invocation — command substitution or a pipe — not the word. The
+# comment above the call and the "checked logread and ..." message both name it
+# on purpose, and matching those would fail for the wrong reason.
+assert_eq "status.sh does not invoke logread itself" "" \
+    "$(grep -vE '^[[:space:]]*#' "$SCRIPT_DIR/status.sh" \
+       | grep -E '\$\(logread|logread[[:space:]]*\||^[[:space:]]*logread' || true)"
+assert_true  "status.sh goes through the helper" \
+    grep -q 'log_lines watchdog' "$SCRIPT_DIR/status.sh"
+
 describe "audit.sh — report our own artifacts as ours"
 
 # ctrld.prev is the updater's rollback copy and the README documents it, but it

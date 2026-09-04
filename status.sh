@@ -208,12 +208,18 @@ fi
 # ── Watchdog Logs ────────────────────────────────────────────────────────────
 
 if [ -f /cfg/watchdog.sh ]; then
-    log_entries=$(logread 2>/dev/null | grep watchdog | tail -3)
+    # The header prints unconditionally now. It used to appear only when
+    # logread returned something, so on a router where logread cannot work
+    # — the Route 10 runs syslogd without -C — the whole section vanished with
+    # no indication that anything had been looked for.
+    print_header "Recent Watchdog Activity"
+    log_entries="$(log_lines watchdog 3 || true)"
     if [ -n "$log_entries" ]; then
-        print_header "Recent Watchdog Activity"
         echo "$log_entries" | while read -r line; do
             printf "         %s\n" "$(echo "$line" | sed 's/.*watchdog:/watchdog:/')"
         done
+    else
+        print_info "No watchdog entries found (checked logread and ${LOG_FILES})"
     fi
 fi
 

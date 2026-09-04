@@ -82,8 +82,21 @@ Look for `ctrld will not start` in the log below: that means the binary or
 
 **Fix:** get ctrld running again — the rules restore themselves within 5 minutes.
 
+> **Reading the logs on a Route 10.** `logread` does not work on this firmware:
+> it reads the shared-memory buffer that `syslogd -C` creates, and Alta runs
+> `syslogd -n -b 2 -t -u` without it, so it fails with *"can't find syslogd
+> buffer"*. Nothing is lost — syslogd writes to a file instead:
+>
+> ```sh
+> grep -E 'ctrld|watchdog|post-cfg|controld-update' /tmp/log/messages | tail -30
+> ```
+>
+> `/var/log/messages` is the same file via a symlink, and `-b 2` keeps
+> `messages.0` and `messages.1` as rotated history. `status.sh` handles this
+> automatically and shows recent watchdog entries either way.
+
 ```sh
-logread | grep -E 'ctrld|watchdog|controld-update' | tail -30
+sh /cfg/status.sh            # includes the last few watchdog entries
 /cfg/ctrld --version          # is the binary intact?
 sh /cfg/watchdog.sh           # force a health cycle
 ```

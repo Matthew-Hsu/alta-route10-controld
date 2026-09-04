@@ -123,16 +123,6 @@ proto_label() {
     esac
 }
 
-# Port used by a protocol (443 = robust/HTTPS; 853 = blockable DNS port)
-# Usage: proto_port <type>
-proto_port() {
-    case "$1" in
-        doh3|doh) printf "443" ;;
-        doq|dot)  printf "853" ;;
-        *)        printf "?" ;;
-    esac
-}
-
 # Get next protocol in fallback chain
 # Usage: next_proto <current_type>
 next_proto() {
@@ -724,19 +714,6 @@ start_ctrld() {
 restart_ctrld() {
     stop_ctrld
     start_ctrld "$@"
-}
-
-# ── Port Detection ──
-
-# Check if a TCP/UDP port is already in use
-# Usage: check_port_in_use <port>
-check_port_in_use() {
-    local port="${1:-$DNS_PORT}"
-    netstat -tulnp 2>/dev/null | grep -q ":${port} " && return 0
-    if command -v ss >/dev/null 2>&1; then
-        ss -tulnp 2>/dev/null | grep -q ":${port} " && return 0
-    fi
-    return 1
 }
 
 # Was /cfg/rc.local written by this project?

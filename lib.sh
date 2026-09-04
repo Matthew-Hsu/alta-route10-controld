@@ -464,7 +464,7 @@ ${_rtu_line}"
 
 # Kill any running ctrld process
 stop_ctrld() {
-    kill "$(pidof ctrld 2>/dev/null)" 2>/dev/null || true
+    for _kp in $(pidof ctrld 2>/dev/null); do kill "$_kp" 2>/dev/null || true; done
     sleep 1
 }
 

@@ -836,6 +836,37 @@ cron_remove() {
     crontab -l 2>/dev/null | grep -vF "$1" | crontab - 2>/dev/null || true
 }
 
+# ── Syslog ──
+
+# Where BusyBox syslogd writes when it was not given -C. /var/log is a symlink
+# to /tmp/log on OpenWrt, so both usually name the same file; try each.
+LOG_FILES="${LOG_FILES:-/var/log/messages /tmp/log/messages}"
+
+# Recent syslog lines matching a pattern, oldest first.
+#
+# logread only works when syslogd was started with -C, which creates the
+# shared-memory ring buffer it reads. The Route 10 runs
+# `syslogd -n -b 2 -t -u` — no -C — so logread fails outright with "can't find
+# syslogd buffer", and every logger call this project makes looked lost. They
+# are not: syslogd defaults to a file, and -b 2 rotates it. status.sh silently
+# printed no watchdog section at all on that firmware, and troubleshooting.md
+# opened with a logread command that could never work there.
+# Usage: log_lines <extended-regex> [count]
+log_lines() {
+    _ll_pat="$1"; _ll_n="${2:-20}"
+    _ll_out="$(logread 2>/dev/null || true)"
+    if [ -z "$_ll_out" ]; then
+        for _ll_f in $LOG_FILES; do
+            if [ -f "$_ll_f" ]; then
+                _ll_out="$(cat "$_ll_f" 2>/dev/null || true)"
+                break
+            fi
+        done
+    fi
+    [ -n "$_ll_out" ] || return 1
+    printf '%s\n' "$_ll_out" | grep -E "$_ll_pat" 2>/dev/null | tail -n "$_ll_n"
+}
+
 # ── Health Checks ──
 
 # Test DNS resolution

@@ -73,12 +73,23 @@ CI runs exactly these.
 
 ## Testing on hardware
 
-The unit suite runs anywhere; iptables and firewall behavior is stubbed. Three
-bugs in this repo's history were invisible to CI and only appeared on the
-router: BusyBox awk mangling a regex, a cron guard matching another service's
-job, and a config flag reset on re-install. **Anything touching iptables, cron,
-`/etc/firewall.user` or boot persistence must be exercised on a real device,
-including a reboot**, before it is called done.
+The unit suite runs anywhere; iptables and firewall behavior is stubbed. Every
+bug in this repo's history that CI could not see appeared on the router first:
+BusyBox awk mangling a regex, a cron guard matching another service's job, a
+config flag reset on re-install, `logread` failing on firmware whose syslogd
+has no buffer, and a wait loop that was fast in a sandbox and pathological on
+hardware. **Anything touching iptables, cron, `/etc/firewall.user` or boot
+persistence must be exercised on a real device, including a reboot**, before it
+is called done.
+
+**Time is one of the things a sandbox gets wrong.** A loop bounded by iteration
+count rather than wall clock is only as fast as its slowest probe, and probe
+costs differ by an order of magnitude between CI and a router: a DNS query to a
+closed local port returns instantly in a container and costs the resolver's
+full timeout on a Route 10. That turned a "15 second" wait into 90 seconds, put
+the watchdog's recovery cycle over its own cron interval, and let instances
+overlap and corrupt each other's state — none of it visible in a green suite.
+Bound waits by time, and assert on elapsed time rather than on iterations.
 
 On the router:
 

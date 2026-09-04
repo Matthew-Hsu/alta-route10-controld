@@ -101,6 +101,21 @@ sh /cfg/status.sh            # includes the last few watchdog entries
 sh /cfg/watchdog.sh           # force a health cycle
 ```
 
+A forced cycle on a broken ctrld is not instant: it restarts once, then walks
+the whole fallback chain, which takes roughly a minute in total. It is not
+hung — let it finish. Interrupting it stops the run before the redirect
+teardown, which is the part that gets DNS back for your clients. Two cycles
+are needed in all, because the first only increments the debounce counter.
+
+Note that `nslookup` **from the router** proves nothing about your LAN: the
+router's own queries never traverse `PREROUTING`, so they resolve through
+dnsmasq whatever state the redirects are in. Test from a client, or aim at
+ctrld directly:
+
+```sh
+nslookup google.com 127.0.0.1#5354   # is ctrld itself answering?
+```
+
 If a bad auto-update caused it, `/cfg/ctrld.prev` is the previously working
 binary; the updater restores it automatically, but you can do it by hand:
 
@@ -274,7 +289,9 @@ clean up afterwards, with two things worth knowing:
   `setup.sh`; since 2dbfa2a it is part of the resolver change.)
 - **A failed change can leave `/cfg/ctrld.toml.bak`**, the rollback copy, which
   still contains the old ID. It is removed automatically on success;
-  `audit.sh` reports it if one survives.
+  `audit.sh` reports it if one survives. An interrupted watchdog recovery can
+  leave `/cfg/ctrld.toml.fallback` the same way; the next healthy cycle removes
+  it, and `audit.sh` names it meanwhile.
 
 Verify with `sh /cfg/status.sh` (shows the active resolver ID) and then delete
 the old profile in the ControlD dashboard — until you do, the old ID still

@@ -20,9 +20,11 @@ environment almost certainly has none of that.
 - The generated `watchdog.sh` is the exception: the suite extracts it from
   `setup.sh`, redirects its `/cfg` and `/tmp` paths into a sandbox and runs it
   against stubs, so its control flow *can* be tested off-device. What it does
-  to iptables still cannot. Three
-  real bugs in this project's history were invisible to CI and only surfaced
-  on hardware (see `CONTRIBUTING.md`'s "Testing on hardware").
+  to iptables still cannot, and neither is how long anything takes: probe costs
+  differ by an order of magnitude between a container and a router, which is how
+  a wait loop bounded by iterations passed CI and ran six times too slow on
+  hardware. Every bug in this project's history that CI could not see surfaced
+  on hardware first (see `CONTRIBUTING.md`'s "Testing on hardware").
 - Run the suite under both awks before proposing a change:
   `sh test.sh` and `AWK="busybox awk" sh test.sh`. They disagree often enough
   that this has caught real regressions that a GNU-awk-only run missed.

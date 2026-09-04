@@ -94,24 +94,13 @@ apply_and_restart() {
     # the extra upstreams and networks first, then the policy that references
     # them. (Copying just the header lines, as this used to, left ctrld with
     # empty [upstream.N] tables and a policy pointing at nothing.)
-    if [ -f /cfg/ctrld.toml.bak ]; then
-        local extra_up extra_net policy
-        extra_up="$(toml_blocks /cfg/ctrld.toml.bak '[upstream.' '[upstream.0]')"
-        extra_net="$(toml_blocks /cfg/ctrld.toml.bak '[network.' '[network.0]')"
-        policy="$(toml_blocks /cfg/ctrld.toml.bak '[listener.0.policy]')"
-        if [ -n "$extra_up" ] || [ -n "$extra_net" ] || [ -n "$policy" ]; then
-            {
-                if [ -n "$extra_up" ];  then printf '\n%s\n' "$extra_up";  fi
-                if [ -n "$extra_net" ]; then printf '\n%s\n' "$extra_net"; fi
-                if [ -n "$policy" ];    then printf '\n%s\n' "$policy";    fi
-            } >> /cfg/ctrld.toml
-            print_info "Split DNS policy config preserved"
-            # Preserved upstreams still carry the old protocol. Leaving them
-            # there means a policy keeps using a transport the user just moved
-            # off — failing for exactly the devices the policy targets.
-            retarget_upstreams /cfg/ctrld.toml "$DNS_TYPE"
-            print_info "Policy upstreams moved to $(proto_label "$DNS_TYPE")"
-        fi
+    if carry_policy_blocks /cfg/ctrld.toml /cfg/ctrld.toml.bak; then
+        print_info "Split DNS policy config preserved"
+        # Preserved upstreams still carry the old protocol. Leaving them there
+        # means a policy keeps using a transport the user just moved off —
+        # failing for exactly the devices the policy targets.
+        retarget_upstreams /cfg/ctrld.toml "$DNS_TYPE"
+        print_info "Policy upstreams moved to $(proto_label "$DNS_TYPE")"
     fi
 
     # Update env file

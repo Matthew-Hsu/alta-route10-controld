@@ -405,7 +405,25 @@ print_ok "/cfg/controld.env written"
 
 # ── Step 5: Write ctrld.toml ──
 
+# A re-install used to overwrite this outright, with no backup and no
+# carry-over, so every policy upstream, network block and routing rule was
+# gone — on the operation the README calls always safe and the documented
+# upgrade path, and silently in the non-interactive form, which never reaches
+# the wizard below. reconfigure.sh has preserved these across a rewrite since
+# bc9fafd; setup.sh now uses the same carry-over.
+CARRIED_POLICY=0
+if [ -f /cfg/ctrld.toml ]; then
+    cp /cfg/ctrld.toml /cfg/ctrld.toml.bak
+fi
 write_ctrld_config /cfg/ctrld.toml "$RESOLVER_ID" "$BOOTSTRAP_IP" "$DNS_TYPE"
+if [ -f /cfg/ctrld.toml.bak ] && carry_policy_blocks /cfg/ctrld.toml /cfg/ctrld.toml.bak; then
+    CARRIED_POLICY=1
+    # Carried upstreams keep their own resolver but still name the old
+    # transport, so move them onto the protocol being installed.
+    retarget_upstreams /cfg/ctrld.toml "$DNS_TYPE"
+    print_ok "Existing split DNS policy preserved (upstreams moved to ${PLABEL})"
+fi
+rm -f /cfg/ctrld.toml.bak
 print_ok "/cfg/ctrld.toml written (${PLABEL})"
 
 # ── Step 6: Write self-healing post-cfg.sh ──
@@ -617,7 +635,13 @@ print_info "Requires multiple resolver IDs from your ControlD dashboard."
 printf "\n"
 
 DO_SPLIT=""
-if [ -z "$FLAG_RESOLVER" ]; then
+if [ "$CARRIED_POLICY" = "1" ]; then
+    # The wizard writes a whole [listener.0.policy] table. Running it over a
+    # policy just carried across would produce a second one, which is invalid
+    # TOML and would stop ctrld from starting at all.
+    print_info "Your existing policy was kept. To change it, use:"
+    print_info "  sh /cfg/reconfigure.sh --policy"
+elif [ -z "$FLAG_RESOLVER" ]; then
     printf "  Configure split DNS policies? [y/N]: "
     read -r DO_SPLIT
 fi

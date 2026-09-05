@@ -22,6 +22,7 @@ Encrypted DNS with per-device visibility on the Alta Labs Route 10 router using 
 ## Table of Contents
 
 - [Get Started](#get-started)
+- [Not Supported](#not-supported)
 - [Installing via an AI Agent](#installing-via-an-ai-agent)
 - [Everyday Use](#everyday-use)
 - [Troubleshooting](#troubleshooting)
@@ -45,7 +46,9 @@ help, and falls back to a still-encrypted resolver if something goes wrong.
 
 > Split DNS, non-default ports and a few other paths pass the test suite but
 > have not been run on a real router. See [Verification
-> Status](#verification-status) before relying on them.
+> Status](#verification-status) before relying on them. **DNS interception is
+> IPv4-only** — that and the project's other limits are in [Not
+> Supported](#not-supported).
 
 ### Prerequisites
 
@@ -82,6 +85,41 @@ DNS is running through ControlD within about a minute. For split DNS per
 device, blocking smart-TV DNS bypass, or benchmarking protocols, see
 [Technical Details](#technical-details). If something isn't working, see
 [Troubleshooting](#troubleshooting).
+
+## Not Supported
+
+[Verification Status](#verification-status) covers what has not been *proven*.
+This covers what is not *there*. Check here before filing a bug — one of these
+may already explain what you are seeing.
+
+### IPv6
+
+**DNS interception is IPv4-only.** Everything this project redirects, it
+redirects over IPv4.
+
+- **IPv6 sites work normally.** AAAA lookups resolve like any other record.
+  This is about DNS *carried over* IPv6, not IPv6 addresses in answers.
+- **A device that asks the router for DNS over IPv6 loses its identity.** Its
+  queries still reach ControlD encrypted and on your profile, but they arrive
+  attributed to the router rather than the device, and they skip any split-DNS
+  rule you set for it. Nothing warns you: `status.sh` and `audit.sh` do not
+  look at IPv6, so a clean report does not rule this out.
+- **A device hardcoded to an IPv6 resolver bypasses ControlD entirely.**
+  Forced DNS cannot catch it. This is the only case here where a query leaves
+  your network to somewhere that is not ControlD.
+
+To close it, stop the router handing clients an IPv6 resolver. That is a
+router setting this project does not manage.
+
+### Everything else
+
+| You might want | What actually happens |
+|---|---|
+| **Routing a device by name** | Devices are matched by MAC address or by subnet. The names in the ControlD dashboard come from discovery and cannot be used as a rule target. Watch for phones using a private or randomised Wi-Fi address: the MAC changes and the device silently stops matching its rule. |
+| **Catching a device that uses DoH** | Forced DNS catches plain DNS (port 53) and DoT (port 853). DoH is indistinguishable from ordinary HTTPS on port 443 and cannot be redirected without breaking the web. Most TVs and IoT gear use DoT, so this is a minority — but a browser set to DoH is out of reach. |
+| **Encrypted DNS from your devices to the router** | Clients speak plain DNS to the router; encryption starts there, on the way out to ControlD. You cannot point a laptop at the router over DoH or DoT. |
+| **Coverage of something that is not a LAN bridge** | Interception follows the router's LAN and VLAN bridges. A WireGuard tunnel, or anything else the router does not present as a LAN bridge, is not intercepted. |
+| **Hand-tuning `/cfg/ctrld.toml`** | Extra upstreams and your split-DNS policy are preserved, but the rest of the file is regenerated on every protocol change, watchdog fallback and re-install. Edits to cache size, log level or the listener will not survive. |
 
 ## Installing via an AI Agent
 
@@ -180,7 +218,9 @@ See [docs/troubleshooting.md](docs/troubleshooting.md).
 
 This project is developed against one router. The test suite runs anywhere, but
 iptables, cron and boot persistence can only be proven on a device — so it is
-worth being explicit about which is which.
+worth being explicit about which is which. This section is about confidence in
+what is here — for capabilities and workflows this project does not support at
+all, see [Not Supported](#not-supported) near the top of this document.
 
 **Verified on hardware.** An Alta Labs Route 10 (BusyBox v1.33.1), six LAN
 bridges, forced DNS enabled, `ctrld` 1.5.7 over DoH3, across five
@@ -522,6 +562,10 @@ When enabled:
 - `status.sh` reports the forced DNS state and active hijack rules
 
 **Note:** DNS-over-HTTPS (DoH, port 443) cannot be redirected without breaking all HTTPS traffic. Most TVs and IoT devices use DoT rather than DoH, so forced DNS catches the majority of bypass attempts.
+
+**Also not caught: DNS over IPv6.** Both redirects are IPv4-only, so a device
+pointed at a hardcoded IPv6 resolver reaches it directly whether forced DNS is
+on or not. See [Not Supported](#not-supported).
 
 #### Benchmark
 

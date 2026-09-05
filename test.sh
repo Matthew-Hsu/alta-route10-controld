@@ -951,6 +951,60 @@ assert_eq "status.sh does not invoke logread itself" "" \
 assert_true  "status.sh goes through the helper" \
     grep -q 'log_lines ' "$SCRIPT_DIR/status.sh"
 
+# A rotated syslog must not blank the section. syslogd -b N moves the live file
+# to <file>.0 and starts a new one, so on a router that logs steadily the event
+# you are looking for can be in .0 minutes after it happened. Reading only the
+# live file showed "no entries found" with the history sitting right next to it
+# — and docs/troubleshooting.md already claimed status.sh handled these files.
+LR_DIR="$TMPDIR/log-rotate"
+mkdir -p "$LR_DIR"
+printf 'Sep 4 10:00 h watchdog: oldest, in messages.1\n' > "$LR_DIR/messages.1"
+printf 'Sep 4 11:00 h watchdog: rotated, in messages.0\n' > "$LR_DIR/messages.0"
+printf 'Sep 4 12:00 h watchdog: live, in messages\n'      > "$LR_DIR/messages"
+
+LR_OUT="$(LOG_FILES="$LR_DIR/messages" log_lines watchdog 10)"
+assert_contains "the live file is still read"        "$LR_OUT" "live, in messages"
+assert_contains "and the most recent rotated file"   "$LR_OUT" "rotated, in messages.0"
+assert_contains "and the one before that"            "$LR_OUT" "oldest, in messages.1"
+assert_eq       "all three lines, none duplicated"   "3" "$(printf '%s\n' "$LR_OUT" | grep -c . | tr -d ' ')"
+assert_eq       "oldest first, so tail keeps the newest" "live, in messages" \
+    "$(printf '%s\n' "$LR_OUT" | tail -1 | sed 's/.*watchdog: //')"
+
+# An event only in the rotated file must still be found — the case the router hit.
+rm -f "$LR_DIR/messages.0" "$LR_DIR/messages.1"
+printf 'Sep 4 11:00 h watchdog: added DNS redirect rules\n' > "$LR_DIR/messages.0"
+printf 'Sep 5 00:00 h crond: something else entirely\n'     > "$LR_DIR/messages"
+LR_OUT2="$(LOG_FILES="$LR_DIR/messages" log_lines watchdog 10 || true)"
+assert_contains "an event that has already rotated is still reported" \
+    "$LR_OUT2" "added DNS redirect rules"
+
+# Every tag this project logs under must be covered by status.sh's activity
+# filter. forced-dns and controld were not, so the lines a restore cycle emits —
+# the port-853 rules and the firewall.user rewrite — were invisible under a
+# heading that claims to show our activity. Derived from the sources rather than
+# hardcoded, so a tag added later cannot go missing the same way.
+SL_PAT="$(sed -n "s/.*log_lines '\([^']*\)'.*/\1/p" "$SCRIPT_DIR/status.sh")"
+assert_true "status.sh has an activity filter to check" test -n "$SL_PAT"
+for _sl_tag in $(grep -rho 'logger -t [A-Za-z0-9._-]*' "$SCRIPT_DIR"/*.sh \
+                 | sed 's/logger -t //' | sort -u); do
+    if printf ' %s: message body\n' "$_sl_tag" | grep -qE "$SL_PAT"; then
+        _sl_hit=yes
+    else
+        _sl_hit=no
+    fi
+    assert_eq "the activity filter covers our '${_sl_tag}' tag" "yes" "$_sl_hit"
+done
+
+# And still not another service's. These are the lines that made 92e5dec
+# necessary; widening the tag list must not have let them back in.
+for _sl_bad in 'Sep 4 12:00 h user.notice wireguard_watchdog: peer down' \
+               'Sep 4 12:00 h cron.info crond: USER root pid 123 cmd /cfg/watchdog.sh' \
+               'Sep 4 12:00 h daemon.info ctrld: [INFO] serving' ; do
+    if printf '%s\n' "$_sl_bad" | grep -qE "$SL_PAT"; then _sl_hit=yes; else _sl_hit=no; fi
+    assert_eq "another service's line is still excluded: $(printf '%s' "$_sl_bad" | sed 's/.* \([a-z_]*\):.*/\1/')" \
+        "no" "$_sl_hit"
+done
+
 describe "audit.sh — report our own artifacts as ours"
 
 # ctrld.prev is the updater's rollback copy and the README documents it, but it

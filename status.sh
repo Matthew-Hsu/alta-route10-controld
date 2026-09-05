@@ -214,18 +214,24 @@ if [ -f /cfg/watchdog.sh ]; then
     # no indication that anything had been looked for.
     print_header "Recent ControlD Activity"
     # Matched on our own syslog tags, with the leading space that a syslog line
-    # puts before the tag. A bare "watchdog" also matched the router's
-    # wireguard_watchdog and crond's "cmd /cfg/watchdog.sh" execution notices,
-    # so this section showed another service's logs under our heading — the
-    # same bare-word trap as the cron guard in 04815f0.
-    log_entries="$(log_lines '[[:space:]](watchdog|post-cfg|rc\.local|controld-update):' 5 || true)"
+    # puts before the tag, and the colon that closes it. A bare "watchdog" also
+    # matched the router's wireguard_watchdog and crond's "cmd /cfg/watchdog.sh"
+    # execution notices, so this section showed another service's logs under our
+    # heading — the same bare-word trap as the cron guard in 04815f0.
+    #
+    # Every tag this project logs under has to be here. forced-dns and controld
+    # were missing, so a cycle that restored the port-853 rules or rewrote
+    # firewall.user showed nothing under a heading claiming to list our
+    # activity. The suite derives the tag list from the sources and fails if one
+    # is not covered, so a new tag cannot go missing the same way.
+    log_entries="$(log_lines '[[:space:]](watchdog|post-cfg|rc\.local|controld-update|forced-dns|controld):' 5 || true)"
     if [ -n "$log_entries" ]; then
         # Drop the hostname and syslog facility; keep the timestamp and tag.
         echo "$log_entries" | while read -r line; do
             printf "         %s\n" "$(echo "$line" | sed 's/ [^ ]* [a-z][a-z]*\.[a-z][a-z]* / /')"
         done
     else
-        print_info "No watchdog entries found (checked logread and ${LOG_FILES})"
+        print_info "No entries found (checked logread, ${LOG_FILES} and their rotated history)"
     fi
 fi
 

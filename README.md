@@ -26,6 +26,7 @@ Encrypted DNS with per-device visibility on the Alta Labs Route 10 router using 
 - [Everyday Use](#everyday-use)
 - [Troubleshooting](#troubleshooting)
 - [Verification Status](#verification-status)
+- [Not Supported](#not-supported)
 - [Security](#security)
 - [Technical Details](#technical-details)
   - [Reference](#reference)
@@ -45,7 +46,9 @@ help, and falls back to a still-encrypted resolver if something goes wrong.
 
 > Split DNS, non-default ports and a few other paths pass the test suite but
 > have not been run on a real router. See [Verification
-> Status](#verification-status) before relying on them.
+> Status](#verification-status) before relying on them. **DNS interception is
+> IPv4-only** — that and the project's other limits are in [Not
+> Supported](#not-supported).
 
 ### Prerequisites
 
@@ -180,7 +183,9 @@ See [docs/troubleshooting.md](docs/troubleshooting.md).
 
 This project is developed against one router. The test suite runs anywhere, but
 iptables, cron and boot persistence can only be proven on a device — so it is
-worth being explicit about which is which.
+worth being explicit about which is which. This section is about confidence in
+what is here; for what is not here at all, see [Not
+Supported](#not-supported).
 
 **Verified on hardware.** An Alta Labs Route 10 (BusyBox v1.33.1), six LAN
 bridges, forced DNS enabled, `ctrld` 1.5.7 over DoH3, across five
@@ -219,6 +224,76 @@ was instant in a container and six times too slow on the device. So if you hit
 a problem in one of the areas above, that is the most useful bug report this
 project can receive. Please include the output of `sh /cfg/audit.sh` and the
 relevant lines from `/tmp/log/messages`.
+
+## Not Supported
+
+[Verification Status](#verification-status) covers what has not been *proven*.
+This covers what is not *there*: deliberate limits and known gaps. Check here
+before filing a bug — one of these may already explain what you are seeing.
+
+### IPv6
+
+**DNS interception is IPv4-only.** Nothing in this project writes an
+`ip6tables` rule, `ctrld` is configured to listen on `0.0.0.0`, and the block
+kept in `/etc/firewall.user` carries IPv4 rules only. Split DNS is IPv4-only
+for the same reason: the catch-all network block is `0.0.0.0/0` and the CIDR
+validator accepts dotted-quad only, so no policy can match an IPv6 client or
+prefix.
+
+What that does and does not mean:
+
+- **IPv6 name resolution is fine.** `ctrld` answers AAAA queries over its
+  IPv4 transport like any other record, so IPv6-only sites resolve normally.
+  The gap is DNS *carried over* IPv6, not IPv6 addresses in DNS answers.
+- **A client that asks the router for DNS over IPv6 reaches dnsmasq, not
+  `ctrld`.** If the router advertises itself as an IPv6 resolver (RA/RDNSS or
+  DHCPv6), a client may use that address on port 53, and no redirect catches
+  it. Those queries take the fallback path — dnsmasq → https-dns-proxy, which
+  `set_fallback_resolver` keeps on your ControlD profile. Still encrypted,
+  still filtered by ControlD, but attributed to the router rather than the
+  device and not subject to any split-DNS policy. It is the same degradation
+  the watchdog's last-resort path produces, except silent and permanent.
+- **A client with a hardcoded IPv6 resolver is not intercepted at all.**
+  Forced DNS redirects ports 53 and 853 over IPv4. A device pointed at, say,
+  `2606:4700:4700::1111` reaches it directly. This is the one case here where
+  a query leaves the network to somewhere that is not ControlD, and forced DNS
+  does not close it.
+- **Nothing reports any of this.** Neither `status.sh` nor `audit.sh` inspects
+  `ip6tables` or IPv6 addressing, so a clean audit is not evidence that no
+  IPv6 path exists.
+- **An IPv6-only or DS-Lite WAN is untested.** `BOOTSTRAP_IP` is an IPv4
+  literal, so `ctrld` needs working IPv4 to reach ControlD at all.
+
+If you want no IPv6 DNS path, the blunt fix is to stop the router handing
+clients an IPv6 resolver. That is router configuration this project neither
+manages nor touches; nothing under `/cfg` controls it.
+
+### Hardware and firmware
+
+| Not supported | What that means for you |
+|---|---|
+| **Anything but an Alta Labs Route 10** | `setup.sh` downloads the `linux_arm64` `ctrld` asset unconditionally. On a non-`aarch64` box you get a warning and then a binary that will not run. Another OpenWrt router with a persistent partition, `iptables` and `br-lan*` bridges might work; nobody has tried, and nothing beyond the Route 10 is claimed. |
+| **`nftables` / `fw4` firmware** | Every rule, and the `/etc/firewall.user` persistence around it, is `iptables`. That is what the Route 10's firmware runs today. Firmware that moved to `fw4` would leave the redirects unapplied, and nothing here detects the difference. |
+
+### Interception coverage
+
+| Not supported | What that means for you |
+|---|---|
+| **Interfaces not named `br-lan*`** | Bridge discovery globs `br-lan` and `br-lan_<id>`. A WireGuard peer, a guest bridge under another name, or anything routed rather than bridged gets no redirect. `LAN_IFACES` in `/cfg/controld.env` pins an explicit list; only `br-lan*` is found on its own. |
+| **The router's own DNS queries** | Redirects sit in `PREROUTING`, which only sees traffic arriving on an interface. Lookups the router itself makes — `wget`, the weekly updater, dnsmasq forwarding upstream — leave through `OUTPUT` and are never redirected. They still reach ControlD via https-dns-proxy, but as the router, not as a device. |
+| **DoH on port 443** | Cannot be redirected without breaking every HTTPS connection. See [Forced DNS Hijacking](#forced-dns-hijacking): a device that speaks DoH to a public resolver is out of reach, which is why forced DNS targets 53 and 853. |
+| **Encrypted DNS from client to router** | `ctrld`'s listener is plain DNS on port 5354. Clients cannot speak DoT or DoH *to* the router — encryption starts at the router, on its way out. |
+
+### Configuration
+
+| Not supported | What that means for you |
+|---|---|
+| **Split DNS by anything but MAC and network** | The wizard routes on client MAC and on source network. `ctrld` supports other matchers and ControlD has dashboard-side rules; neither is generated here. A policy table you write by hand *is* carried across config rewrites whole, so you can add them yourself. |
+| **Non-ControlD upstreams** | `get_endpoint` only builds ControlD endpoints. An upstream you add by hand pointing elsewhere survives rewrites untouched, but nothing here manages, benchmarks or fails over for it. |
+| **Hand edits to the generated blocks** | Every config rewrite — protocol switch, watchdog fallback, re-install — regenerates `[service]`, `[network.0]`, `[upstream.0]` and `[listener.0]` from `/cfg/controld.env`. Only extra upstreams, extra networks and the policy table are carried across. Tuning cache size or log level in `ctrld.toml` will not survive. |
+| **More than one listener** | A single `ctrld` on port 5354 serves every bridge. No per-VLAN instance and no second port. |
+| **ControlD's own provisioning** | `ctrld` runs as `ctrld run -c /cfg/ctrld.toml` under this project's cron watchdog, not as `ctrld start --cd <UID>` and not under `ctrld`'s built-in service manager. Config comes from `/cfg`; nothing is pushed down from the dashboard. |
+| **Local query logging** | There is none. Per-device visibility lives in the ControlD dashboard; the router keeps only what `ctrld` writes to syslog. |
 
 ## Security
 
@@ -522,6 +597,10 @@ When enabled:
 - `status.sh` reports the forced DNS state and active hijack rules
 
 **Note:** DNS-over-HTTPS (DoH, port 443) cannot be redirected without breaking all HTTPS traffic. Most TVs and IoT devices use DoT rather than DoH, so forced DNS catches the majority of bypass attempts.
+
+**Also not caught: DNS over IPv6.** Both redirects are `iptables` rules, so a
+device pointed at a hardcoded IPv6 resolver reaches it directly whether forced
+DNS is on or not. See [Not Supported](#not-supported).
 
 #### Benchmark
 

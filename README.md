@@ -196,6 +196,9 @@ install-and-reboot cycles:
 - Cron installation and survival across a reboot, and that our own cron
   operations leave the router's `wireguard_watchdog` job alone
 - `audit.sh` reporting no drift before and after a reboot
+- A full `uninstall.sh` run: files, cron, redirect rules, the `/etc/firewall.user`
+  block and the forced-DNS flag all gone, the router's own cron jobs and the
+  stock `force_dns_port` list untouched, and DNS still resolving afterwards
 
 **Not exercised on hardware.** These pass the test suite and are believed
 correct, but no one has run them on a real device:
@@ -204,7 +207,6 @@ correct, but no one has run them on a real device:
 |---|---|
 | **Split DNS / per-device policy** | Routing specific devices or subnets to a second ControlD profile. Config generation, rule insertion against every shape a policy table can take, and preservation across a re-install are all unit-tested — but no router has actually resolved through one. |
 | **A DNS port other than 5354** | `setup.sh` moves off 5354 if something already holds the port. The uninstaller reads the port from the install rather than assuming the default, but only a sandbox has taken that path. |
-| **A full uninstall** | `uninstall.sh` is unit-tested against a stubbed router — forced DNS off, redirects removed, cron cleaned, `rc.local` restored — and its cron guard is exercised on hardware by every re-install. The script in its current form has not been run end to end on a device; it changed substantially in this release, so an earlier version having worked does not carry over. |
 | **The watchdog lock under contention** | Two cycles overlapping. The fix that makes overlap unlikely also makes it hard to observe: every hardware run took and released the lock cleanly, but no two ever raced. |
 | **`benchmark.sh`'s daemon cleanup** | The benchmark starts throwaway `ctrld` instances on a spare port. That it leaves none behind is gated as a destructive test and skipped by default. |
 | **Keeping a `ctrld` newer than the pin** | A re-install must not roll a newer binary back to `CTRLD_PIN`. Unit-tested; no router has been ahead of the pin to try it on. |

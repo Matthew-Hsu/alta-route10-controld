@@ -638,6 +638,92 @@ assert_eq "uninstall loads the install's config before removing rules" "yes" "$U
 assert_false "uninstall does not hardcode the default port" \
     grep -qE 'grep -c "5354"|--to-ports 5354' "$SCRIPT_DIR/uninstall.sh"
 
+# The teardown must survive everything that runs after it.
+#
+# uninstall.sh removed the managed block, printed "rules will not return on
+# reload", and then called disable_forced_dns — which sets FORCED_DNS=0 and
+# calls ensure_firewall_user_rules, and that creates a block when none exists.
+# So the block came back, holding twelve port-53 REDIRECTs aimed at a port
+# nothing would listen on once ctrld was gone. Found on a router. The next
+# firewall reload or reboot applies /etc/firewall.user, so it would have taken
+# DNS down on every bridge, permanently, with nothing of this project left
+# on the box to explain it.
+#
+# Every other uninstall assertion here is a source grep, which is why the suite
+# could not see it: each function is correct on its own and the sequence is not.
+# This one runs the real functions in the real order and looks at the file.
+UF_DIR="$TMPDIR/uninstall-fw"
+UF_BIN="$TMPDIR/uninstall-fw-bin"
+mkdir -p "$UF_DIR" "$UF_BIN"
+printf '#!/bin/sh\nexit 0\n' > "$UF_BIN/uci"
+printf '#!/bin/sh\nexit 0\n' > "$UF_BIN/logger"
+chmod +x "$UF_BIN/uci" "$UF_BIN/logger"
+
+UF_FILE="$UF_DIR/firewall.user"
+printf '%s\n' \
+  '# a rule the user added themselves' \
+  'iptables -t nat -A PREROUTING -i br-lan -p tcp --dport 8080 -j REDIRECT --to-port 80' \
+  > "$UF_FILE"
+
+UF_OUT="$(
+    PATH="$UF_BIN:$PATH"
+    . "$SCRIPT_DIR/lib.sh"
+    FW_USER="$UF_FILE"
+    LAN_IFACES="br-lan br-lan_10"
+    DNS_PORT=5354
+    FORCED_DNS=1
+    del_redirect_rule() { :; }
+    ensure_firewall_user_rules "$DNS_PORT" >/dev/null 2>&1
+    # …and now the order uninstall.sh runs them in
+    remove_block "$FW_USER" "$FW_MARKER"
+    disable_forced_dns >/dev/null 2>&1
+    cat "$FW_USER"
+)"
+
+assert_not_contains "no managed block survives the uninstall sequence" \
+    "$UF_OUT" "controld-dns-redirect"
+assert_not_contains "and no redirect to our port is left behind" \
+    "$UF_OUT" "REDIRECT --to-port 5354"
+assert_contains "the user's own unrelated rule is untouched" \
+    "$UF_OUT" "dport 8080"
+
+# Toggling forced DNS off on a *live* install must still keep the port-53
+# rules persisted — that is what this call is for, and the guard above must not
+# have broken it.
+UF_LIVE="$(
+    PATH="$UF_BIN:$PATH"
+    . "$SCRIPT_DIR/lib.sh"
+    FW_USER="$UF_FILE"
+    LAN_IFACES="br-lan br-lan_10"
+    DNS_PORT=5354
+    FORCED_DNS=1
+    del_redirect_rule() { :; }
+    ensure_firewall_user_rules "$DNS_PORT" >/dev/null 2>&1
+    disable_forced_dns >/dev/null 2>&1
+    cat "$FW_USER"
+)"
+assert_contains     "a live install keeps its port-53 rules when 853 is turned off" \
+    "$UF_LIVE" "dport 53 -j REDIRECT --to-port 5354"
+assert_not_contains "and loses the port-853 rules" \
+    "$UF_LIVE" "dport 853"
+assert_contains     "the managed block is still there to hold them" \
+    "$UF_LIVE" "controld-dns-redirect BEGIN"
+
+# uninstall.sh must not announce the teardown before the last thing that can
+# undo it. The check has to come after disable_forced_dns.
+UF_FWCHECK=$(grep -n 'carries no redirect to port' "$SCRIPT_DIR/uninstall.sh" | head -1 | cut -d: -f1)
+UF_DISABLE=$(grep -n '^    disable_forced_dns$' "$SCRIPT_DIR/uninstall.sh" | head -1 | cut -d: -f1)
+UF_ORDER=no
+if [ -n "$UF_FWCHECK" ] && [ -n "$UF_DISABLE" ] && [ "$UF_DISABLE" -lt "$UF_FWCHECK" ]; then
+    UF_ORDER=yes
+fi
+assert_eq "uninstall verifies firewall.user after the last writer touches it" "yes" "$UF_ORDER"
+# Anchored to a print statement: the comment explaining this bug quotes the old
+# message, and a bare substring match found that instead of the code.
+assert_false "and no longer promises a clean reload before checking" \
+    grep -qE '^[[:space:]]*print_(ok|step) .*rules will not return on reload' \
+    "$SCRIPT_DIR/uninstall.sh"
+
 describe "cron_has() — must not confuse another service's job for ours"
 
 # The router ships "* * * * * /usr/bin/wireguard_watchdog". Matching the bare

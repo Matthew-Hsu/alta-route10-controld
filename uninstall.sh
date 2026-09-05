@@ -233,7 +233,7 @@ if [ -f "$FW_USER" ]; then
            -e '/ControlD per-device DNS redirect/d' \
            -e '/^iptables -t nat -A PREROUTING -i br-lan.*--dport 53 -j REDIRECT --to-port/d' \
            -e '/^iptables -t nat -A PREROUTING -i br-lan.*--dport 853 -j REDIRECT --to-port/d' "$FW_USER"
-    print_ok "firewall.user entries removed (rules will not return on reload)"
+    print_ok "firewall.user entries removed"
 fi
 
 # ── Restore forced DNS ──
@@ -248,6 +248,25 @@ if command -v disable_forced_dns >/dev/null 2>&1; then
     print_ok "Forced DNS disabled (uci force_dns cleared)"
 else
     print_warn "lib.sh unavailable — check 'uci show https-dns-proxy.config' by hand"
+fi
+
+# Verified here rather than claimed above, because disable_forced_dns writes to
+# this file too: it re-asserts the managed block so a live install keeps its
+# port-53 redirects when the DoT hijack is switched off. That made the earlier
+# "rules will not return on reload" message untrue — the block came back after
+# it was printed. The teardown is now checked after everything that can write
+# the file, and a leftover is reported instead of announced as a success.
+if [ -f "$FW_USER" ]; then
+    remove_block "$FW_USER" "$FW_MARKER"
+    _fw_left="$(grep -c -- "REDIRECT --to-port ${DNS_PORT}" "$FW_USER" 2>/dev/null || true)"
+    [ -n "$_fw_left" ] || _fw_left=0
+    if [ "$_fw_left" -eq 0 ]; then
+        print_ok "${FW_USER} carries no redirect to port ${DNS_PORT} — none will return on reload"
+    else
+        print_fail "${_fw_left} line(s) in ${FW_USER} still redirect to port ${DNS_PORT}"
+        print_info "They WILL be applied at the next firewall reload, with nothing listening there."
+        print_info "Remove them by hand:  sed -i '/REDIRECT --to-port ${DNS_PORT}/d' ${FW_USER}"
+    fi
 fi
 
 # ── Boot hook ──

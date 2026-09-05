@@ -1312,7 +1312,18 @@ disable_forced_dns() {
         # Legacy (pre-marker) lines, then rewrite our block without port 853
         sed -i -e '/controld-forced-dns-853/d' -e '/--dport 853 -j REDIRECT/d' "$FW_USER"
         FORCED_DNS=0
-        ensure_firewall_user_rules "$_port" || true
+        # Only re-assert a block that is still there. This call means "keep the
+        # persisted rules in step with the new setting", which is right when
+        # forced DNS is toggled off on a live install — the port-53 redirects
+        # stay. uninstall.sh calls this *after* tearing the block out, and
+        # ensure_firewall_user_rules creates one when none exists, so it wrote
+        # twelve port-53 REDIRECTs back into /etc/firewall.user pointing at a
+        # port nothing would ever listen on again. Found on a router: the next
+        # firewall reload or reboot would have taken DNS down on every bridge,
+        # permanently, with none of this project left on the box to explain it.
+        if grep -q "^# ${FW_MARKER} BEGIN\$" "$FW_USER" 2>/dev/null; then
+            ensure_firewall_user_rules "$_port" || true
+        fi
     fi
 
     uci set https-dns-proxy.config.force_dns=0

@@ -88,7 +88,8 @@ Look for `ctrld will not start` in the log below: that means the binary or
 > buffer"*. Nothing is lost — syslogd writes to a file instead:
 >
 > ```sh
-> grep -E 'ctrld|watchdog|post-cfg|controld-update' /tmp/log/messages | tail -30
+> cat /tmp/log/messages.1 /tmp/log/messages.0 /tmp/log/messages 2>/dev/null \
+>   | grep -E 'ctrld|watchdog|post-cfg|controld-update|forced-dns' | tail -30
 > ```
 >
 > `/var/log/messages` is the same file via a symlink, and `-b 2` keeps

@@ -898,7 +898,20 @@ log_lines() {
     if [ -z "$_ll_out" ]; then
         for _ll_f in $LOG_FILES; do
             if [ -f "$_ll_f" ]; then
-                _ll_out="$(cat "$_ll_f" 2>/dev/null || true)"
+                # syslogd -b N keeps rotated history alongside the live file as
+                # <file>.0 (most recently rotated) and <file>.1 (older).
+                # Reading only the live file made the caller's output go blank
+                # the moment it rotated, however recent the event — and
+                # docs/troubleshooting.md already told the reader status.sh
+                # handled these. Oldest first, so tail still yields the most
+                # recent matching lines.
+                _ll_set=""
+                for _ll_r in 2 1 0; do
+                    [ -f "${_ll_f}.${_ll_r}" ] && _ll_set="${_ll_set} ${_ll_f}.${_ll_r}"
+                done
+                # Word splitting on _ll_set is intended: it is a file list.
+                # shellcheck disable=SC2086
+                _ll_out="$(cat $_ll_set "$_ll_f" 2>/dev/null || true)"
                 break
             fi
         done

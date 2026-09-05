@@ -204,6 +204,22 @@ sh /cfg/benchmark.sh                          # measure first
 sh /cfg/reconfigure.sh --benchmark --force    # measure, then apply the winner
 ```
 
+### Turn On Forced DNS
+
+Catches smart TVs, IoT gear, and browsers that bypass the router's assigned
+DNS with a hardcoded server or DNS-over-TLS. It's off by default because it
+redirects every device on the network at once, not just the one you're
+chasing down.
+
+```sh
+sh /cfg/reconfigure.sh --force-dns            # interactive prompt
+sh /cfg/reconfigure.sh --force-dns --force    # no confirmation
+sh /cfg/status.sh                             # shows forced-DNS status and DoT hijack rules
+```
+
+See [Forced DNS Hijacking](#forced-dns-hijacking) for exactly what it catches
+and what it can't.
+
 ### Uninstall
 
 ```sh

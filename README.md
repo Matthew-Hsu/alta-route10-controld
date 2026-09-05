@@ -118,7 +118,6 @@ router setting this project does not manage.
 | **Routing a device by name** | Devices are matched by MAC address or by subnet. The names in the ControlD dashboard come from discovery and cannot be used as a rule target. Watch for phones using a private or randomised Wi-Fi address: the MAC changes and the device silently stops matching its rule. |
 | **Catching a device that uses DoH** | Forced DNS catches plain DNS (port 53) and DoT (port 853). DoH is indistinguishable from ordinary HTTPS on port 443 and cannot be redirected without breaking the web. Most TVs and IoT gear use DoT, so this is a minority — but a browser set to DoH is out of reach. |
 | **Encrypted DNS from your devices to the router** | Clients speak plain DNS to the router; encryption starts there, on the way out to ControlD. You cannot point a laptop at the router over DoH or DoT. |
-| **Query logs on the router** | There are none. Per-device visibility lives entirely in the ControlD dashboard. |
 | **Coverage of something that is not a LAN bridge** | Interception follows the router's LAN and VLAN bridges. A WireGuard tunnel, or anything else the router does not present as a LAN bridge, is not intercepted. |
 | **Hand-tuning `/cfg/ctrld.toml`** | Extra upstreams and your split-DNS policy are preserved, but the rest of the file is regenerated on every protocol change, watchdog fallback and re-install. Edits to cache size, log level or the listener will not survive. |
 

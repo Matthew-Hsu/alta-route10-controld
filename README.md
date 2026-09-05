@@ -698,6 +698,8 @@ Two versions live in `lib.sh` and move independently:
 
 They used to be one variable, which meant bumping the tools version silently repointed `setup.sh` at a `ctrld` release that does not exist. `test.sh` now asserts they are distinct and that no download URL is built from `VERSION`.
 
+**A tag doesn't pin an install.** `setup.sh` and every utility script it downloads always come from `master`, tag or no tag — there's no `--ref` flag, so pointing the installer's URL at `v1.9.0` would only fetch the entry script from that tag; everything it pulls afterward still comes from current `master`. The one place a tag actually pins something is [Manual Setup](#manual-setup): a `git checkout v1.9.0` there gets you exactly that version, since it skips `setup.sh`'s downloader entirely. Tags and GitHub Releases exist to anchor the `VERSION` number to real history, not as an install target.
+
 `CTRLD_PIN` is only the starting point. The version actually installed is recorded as `CTRLD_VERSION` in `/cfg/controld.env`, and the weekly updater moves it forward from there, so pinning gives reproducible installs without leaving routers stranded on an old release.
 
 #### Manual Setup

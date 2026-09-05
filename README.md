@@ -22,11 +22,11 @@ Encrypted DNS with per-device visibility on the Alta Labs Route 10 router using 
 ## Table of Contents
 
 - [Get Started](#get-started)
+- [Not Supported](#not-supported)
 - [Installing via an AI Agent](#installing-via-an-ai-agent)
 - [Everyday Use](#everyday-use)
 - [Troubleshooting](#troubleshooting)
 - [Verification Status](#verification-status)
-- [Not Supported](#not-supported)
 - [Security](#security)
 - [Technical Details](#technical-details)
   - [Reference](#reference)
@@ -85,6 +85,45 @@ DNS is running through ControlD within about a minute. For split DNS per
 device, blocking smart-TV DNS bypass, or benchmarking protocols, see
 [Technical Details](#technical-details). If something isn't working, see
 [Troubleshooting](#troubleshooting).
+
+## Not Supported
+
+[Verification Status](#verification-status) covers what has not been *proven*.
+This covers what is not *there*. Check here before filing a bug — one of these
+may already explain what you are seeing.
+
+### IPv6
+
+**DNS interception is IPv4-only.** Everything this project redirects, it
+redirects over IPv4.
+
+- **IPv6 sites work normally.** AAAA lookups resolve like any other record.
+  This is about DNS *carried over* IPv6, not IPv6 addresses in answers.
+- **A device that asks the router for DNS over IPv6 loses its identity.** Its
+  queries still reach ControlD encrypted and on your profile, but they arrive
+  attributed to the router rather than the device, and they skip any split-DNS
+  rule you set for it. Nothing warns you: `status.sh` and `audit.sh` do not
+  look at IPv6, so a clean report does not rule this out.
+- **A device hardcoded to an IPv6 resolver bypasses ControlD entirely.**
+  Forced DNS cannot catch it. This is the only case here where a query leaves
+  your network to somewhere that is not ControlD.
+
+To close it, stop the router handing clients an IPv6 resolver. That is a
+router setting this project does not manage.
+
+### Everything else
+
+| You might want | What actually happens |
+|---|---|
+| **Filtering rules set on the router** | This routes queries to ControlD; it does not filter them. What gets blocked, and for whom, is set in your ControlD profile on the dashboard. Split DNS here only chooses *which* profile a device uses. |
+| **Rules on a schedule** — filtered after 9pm, say | Split-DNS assignments are static. Anything time-based belongs in the ControlD profile, not in the router. |
+| **Routing a device by name** | Devices are matched by MAC address or by subnet. The names in the ControlD dashboard come from discovery and cannot be used as a rule target. Watch for phones using a private or randomised Wi-Fi address: the MAC changes and the device silently stops matching its rule. |
+| **Catching a device that uses DoH** | Forced DNS catches plain DNS (port 53) and DoT (port 853). DoH is indistinguishable from ordinary HTTPS on port 443 and cannot be redirected without breaking the web. Most TVs and IoT gear use DoT, so this is a minority — but a browser set to DoH is out of reach. |
+| **Encrypted DNS from your devices to the router** | Clients speak plain DNS to the router; encryption starts there, on the way out to ControlD. You cannot point a laptop at the router over DoH or DoT. |
+| **A provider other than ControlD** | Endpoints, the fallback resolver and the benchmark are all ControlD. NextDNS, Quad9 and AdGuard are not options. |
+| **Query logs on the router** | There are none. Per-device visibility lives entirely in the ControlD dashboard. |
+| **Coverage of something that is not a LAN bridge** | Interception follows the router's LAN and VLAN bridges. A WireGuard tunnel, or anything else the router does not present as a LAN bridge, is not intercepted. |
+| **Hand-tuning `/cfg/ctrld.toml`** | Extra upstreams and your split-DNS policy are preserved, but the rest of the file is regenerated on every protocol change, watchdog fallback and re-install. Edits to cache size, log level or the listener will not survive. |
 
 ## Installing via an AI Agent
 
@@ -184,8 +223,8 @@ See [docs/troubleshooting.md](docs/troubleshooting.md).
 This project is developed against one router. The test suite runs anywhere, but
 iptables, cron and boot persistence can only be proven on a device — so it is
 worth being explicit about which is which. This section is about confidence in
-what is here; for what is not here at all, see [Not
-Supported](#not-supported).
+what is here — for capabilities and workflows this project does not support at
+all, see [Not Supported](#not-supported) near the top of this document.
 
 **Verified on hardware.** An Alta Labs Route 10 (BusyBox v1.33.1), six LAN
 bridges, forced DNS enabled, `ctrld` 1.5.7 over DoH3, across five
@@ -224,45 +263,6 @@ was instant in a container and six times too slow on the device. So if you hit
 a problem in one of the areas above, that is the most useful bug report this
 project can receive. Please include the output of `sh /cfg/audit.sh` and the
 relevant lines from `/tmp/log/messages`.
-
-## Not Supported
-
-[Verification Status](#verification-status) covers what has not been *proven*.
-This covers what is not *there*. Check here before filing a bug — one of these
-may already explain what you are seeing.
-
-### IPv6
-
-**DNS interception is IPv4-only.** Everything this project redirects, it
-redirects over IPv4.
-
-- **IPv6 sites work normally.** AAAA lookups resolve like any other record.
-  This is about DNS *carried over* IPv6, not IPv6 addresses in answers.
-- **A device that asks the router for DNS over IPv6 loses its identity.** Its
-  queries still reach ControlD encrypted and on your profile, but they arrive
-  attributed to the router rather than the device, and they skip any split-DNS
-  rule you set for it. Nothing warns you: `status.sh` and `audit.sh` do not
-  look at IPv6, so a clean report does not rule this out.
-- **A device hardcoded to an IPv6 resolver bypasses ControlD entirely.**
-  Forced DNS cannot catch it. This is the only case here where a query leaves
-  your network to somewhere that is not ControlD.
-
-To close it, stop the router handing clients an IPv6 resolver. That is a
-router setting this project does not manage.
-
-### Everything else
-
-| You might want | What actually happens |
-|---|---|
-| **Filtering rules set on the router** | This routes queries to ControlD; it does not filter them. What gets blocked, and for whom, is set in your ControlD profile on the dashboard. Split DNS here only chooses *which* profile a device uses. |
-| **Rules on a schedule** — filtered after 9pm, say | Split-DNS assignments are static. Anything time-based belongs in the ControlD profile, not in the router. |
-| **Routing a device by name** | Devices are matched by MAC address or by subnet. The names in the ControlD dashboard come from discovery and cannot be used as a rule target. Watch for phones using a private or randomised Wi-Fi address: the MAC changes and the device silently stops matching its rule. |
-| **Catching a device that uses DoH** | Forced DNS catches plain DNS (port 53) and DoT (port 853). DoH is indistinguishable from ordinary HTTPS on port 443 and cannot be redirected without breaking the web. Most TVs and IoT gear use DoT, so this is a minority — but a browser set to DoH is out of reach. |
-| **Encrypted DNS from your devices to the router** | Clients speak plain DNS to the router; encryption starts there, on the way out to ControlD. You cannot point a laptop at the router over DoH or DoT. |
-| **A provider other than ControlD** | Endpoints, the fallback resolver and the benchmark are all ControlD. NextDNS, Quad9 and AdGuard are not options. |
-| **Query logs on the router** | There are none. Per-device visibility lives entirely in the ControlD dashboard. |
-| **Coverage of something that is not a LAN bridge** | Interception follows the router's LAN and VLAN bridges. A WireGuard tunnel, or anything else the router does not present as a LAN bridge, is not intercepted. |
-| **Hand-tuning `/cfg/ctrld.toml`** | Extra upstreams and your split-DNS policy are preserved, but the rest of the file is regenerated on every protocol change, watchdog fallback and re-install. Edits to cache size, log level or the listener will not survive. |
 
 ## Security
 

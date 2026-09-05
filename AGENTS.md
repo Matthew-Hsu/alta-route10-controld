@@ -29,6 +29,11 @@ environment almost certainly has none of that.
   `sh test.sh` and `AWK="busybox awk" sh test.sh`. They disagree often enough
   that this has caught real regressions that a GNU-awk-only run missed.
 
+- Before saying a feature works, check README.md's "Verification Status"
+  section. If it is in the "not exercised on hardware" table, say so rather
+  than implying the suite covers it — and if you do verify one on a device,
+  move the row and record what you ran.
+
 ## Verify before you claim
 
 Don't describe a fix as done until you've re-read the diff and confirmed the

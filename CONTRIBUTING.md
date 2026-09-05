@@ -91,6 +91,14 @@ the watchdog's recovery cycle over its own cron interval, and let instances
 overlap and corrupt each other's state — none of it visible in a green suite.
 Bound waits by time, and assert on elapsed time rather than on iterations.
 
+**README.md's "Verification Status" section is the canonical list of what has
+and has not been proven on a device.** It is written for users deciding how much
+to trust a feature, and it is the first thing to update when you verify one —
+move the row out of the table, and say in the commit what you ran. A claim there
+must be something you watched happen on hardware, not something the suite
+covers. Do not add a row for work you merely intend to do; the list is only
+useful if every entry is load-bearing.
+
 On the router:
 
 ```sh

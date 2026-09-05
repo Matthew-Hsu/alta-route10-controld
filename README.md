@@ -25,6 +25,7 @@ Encrypted DNS with per-device visibility on the Alta Labs Route 10 router using 
 - [Installing via an AI Agent](#installing-via-an-ai-agent)
 - [Everyday Use](#everyday-use)
 - [Troubleshooting](#troubleshooting)
+- [Verification Status](#verification-status)
 - [Security](#security)
 - [Technical Details](#technical-details)
   - [Reference](#reference)
@@ -41,6 +42,10 @@ Encrypted DNS with per-device visibility on the Alta Labs Route 10 router using 
 individually in the ControlD dashboard, including devices on VLANs, not just
 the router as a whole. It survives reboots and firmware updates without
 help, and falls back to a still-encrypted resolver if something goes wrong.
+
+> Split DNS, non-default ports and a few other paths pass the test suite but
+> have not been run on a real router. See [Verification
+> Status](#verification-status) before relying on them.
 
 ### Prerequisites
 
@@ -170,6 +175,48 @@ removed and what doesn't.
 ## Troubleshooting
 
 See [docs/troubleshooting.md](docs/troubleshooting.md).
+
+## Verification Status
+
+This project is developed against one router. The test suite runs anywhere, but
+iptables, cron and boot persistence can only be proven on a device — so it is
+worth being explicit about which is which.
+
+**Verified on hardware.** An Alta Labs Route 10 (BusyBox v1.33.1), six LAN
+bridges, forced DNS enabled, `ctrld` 1.5.7 over DoH3, across five
+install-and-reboot cycles:
+
+- Install, and re-install over an existing install, each followed by a reboot
+- Redirect coverage on all six bridges, the port-853 DoT hijack, and
+  `/etc/firewall.user` persistence across a reboot
+- The watchdog's whole failure path, forced by moving `/cfg/ctrld` aside: a
+  binary that will not start, the protocol fallback chain, the redirect
+  teardown that hands DNS back to dnsmasq → https-dns-proxy, and the
+  single-cycle recovery once the binary returns
+- Cron installation and survival across a reboot, and that our own cron
+  operations leave the router's `wireguard_watchdog` job alone
+- `audit.sh` reporting no drift before and after a reboot
+
+**Not exercised on hardware.** These pass the test suite and are believed
+correct, but no one has run them on a real device:
+
+| Area | What that means for you |
+|---|---|
+| **Split DNS / per-device policy** | Routing specific devices or subnets to a second ControlD profile. Config generation, rule insertion against every shape a policy table can take, and preservation across a re-install are all unit-tested — but no router has actually resolved through one. |
+| **A DNS port other than 5354** | `setup.sh` moves off 5354 if something already holds the port. The uninstaller reads the port from the install rather than assuming the default, but only a sandbox has taken that path. |
+| **A full uninstall** | `uninstall.sh` is unit-tested against a stubbed router — forced DNS off, redirects removed, cron cleaned, `rc.local` restored — and its cron guard is exercised on hardware by every re-install. The script itself has not been run end to end on a device. |
+| **The watchdog lock under contention** | Two cycles overlapping. The fix that makes overlap unlikely also makes it hard to observe: every hardware run took and released the lock cleanly, but no two ever raced. |
+| **`benchmark.sh`'s daemon cleanup** | The benchmark starts throwaway `ctrld` instances on a spare port. That it leaves none behind is gated as a destructive test and skipped by default. |
+| **Keeping a `ctrld` newer than the pin** | A re-install must not roll a newer binary back to `CTRLD_PIN`. Unit-tested; no router has been ahead of the pin to try it on. |
+| **A real auto-update** | `controld-update.sh`'s version comparison, checksum verification and rollback are unit-tested. No router has taken an actual upgrade through it. |
+
+Every defect in this project's history that CI could not see appeared on a
+router first — a BusyBox awk regex, a cron guard matching another service's
+job, `logread` failing on firmware with no syslog buffer, and a wait loop that
+was instant in a container and six times too slow on the device. So if you hit
+a problem in one of the areas above, that is the most useful bug report this
+project can receive. Please include the output of `sh /cfg/audit.sh` and the
+relevant lines from `/tmp/log/messages`.
 
 ## Security
 

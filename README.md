@@ -1,6 +1,8 @@
 # Alta Labs Route 10 + ControlD DNS
 
+[![Version](https://img.shields.io/github/v/tag/Matthew-Hsu/alta-route10-controld?label=version)](https://github.com/Matthew-Hsu/alta-route10-controld/tags)
 [![CI](https://github.com/Matthew-Hsu/alta-route10-controld/actions/workflows/ci.yml/badge.svg)](https://github.com/Matthew-Hsu/alta-route10-controld/actions/workflows/ci.yml)
+[![Last commit](https://img.shields.io/github/last-commit/Matthew-Hsu/alta-route10-controld)](https://github.com/Matthew-Hsu/alta-route10-controld/commits/master)
 [![License: 0BSD](https://img.shields.io/badge/license-0BSD-blue.svg)](LICENSE)
 
 Encrypted DNS with per-device visibility on the Alta Labs Route 10 router using [ControlD](https://controld.com) and the [ctrld](https://github.com/Control-D-Inc/ctrld) daemon.

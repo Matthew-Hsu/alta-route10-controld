@@ -49,7 +49,7 @@ help, and falls back to a still-encrypted resolver if something goes wrong.
 > Split DNS, non-default ports and a few other paths pass the test suite but
 > have not been run on a real router. See [Verification
 > Status](#verification-status) before relying on them. **DNS interception is
-> IPv4-only** — that and the project's other limits are in [Not
+> IPv4-only**, and that plus the project's other limits are in [Not
 > Supported](#not-supported).
 
 ### Prerequisites
@@ -77,10 +77,12 @@ For non-interactive setup:
 sh /tmp/setup.sh --resolver abc123 --protocol doh3
 ```
 
-Re-running the installer later is the documented upgrade path, and is safe over
-an existing install: it keeps your forced-DNS choice and any split-DNS policy,
-and leaves a `ctrld` newer than the pinned release alone, provided that binary still runs — one that does not is replaced, so a re-install remains the way to repair a damaged install. You are asked for your
-resolver ID again — it is not read back from the existing install — so have it
+Re-running the installer later is the documented upgrade path, and it's safe
+over an existing install: it keeps your forced-DNS choice and any split-DNS
+policy, and it leaves a `ctrld` newer than the pinned release alone, provided
+that binary still runs. One that doesn't gets replaced, so a re-install
+remains the way to repair a damaged install. You'll be asked for your
+resolver ID again (it's not read back from the existing install), so have it
 to hand, or pass `--resolver`.
 
 DNS is running through ControlD within about a minute. For split DNS per
@@ -91,8 +93,8 @@ device, blocking smart-TV DNS bypass, or benchmarking protocols, see
 ## Not Supported
 
 [Verification Status](#verification-status) covers what has not been *proven*.
-This covers what is not *there*. Check here before filing a bug — one of these
-may already explain what you are seeing.
+This covers what is not *there*. Check here before filing a bug: one of these
+may already explain what you're seeing.
 
 ### IPv6
 
@@ -218,11 +220,12 @@ See [docs/troubleshooting.md](docs/troubleshooting.md).
 
 ## Verification Status
 
-This project is developed against one router. The test suite runs anywhere, but
-iptables, cron and boot persistence can only be proven on a device — so it is
-worth being explicit about which is which. This section is about confidence in
-what is here — for capabilities and workflows this project does not support at
-all, see [Not Supported](#not-supported) near the top of this document.
+This project is developed against one router. The test suite runs anywhere,
+but iptables, cron and boot persistence can only be proven on a device, so
+it's worth being explicit about which is which. This section is about
+confidence in what is here. For capabilities and workflows this project
+doesn't support at all, see [Not Supported](#not-supported) near the top of
+this document.
 
 **Verified on hardware.** An Alta Labs Route 10 (BusyBox v1.33.1), six LAN
 bridges, forced DNS enabled, `ctrld` 1.5.7 over DoH3, across five
@@ -247,7 +250,7 @@ correct, but no one has run them on a real device:
 
 | Area | What that means for you |
 |---|---|
-| **Split DNS / per-device policy** | Routing specific devices or subnets to a second ControlD profile. Config generation, rule insertion against every shape a policy table can take, and preservation across a re-install are all unit-tested — but no router has actually resolved through one. |
+| **Split DNS / per-device policy** | Routing specific devices or subnets to a second ControlD profile. Config generation, rule insertion against every shape a policy table can take, and preservation across a re-install are all unit-tested, but no router has actually resolved through one. |
 | **A DNS port other than 5354** | `setup.sh` moves off 5354 if something already holds the port. The uninstaller reads the port from the install rather than assuming the default, but only a sandbox has taken that path. |
 | **The watchdog lock under contention** | Two cycles overlapping. The fix that makes overlap unlikely also makes it hard to observe: every hardware run took and released the lock cleanly, but no two ever raced. |
 | **`benchmark.sh`'s daemon cleanup** | The benchmark starts throwaway `ctrld` instances on a spare port. That it leaves none behind is gated as a destructive test and skipped by default. |
@@ -255,7 +258,7 @@ correct, but no one has run them on a real device:
 | **A real auto-update** | `controld-update.sh`'s version comparison, checksum verification and rollback are unit-tested. No router has taken an actual upgrade through it. |
 
 Every defect in this project's history that CI could not see appeared on a
-router first — a BusyBox awk regex, a cron guard matching another service's
+router first: a BusyBox awk regex, a cron guard matching another service's
 job, `logread` failing on firmware with no syslog buffer, and a wait loop that
 was instant in a container and six times too slow on the device. So if you hit
 a problem in one of the areas above, that is the most useful bug report this
@@ -493,7 +496,7 @@ The binary it replaces is the only thing answering DNS for every client on every
 `/cfg/watchdog.sh`, generated by `setup.sh`, runs every 5 minutes via cron and:
 
 1. Takes a lock, so only one instance runs at a time. Concurrent cycles share the debounce counter and rewrite `ctrld.toml` under each other; a lock whose owner is gone is cleared, so an interrupted run cannot wedge the watchdog
-2. Checks whether `ctrld` is running and restarts it if dead. The cycle continues either way: if it will not start at all — a corrupt binary, a config a new release cannot parse — into the fallback chain below, so step 7 is reached; and if it does start, into the health path, so a restart after a teardown restores the redirects in the same cycle rather than five minutes later
+2. Checks whether `ctrld` is running and restarts it if dead. The cycle continues either way: if it will not start at all (a corrupt binary, a config a new release cannot parse), it falls into the fallback chain below, so step 7 is reached; and if it does start, it falls into the health path, so a restart after a teardown restores the redirects in the same cycle rather than five minutes later
 3. Tests DNS resolution through `ctrld`
 4. If DNS is healthy, re-asserts redirect coverage for any LAN bridge added since install (new VLANs), self-heals forced-DNS state, warns if `dhcp.leases` is stale, and **self-upgrades back to your preferred protocol** if currently on a fallback
 5. If DNS fails, **waits for a second consecutive failure** before acting (debounce, to avoid restarting ctrld or churning the protocol on a single transient blip)
@@ -608,7 +611,7 @@ sh test.sh    # works locally and on-router
 - Split-DNS rule writing against every shape a policy table can be in, and policy preservation across a config rewrite
 - Config readouts: upstream names and protocols, MAC and network rule counts
 - Benchmark domain selection and version comparison
-- The generated `watchdog.sh` and the installer's config step, extracted from `setup.sh` and executed against a sandbox — that a `ctrld` which will not start still reaches the redirect teardown, that only one watchdog runs at a time and an interrupted one releases its lock, that a failed fallback restores the config rather than leaving it disagreeing with `controld.env`, and that a re-install carries a split-DNS policy across and retargets it
+- The generated `watchdog.sh` and the installer's config step, extracted from `setup.sh` and executed against a sandbox, confirming that a `ctrld` which will not start still reaches the redirect teardown, that only one watchdog runs at a time and an interrupted one releases its lock, that a failed fallback restores the config rather than leaving it disagreeing with `controld.env`, and that a re-install carries a split-DNS policy across and retargets it
 - That `start_ctrld`'s timeout is seconds of wall clock, and that it makes no DNS query while the port is closed
 - That `lib.sh` carries no function without a caller
 - `--help` and `--version` flags on all scripts
@@ -673,7 +676,7 @@ Two versions live in `lib.sh` and move independently:
 | `VERSION` | version of these scripts | a release is cut on `master`, and tagged |
 | `CTRLD_PIN` | the `ctrld` release a fresh install gets | you deliberately adopt a newer upstream release |
 
-**Branches never bump `VERSION`.** Unmerged work is not released, so a branch that raises it claims a version that does not exist — and two branches that both bump collide on the one line guaranteed to conflict. It moves in a release commit on `master`, paired with a tag, and that tag is what makes the number real. See [CONTRIBUTING.md](CONTRIBUTING.md#releases).
+**Branches never bump `VERSION`.** Unmerged work is not released, so a branch that raises it claims a version that does not exist. Two branches that both bump collide on the one line guaranteed to conflict. It moves in a release commit on `master`, paired with a tag, and that tag is what makes the number real. See [CONTRIBUTING.md](CONTRIBUTING.md#releases).
 
 `VERSION` follows semver: **MAJOR** for a change an existing install cannot upgrade into (a config key or file layout that older state cannot be read into), **MINOR** for new capability that upgrades cleanly, **PATCH** for fixes that add no behavior. Pick the number from everything that accumulated since the last tag, not from a single branch.
 

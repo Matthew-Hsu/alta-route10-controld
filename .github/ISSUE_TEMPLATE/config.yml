@@ -1,0 +1,12 @@
+# blank_issues_enabled: false forces every issue through bug_report.yml. The
+# point of that form is that what's pasted in is enough on its own to
+# reproduce the problem — a blank issue can't be required to include any of
+# that, so leaving it enabled would give every reporter a way around asking
+# for it.
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Matthew-Hsu/alta-route10-controld/security/advisories/new
+    about: >-
+      A way to bypass, disable, or spoof DNS routing, or any other security
+      issue. Do not open a public issue for this — see SECURITY.md.

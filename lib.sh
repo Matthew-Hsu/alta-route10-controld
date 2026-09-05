@@ -10,7 +10,7 @@
 # bump it, however much they change: unmerged work is not released, and a
 # branch that raises it either collides with the next branch to do the same or
 # ships a version that was never cut. See CONTRIBUTING.md, "Releases".
-VERSION="1.8.0"
+VERSION="1.9.0"
 
 # The ctrld release a fresh install pins. Deliberately separate from VERSION:
 # these move for unrelated reasons, and while they shared one variable a tools

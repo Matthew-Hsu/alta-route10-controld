@@ -18,7 +18,7 @@
    ```
    If rules exist but ctrld is dead, DNS is being redirected to nothing.
 
-3. **Quick fix** — remove only this project's redirects so DNS falls back to dnsmasq:
+3. **Quick fix**: remove only this project's redirects so DNS falls back to dnsmasq:
    ```sh
    . /cfg/lib.sh && load_env && remove_dns_redirects
    /etc/init.d/dnsmasq restart
@@ -69,23 +69,22 @@ rm -rf /tmp/dist ctrld.tar.gz
 **Symptom:** `status.sh` reports no redirect rules and a warning that ctrld was
 unrecoverable. DNS still works for everyone, but no device appears in ControlD.
 
-**Cause:** this is deliberate. When ctrld cannot be revived on any protocol —
-whether it died and will not restart, or will not start at all because the
-binary or its config is broken — the watchdog removes the redirects. Leaving
-them in place would point port 53 at a closed port and take DNS down for every
-client on every bridge; removing them hands resolution back to dnsmasq →
-https-dns-proxy, which is still encrypted ControlD, just without per-device
-visibility.
+**Cause:** this is deliberate. If ctrld can't be revived on any protocol
+(whether it died and won't restart, or never started because the binary or its
+config is broken), the watchdog removes the redirects. Leaving them in place
+would point port 53 at a closed port and take DNS down for every client on
+every bridge. Removing them hands resolution back to dnsmasq → https-dns-proxy,
+which is still encrypted ControlD, just without per-device visibility.
 
 Look for `ctrld will not start` in the log below: that means the binary or
 `/cfg/ctrld.toml` is the problem, not the upstream protocol.
 
-**Fix:** get ctrld running again — the rules restore themselves within 5 minutes.
+**Fix:** get ctrld running again. The rules restore themselves within 5 minutes.
 
 > **Reading the logs on a Route 10.** `logread` does not work on this firmware:
 > it reads the shared-memory buffer that `syslogd -C` creates, and Alta runs
 > `syslogd -n -b 2 -t -u` without it, so it fails with *"can't find syslogd
-> buffer"*. Nothing is lost — syslogd writes to a file instead:
+> buffer"*. Nothing is lost. syslogd still writes to a file:
 >
 > ```sh
 > cat /tmp/log/messages.1 /tmp/log/messages.0 /tmp/log/messages 2>/dev/null \
@@ -104,7 +103,7 @@ sh /cfg/watchdog.sh           # force a health cycle
 
 A forced cycle on a broken ctrld is not instant: it restarts once, then walks
 the whole fallback chain, which takes roughly a minute in total. It is not
-hung — let it finish. Interrupting it stops the run before the redirect
+hung. Let it finish. Interrupting it stops the run before the redirect
 teardown, which is the part that gets DNS back for your clients. Two cycles
 are needed in all, because the first only increments the debounce counter.
 
@@ -128,7 +127,7 @@ mv /cfg/ctrld.prev /cfg/ctrld && chmod +x /cfg/ctrld && sh /cfg/post-cfg.sh
 
 **Symptom:** The router itself (and anything on the default LAN) shows up in the
 ControlD dashboard, but phones, laptops, and other clients on a VLAN never do.
-Their DNS works — it just is not going through ctrld.
+Their DNS works. It just isn't going through ctrld.
 
 **Cause:** DNS is intercepted per bridge interface. Alta names the default LAN
 bridge `br-lan` and every VLAN `br-lan_<vlan-id>` (`br-lan_10`, `br-lan_20`, …).
@@ -155,7 +154,7 @@ This re-applies the redirect to every LAN bridge that exists right now, updates
 `/etc/firewall.user` so the rules survive a firewall reload, and re-applies the
 port-853 (DoT) hijack if forced DNS is on. It is safe to run repeatedly.
 
-If `/cfg/reconfigure.sh` predates this fix, update the tooling first — re-running
+If `/cfg/reconfigure.sh` predates this fix, update the tooling first. Re-running
 `setup.sh` reinstalls `/cfg/lib.sh` and the helper scripts:
 
 ```sh
@@ -166,8 +165,8 @@ sh /tmp/setup.sh
 New VLANs added later are picked up automatically: the watchdog re-checks
 coverage every 5 minutes and adds the missing rules.
 
-**Excluding a VLAN** (e.g. a guest network that should keep its own DNS) — add to
-`/cfg/controld.env`:
+**Excluding a VLAN**, such as a guest network that should keep its own DNS: add
+these to `/cfg/controld.env`:
 
 ```sh
 LAN_IFACES_EXCLUDE="br-lan_40"     # skip these bridges
@@ -195,7 +194,7 @@ dhcp_lease_file_path = "/cfg/dhcp.leases"
 dhcp_lease_file_format = "dnsmasq"
 ```
 
-Devices with `*` as their hostname in the lease file will never show a name — they didn't report one to DHCP.
+Devices with `*` as their hostname in the lease file will never show a name. They never reported one to DHCP.
 
 ## Changes not persisting after reboot
 
@@ -214,10 +213,10 @@ wget -O /tmp/setup.sh https://raw.githubusercontent.com/Matthew-Hsu/alta-route10
 sh /tmp/setup.sh --resolver <your-id> --protocol doh3
 ```
 
-Copying a handful of files across is what the old `backup.sh` did, and its list
-had fallen five files behind what an install actually needs — restoring from it
-produced a router with no watchdog, no boot hook and no cron jobs. A re-install
-keeps your forced-DNS setting and any split-DNS policy.
+The old `backup.sh` used to copy a handful of files across, but its list had
+fallen five files behind what an install actually needs. Restoring from it
+produced a router with no watchdog, no boot hook and no cron jobs. A
+re-install keeps your forced-DNS setting and any split-DNS policy.
 
 ## QUIC / DoQ / DoH3 not connecting
 
@@ -264,14 +263,14 @@ watchdog ever falls back it knows what to return to.
 
 Do not do this by hand. Deleting `/cfg/ctrld.toml` and re-running `post-cfg.sh`
 regenerates the config from `/cfg/controld.env` alone, which **discards any
-split-DNS policy** — the extra upstreams and the rules pointing at them are not
-in the env file. `reconfigure.sh` carries them across the rewrite and moves each
-one onto the new transport while keeping its own resolver.
+split-DNS policy**: the extra upstreams and the rules pointing at them aren't
+in the env file. `reconfigure.sh` carries them across the rewrite instead and
+moves each one onto the new transport while keeping its own resolver.
 
 ## How to change your resolver ID
 
-Rotating a resolver ID — because it leaked, or you switched ControlD profiles —
-is a single command:
+Maybe it leaked, or you switched ControlD profiles. Either way, rotating a
+resolver ID is a single command:
 
 ```sh
 sh /cfg/reconfigure.sh --resolver --to <new-id>
@@ -295,7 +294,7 @@ clean up afterwards, with two things worth knowing:
   it, and `audit.sh` names it meanwhile.
 
 Verify with `sh /cfg/status.sh` (shows the active resolver ID) and then delete
-the old profile in the ControlD dashboard — until you do, the old ID still
+the old profile in the ControlD dashboard. Until you do, the old ID still
 resolves for anyone who has it.
 
 ## How to uninstall
@@ -305,14 +304,15 @@ sh /cfg/uninstall.sh          # add --force to skip the confirmation
 ```
 
 That is the whole procedure. It removes every file, cron job and firewall rule
-the project installs, turns forced DNS back off, restores dnsmasq and
-https-dns-proxy, and verifies the result — deleting only our own iptables
-rules, one at a time, so port forwards and UPnP keep working. No reboot needed.
+the project installs, turns forced DNS back off, and restores dnsmasq and
+https-dns-proxy. It deletes only our own iptables rules, one at a time, so
+port forwards and UPnP keep working, and it verifies the result. No reboot
+needed.
 
 Do not tear it down by hand. Earlier versions of this page suggested
-`iptables -t nat -F PREROUTING` and removing three files, which flushed the
+`iptables -t nat -F PREROUTING` and removing three files. That flushed the
 firewall's own rules and left the boot hook, cron jobs and `firewall.user`
-entries behind — so the redirects came back on the next reboot, pointing at a
+entries behind, so the redirects came back on the next reboot, pointing at a
 binary that was no longer there.
 
 See the [Uninstalling](../README.md#uninstalling) section of the README for

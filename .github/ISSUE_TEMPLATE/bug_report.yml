@@ -1,0 +1,115 @@
+name: Bug report
+description: Something isn't behaving as documented on a real Route 10 (or in the test suite).
+title: "[bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Security issue?** A way to bypass, disable, or spoof DNS routing,
+        or any other security issue, should not go through a public issue —
+        see SECURITY.md, or pick "Report a security vulnerability" from the
+        issue-type list instead of this template.
+
+        This project runs on one router in one person's spare time, and
+        every defect CI could not see has appeared on hardware first. Only
+        "What did you run, and what happened?" is required beyond the
+        checkboxes below — if this happened on a real router, pasting
+        `status.sh`/`audit.sh` output too is the difference between one
+        round and three rounds of "can you also paste...", but a bug you
+        found by reading the code, or one that only shows up in `test.sh`,
+        won't have any of that to paste, and shouldn't need to invent
+        something just to submit this.
+
+  - type: checkboxes
+    id: checked-first
+    attributes:
+      label: Before filing
+      description: A couple of minutes here can save a round trip.
+      options:
+        - label: I checked the Verification Status section of README.md — this isn't already flagged there as unproven on hardware
+          required: true
+        - label: I checked the Not Supported section of README.md — this isn't a documented limitation rather than a bug
+          required: true
+        - label: This is not a security issue (a way to bypass, disable, or spoof DNS routing) — I'd use private reporting instead if it were
+          required: true
+
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where did this happen?
+      options:
+        - A real Alta Labs Route 10
+        - Only in "sh test.sh" (no router involved)
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: What did you run, and what happened?
+      description: >-
+        Exact commands, what you expected, what happened instead. Say
+        whether a reboot or firmware update was involved — several bugs
+        in this project's history only ever showed up across one of those.
+      placeholder: |
+        1. sh /cfg/reconfigure.sh --protocol --to doq
+        2. rebooted the router
+        3. expected: doq active after boot
+        4. actual: status.sh shows doh3, watchdog log shows a fallback at boot
+    validations:
+      required: true
+
+  - type: textarea
+    id: status
+    attributes:
+      label: Output of "sh /cfg/status.sh", if a real router is involved
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: audit
+    attributes:
+      label: Output of "sh /cfg/audit.sh --raw", if a real router is involved
+      description: >-
+        Plain "sh /cfg/audit.sh" (without --raw) is fine if you'd rather not
+        paste crontab/firewall.user/uci contents, but --raw is more likely
+        to get this to a fix in one round, especially for anything touching
+        iptables or cron. Leave both of these blank if you picked "no router
+        involved" or "not sure" above.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Anything relevant status.sh's "Recent Activity" section didn't show
+      description: >-
+        Recent lines matching this project's tags from /tmp/log/messages (or
+        /var/log/messages) — see docs/troubleshooting.md if you're not sure
+        which file your firmware uses. Leave blank if status.sh's own log
+        section already covers it.
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: config
+    attributes:
+      label: Anything non-default configured? (check all that apply)
+      options:
+        - label: Split DNS / per-device policy
+        - label: Forced DNS enabled
+        - label: A DNS port other than 5354
+        - label: VLANs beyond the default LAN bridge
+
+  - type: input
+    id: version
+    attributes:
+      label: Anything about version beyond what's already in the audit.sh output above
+      description: Firmware version, or anything the "installed" section of audit.sh didn't capture.
+    validations:
+      required: false

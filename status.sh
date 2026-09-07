@@ -178,8 +178,17 @@ print_header "ControlD Endpoint"
 
 if load_env; then
     print_ok "Resolver ID: ${RESOLVER_ID}"
-    print_ok "Protocol: $(proto_label "${DNS_TYPE}")"
-    if [ "${PREFERRED_PROTOCOL:-${DNS_TYPE}}" != "${DNS_TYPE}" ]; then
+    # DNS_TYPE (env) can lag what ctrld.toml actually runs — see
+    # running_protocol's comment in lib.sh. status.sh only reports; it never
+    # writes, so this reads the truth straight from the file rather than
+    # waiting for something else to have reconciled DNS_TYPE first.
+    _st_running="$(running_protocol)" || _st_running="${DNS_TYPE}"
+    print_ok "Protocol: $(proto_label "${_st_running}")"
+    if [ "${_st_running}" != "${DNS_TYPE}" ]; then
+        print_warn "Recorded protocol (${DNS_TYPE}) does not match what ctrld.toml is running"
+        print_info "Fix: sh /cfg/reconfigure.sh --show   (any reconfigure.sh action corrects this)"
+    fi
+    if [ "${PREFERRED_PROTOCOL:-${_st_running}}" != "${_st_running}" ]; then
         print_warn "Preferred: $(proto_label "${PREFERRED_PROTOCOL}") — on fallback; watchdog will return to it"
     fi
     if [ -n "${CTRLD_VERSION:-}" ]; then

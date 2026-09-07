@@ -784,6 +784,49 @@ assert_true "do_upgrade_check actually calls reconcile_dns_type" \
     code_grep "$SCRIPT_DIR/lib.sh" -E \
     '^[[:space:]]*reconcile_dns_type /cfg/controld\.env /cfg/ctrld\.toml &&'
 
+describe "reconfigure.sh and status.sh — wired to the real protocol, not the stale record"
+
+# reconfigure.sh hardcodes /cfg/ctrld.toml and /cfg/controld.env throughout,
+# like every other script here — running it as a real subprocess would write
+# to those paths and restart production ctrld if this ever executed on a
+# router, which test.sh is explicitly meant to support. Nothing in this suite
+# runs reconfigure.sh or status.sh as a subprocess for that reason, so this
+# checks wiring and ordering — the real reconciliation logic is exercised
+# directly above, safely, against sandbox paths.
+# code_lineno, not a bare grep -n: the comment above the call mentions
+# reconcile_dns_type, and so does the comment left behind if the call is ever
+# commented out — which is exactly how a reverted fix used to slip past this
+# whole ordering check with the suite still green.
+RCF_LOADS=$(code_lineno "$SCRIPT_DIR/reconfigure.sh" -E '^if ! load_env')
+RCF_RECONCILES=$(code_lineno "$SCRIPT_DIR/reconfigure.sh" -E '^reconcile_dns_type && print_info')
+RCF_PLABEL=$(code_lineno "$SCRIPT_DIR/reconfigure.sh" -E '^PLABEL=')
+RCF_ORDER=no
+if [ -n "$RCF_LOADS" ] && [ -n "$RCF_RECONCILES" ] && [ -n "$RCF_PLABEL" ] \
+   && [ "$RCF_LOADS" -lt "$RCF_RECONCILES" ] && [ "$RCF_RECONCILES" -lt "$RCF_PLABEL" ]; then
+    RCF_ORDER=yes
+fi
+assert_eq "reconfigure.sh reconciles right after loading, before anything reads DNS_TYPE" \
+    "yes" "$RCF_ORDER"
+
+# Anchored to the exact display line, not just a mention of the name
+# somewhere in the file — a comment referencing running_protocol elsewhere
+# would otherwise satisfy a bare `grep -q running_protocol` the same way a
+# reverted fix (back to raw DNS_TYPE) would.
+assert_true "status.sh's Protocol line reads the real running protocol" \
+    code_grep "$SCRIPT_DIR/status.sh" -E \
+    '^[[:space:]]*print_ok "Protocol: \$\(proto_label "\$\{_st_running\}"\)"'
+# Anchored to the assignment as a statement, not to a mention of the name.
+# status.sh's own comment two lines up names running_protocol, and so does the
+# comment left behind by commenting the assignment out; with a bare grep,
+# reverting _st_running to DNS_TYPE left the entire suite green.
+assert_true "and that variable comes from running_protocol, not DNS_TYPE" \
+    code_grep "$SCRIPT_DIR/status.sh" -E \
+    '^[[:space:]]*_st_running="\$\(running_protocol\)"'
+assert_false "status.sh still never writes to controld.env" \
+    grep -qE 'sed -i.*controld\.env|> */cfg/controld\.env' "$SCRIPT_DIR/status.sh"
+
+
+
 describe "uninstall.sh — a full purge, not just file removal"
 
 # Leaving force_dns set means https-dns-proxy keeps hijacking 53 and 853 after

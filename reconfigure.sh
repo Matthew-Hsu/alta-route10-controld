@@ -82,6 +82,16 @@ if ! load_env; then
     die "No ControlD config found. Run setup.sh first."
 fi
 
+# DNS_TYPE only reflects reality when the code that last changed it ran to
+# completion (reconcile_dns_type's comment in lib.sh has the full mechanism).
+# Every guard below that decides "is this already the current protocol" —
+# --protocol's no-op check, --benchmark's "already fastest" check — reads
+# straight from DNS_TYPE, and there is no cron tick to wait out here: this
+# runs once and exits. do_upgrade_check reconciles the same divergence on
+# its own 5-minute cycle, but a user re-running this tool seconds after a
+# bad reboot needs it fixed now, not on the next healthy watchdog pass.
+reconcile_dns_type && print_info "Corrected recorded protocol to $(proto_label "$DNS_TYPE") (ctrld.toml disagreed)"
+
 PLABEL=$(proto_label "$DNS_TYPE")
 
 # ── Apply and restart ──

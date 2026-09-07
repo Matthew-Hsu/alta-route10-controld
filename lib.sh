@@ -354,6 +354,81 @@ list_upstreams() {
     ' "$1"
 }
 
+# The protocol the main upstream (upstream.0) is actually configured for,
+# read from the file ctrld runs against — as opposed to DNS_TYPE in
+# controld.env, which only reflects reality when the code path that last
+# changed it ran to completion.
+#
+# It does not, always: the watchdog's fallback loop retargets ctrld.toml to
+# a candidate protocol before it knows whether the restart will succeed, and
+# only commits DNS_TYPE once it does (or restores ctrld.toml on total
+# failure). A process killed in between — a reboot is the observed case —
+# can leave ctrld.toml on one protocol while DNS_TYPE still names another,
+# and nothing before this reconciled them: self-upgrade compared
+# PREFERRED_PROTOCOL against the wrong value and never fired, a manual
+# `reconfigure.sh --protocol --to <the-preferred-one>` no-opped because it
+# looked like no change was needed, and status.sh reported the protocol
+# that was configured rather than the one actually running.
+#
+# upstream.0 is the main resolver by convention everywhere in this project
+# (write_ctrld_config always creates it there; the extra-upstream helpers
+# explicitly exclude it) — every split-DNS profile is additional to it, not
+# instead of it, so it is the one instance whose protocol answers "what is
+# this router using for ordinary DNS right now."
+# Usage: running_protocol [config]
+running_protocol() {
+    _rnp_type="$(list_upstreams "${1:-/cfg/ctrld.toml}" | $AWK -F'\t' '$1 == "0" { print $3; exit }')"
+    # Fail closed on anything this project does not manage. That covers the
+    # empty string from a missing file and list_upstreams' "(unset)" for a
+    # block with no type, but equally a hand-edited or half-written value:
+    # callers persist this into DNS_TYPE and build endpoints from it, so
+    # answering with something get_endpoint cannot map is worse than
+    # answering "unknown". A truncated config is squarely in scope here —
+    # an interrupted write is the whole reason this function exists.
+    valid_proto "$_rnp_type" || return 1
+    printf '%s' "$_rnp_type"
+}
+
+# Bring an env file's DNS_TYPE back in line with what a ctrld config is
+# actually running, if they disagree. Sets DNS_TYPE in the caller's shell to
+# the corrected value either way (this is a plain function call, not a
+# subshell, so the assignment is visible after it returns — same as
+# load_env). Never touches PREFERRED_PROTOCOL: that is what the user asked
+# for, not a record of what is running, and this function only corrects the
+# latter.
+#
+# Every caller that needs "what protocol is the router using right now" goes
+# through this or running_protocol directly, rather than trusting DNS_TYPE —
+# self-upgrade (do_upgrade_check), a manual protocol/resolver/benchmark change
+# (reconfigure.sh), and status.sh's own display each read DNS_TYPE, and each
+# was fooled independently by the same stale value before this existed.
+#
+# Returns 0 (and persists the correction) if DNS_TYPE was wrong; 1 if it
+# already matched, or if either file could not be read well enough to say —
+# a missing ctrld.toml, or a config whose protocol is not one this project
+# manages, is not this function's problem to report.
+# Usage: reconcile_dns_type [env_file] [ctrld_config]
+reconcile_dns_type() {
+    _rdt_env="${1:-/cfg/controld.env}"
+    _rdt_toml="${2:-/cfg/ctrld.toml}"
+    [ -f "$_rdt_env" ] || return 1
+    _rdt_actual="$(running_protocol "$_rdt_toml")" || return 1
+    [ "$_rdt_actual" != "$DNS_TYPE" ] || return 1
+    if grep -q '^DNS_TYPE=' "$_rdt_env"; then
+        sed -i "s/^DNS_TYPE=.*/DNS_TYPE=${_rdt_actual}/" "$_rdt_env"
+    else
+        # An env file old enough to predate DNS_TYPE has no line for sed to
+        # rewrite, and this project still supports one — load_env and
+        # post-cfg.sh both default the value rather than refusing the file.
+        # Rewriting nothing while returning "corrected" made the self-heal
+        # never heal: every watchdog cycle found the same divergence and
+        # logged the same correction, five minutes apart, indefinitely.
+        printf 'DNS_TYPE=%s\n' "$_rdt_actual" >> "$_rdt_env"
+    fi
+    DNS_TYPE="$_rdt_actual"
+    return 0
+}
+
 # How many split-DNS rules of one kind a config carries.
 #
 # Counted on the quoted key, not on the separator. Both callers matched `="` or
@@ -1353,6 +1428,20 @@ do_upgrade_check() {
     _ucf="/tmp/controld-upgrade.count"
     _uint="${UPGRADE_INTERVAL:-6}"   # ~30 min at 5-min cron
     _uport=5360
+
+    # True DNS_TYPE up before deciding anything from it. This runs only from
+    # the watchdog's healthy branch, so DNS is confirmed answering on
+    # whatever ctrld.toml says right now, and it is the one place a diverged
+    # DNS_TYPE reliably gets corrected without anyone having to notice and
+    # intervene.
+    #
+    # Both paths are named rather than left to the defaults, matching how the
+    # rest of this function already names them, and that is also what keeps
+    # SC2120 quiet without a suppression comment: the warning fires on a
+    # function whose only in-file call passes nothing, which is why load_env —
+    # same optional-path signature, never called inside lib.sh — never trips it.
+    reconcile_dns_type /cfg/controld.env /cfg/ctrld.toml && \
+        logger -t watchdog "DNS_TYPE corrected to ${DNS_TYPE} (ctrld.toml disagreed)"
 
     # Already on the preferred protocol — nothing to do; clear any stale counter
     [ "${PREFERRED_PROTOCOL:-$DNS_TYPE}" != "$DNS_TYPE" ] || { rm -f "$_ucf"; return 0; }

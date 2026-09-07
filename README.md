@@ -272,6 +272,7 @@ correct, but no one has run them on a real device:
 | **`benchmark.sh`'s daemon cleanup** | The benchmark starts throwaway `ctrld` instances on a spare port. That it leaves none behind is gated as a destructive test and skipped by default. |
 | **Keeping a `ctrld` newer than the pin** | A re-install must not roll a newer binary back to `CTRLD_PIN`. Unit-tested; no router has been ahead of the pin to try it on. |
 | **A real auto-update** | `controld-update.sh`'s version comparison, checksum verification and rollback are unit-tested. No router has taken an actual upgrade through it. |
+| **Protocol reconciliation after an interrupted change** | `ctrld.toml` and `controld.env` disagreeing about which protocol is running. The divergence itself was observed on hardware, but every fix for it — the watchdog's healthy and fallback paths, `reconfigure.sh`, and what `status.sh`, `audit.sh` and `benchmark.sh` report — is unit-tested only. Reproducing it on a device means interrupting a fallback between a retry and the record of its result. |
 
 Every defect in this project's history that CI could not see appeared on a
 router first: a BusyBox awk regex, a cron guard matching another service's
@@ -514,13 +515,15 @@ The binary it replaces is the only thing answering DNS for every client on every
 1. Takes a lock, so only one instance runs at a time. Concurrent cycles share the debounce counter and rewrite `ctrld.toml` under each other; a lock whose owner is gone is cleared, so an interrupted run cannot wedge the watchdog
 2. Checks whether `ctrld` is running and restarts it if dead. The cycle continues either way: if it will not start at all (a corrupt binary, a config a new release cannot parse), it falls into the fallback chain below, so step 7 is reached; and if it does start, it falls into the health path, so a restart after a teardown restores the redirects in the same cycle rather than five minutes later
 3. Tests DNS resolution through `ctrld`
-4. If DNS is healthy, re-asserts redirect coverage for any LAN bridge added since install (new VLANs), self-heals forced-DNS state, warns if `dhcp.leases` is stale, and **self-upgrades back to your preferred protocol** if currently on a fallback
-5. If DNS fails, **waits for a second consecutive failure** before acting (debounce, to avoid restarting ctrld or churning the protocol on a single transient blip)
+4. If DNS is healthy, re-asserts redirect coverage for any LAN bridge added since install (new VLANs), self-heals forced-DNS state, corrects the recorded protocol if it disagrees with what `ctrld.toml` is actually running, warns if `dhcp.leases` is stale, and **self-upgrades back to your preferred protocol** if currently on a fallback
+5. If DNS fails, **waits for a second consecutive failure** before acting (debounce, to avoid restarting ctrld or churning the protocol on a single transient blip). On the second, it reconciles the recorded protocol against `ctrld.toml` before walking the fallback chain, so the chain starts from what the router is really running
 6. Restores iptables redirect rules if they disappeared
 7. As a last resort, if every protocol fails and ctrld cannot be revived, **removes the DNS redirects.** Otherwise port 53 points at a dead port and every client loses DNS entirely. Resolution falls back to dnsmasq → https-dns-proxy (still encrypted, no per-device visibility), and the rules go back automatically once ctrld answers again
 8. Logs all actions to syslog
 
 If no protocol works, `ctrld.toml` is restored to the one `controld.env` still names, so the two never disagree about what the router is running. A full recovery cycle — one restart plus three fallback attempts — takes about a minute; give a manual run time to finish rather than interrupting it.
+
+That restore only covers the fallback loop running to completion. Something external cutting the watchdog off mid-loop — a reboot is the case this was found from — can still leave `ctrld.toml` on one protocol while the recorded one names another, since the loop only commits the recorded value once a retry succeeds. Every healthy cycle now checks the two against each other and corrects the record if they disagree (step 4 above), so this cannot stay wrong for more than one 5-minute tick; `reconfigure.sh` does the same check immediately, for anyone who cannot wait that long. The fallback path checks as well, before it walks the chain (step 5) — it is the one path a healthy cycle never reaches, and a chain seeded from a stale record spends attempts re-trying the protocol that just failed. `status.sh`, `audit.sh` and `benchmark.sh` each read the protocol `ctrld.toml` is actually running rather than the recorded one, so they report correctly even inside that one-cycle window, and `audit.sh` names the disagreement as a finding of its own.
 
 Protocol switches (fallback and self-upgrade alike) rewrite each upstream's transport in place, keeping every split-DNS profile pointed at its own resolver. See [Split DNS and Per-Device Policy](#split-dns-and-per-device-policy).
 
@@ -629,6 +632,7 @@ sh test.sh    # works locally and on-router
 - Benchmark domain selection and version comparison
 - The generated `watchdog.sh` and the installer's config step, extracted from `setup.sh` and executed against a sandbox, confirming that a `ctrld` which will not start still reaches the redirect teardown, that only one watchdog runs at a time and an interrupted one releases its lock, that a failed fallback restores the config rather than leaving it disagreeing with `controld.env`, and that a re-install carries a split-DNS policy across and retargets it
 - That `start_ctrld`'s timeout is seconds of wall clock, and that it makes no DNS query while the port is closed
+- That the recorded protocol is corrected when it disagrees with what `ctrld.toml` is actually running — on every healthy watchdog cycle and immediately in `reconfigure.sh` — and that `status.sh` reads the truth directly rather than the possibly-stale record
 - That `lib.sh` carries no function without a caller
 - `--help` and `--version` flags on all scripts
 - Invalid input rejection

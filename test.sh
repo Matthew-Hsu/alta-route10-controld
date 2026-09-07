@@ -110,6 +110,28 @@ assert_false() {
     fi
 }
 
+# Source greps that only ever see code.
+#
+# An assertion that greps a whole file for the thing it is checking is
+# satisfied by a comment that merely mentions it — including the comment left
+# behind when the real line is commented out. That has already fooled one
+# assertion in this suite (a bare `grep -q running_protocol` matched a comment
+# naming the function rather than the call), so the filter lives in one place
+# instead of being re-derived per assertion. Comment-only lines are blanked
+# rather than deleted, so code_lineno's numbering still matches the real file.
+#
+# Everything after the filename is handed to grep untouched, so a call keeps
+# whichever dialect it was already written in. That is not cosmetic: forcing
+# -E on patterns written for BRE silently changes what they mean.
+# `_port_in_use()` and `trld run -c ${_bs_conf}` both stop matching, and
+# `FORCED_DNS=$(preserved_forced_dns` makes grep exit on "Unmatched (" — an
+# assertion that quietly stops testing anything looks exactly like one that
+# passes.
+# Usage: code_grep <file> [grep-opts] <pattern>   (same for code_lineno)
+code_only()   { sed 's/^[[:space:]]*#.*$//' "$1"; }
+code_grep()   { _cg_f="$1"; shift; code_only "$_cg_f" | grep -q "$@"; }
+code_lineno() { _cl_f="$1"; shift; code_only "$_cl_f" | grep -n "$@" | head -1 | cut -d: -f1; }
+
 skip() {
     TOTAL=$((TOTAL + 1))
     SKIP=$((SKIP + 1))
@@ -596,6 +618,171 @@ assert_false "the snapshot is cleaned up on success" test -f "$WD_DIV/ctrld.toml
 # removed.
 assert_true "audit.sh names the snapshot"     grep -q 'ctrld.toml.fallback' "$SCRIPT_DIR/audit.sh"
 assert_true "uninstall.sh removes it"         grep -q 'ctrld.toml.fallback' "$SCRIPT_DIR/uninstall.sh"
+
+describe "running_protocol() — what ctrld.toml is actually configured for"
+
+# The main upstream (upstream.0) is the router's ordinary-DNS protocol by
+# convention everywhere in this project — every split-DNS profile is
+# additional to it, never instead of it.
+RP_DIR="$TMPDIR/running-protocol"
+mkdir -p "$RP_DIR"
+
+write_ctrld_config "$RP_DIR/ctrld.toml" abc123 76.76.2.22 doh
+assert_eq "reads the main upstream's protocol" "doh" "$(running_protocol "$RP_DIR/ctrld.toml")"
+
+write_ctrld_config "$RP_DIR/ctrld.toml" abc123 76.76.2.22 doq
+assert_eq "and again after a retarget" "doq" "$(running_protocol "$RP_DIR/ctrld.toml")"
+
+assert_false "a missing file is not silently answered" \
+    running_protocol "$RP_DIR/does-not-exist.toml"
+
+printf '[upstream.0]\n  name = "x"\n' > "$RP_DIR/no-type.toml"
+assert_false "an upstream.0 with no type is not silently answered" \
+    running_protocol "$RP_DIR/no-type.toml"
+
+# Anything outside the four protocols this project manages is "unknown", not
+# something to report and record. The value is persisted into DNS_TYPE and fed
+# to get_endpoint and every later config rewrite, so adopting a hand-edited or
+# half-written type is worse than admitting the protocol cannot be determined
+# — and a half-written config is squarely in scope, since an interrupted write
+# is the whole reason this function exists.
+printf '[upstream.0]\n  name = "x"\n  type = "notaproto"\n' > "$RP_DIR/bogus.toml"
+assert_false "a protocol this project does not manage is not answered" \
+    running_protocol "$RP_DIR/bogus.toml"
+
+# Worse than merely unknown: a value carrying sed metacharacters reached an
+# unquoted `sed s/.../DNS_TYPE=<value>/` in reconcile_dns_type, which failed
+# with "unknown option to \`s'" on stderr and still reported success.
+printf '[upstream.0]\n  name = "x"\n  type = "x/y&z"\n' > "$RP_DIR/hostile.toml"
+assert_false "nor is one carrying sed metacharacters" \
+    running_protocol "$RP_DIR/hostile.toml"
+
+describe "reconcile_dns_type() — DNS_TYPE must not diverge from what ctrld.toml runs"
+
+# The scenario found on a router: a watchdog fallback attempt retargets
+# ctrld.toml to a candidate protocol before it knows whether the restart will
+# succeed, and only commits DNS_TYPE once it does. A reboot landing in
+# between — the observed case — leaves ctrld.toml on one protocol while
+# DNS_TYPE and PREFERRED_PROTOCOL still name another. Nothing before this
+# reconciled them: self-upgrade compared PREFERRED_PROTOCOL against the stale
+# DNS_TYPE and saw no difference, so it never fired; a manual
+# `reconfigure.sh --protocol --to doh3` no-opped for the same reason;
+# status.sh reported the protocol that was recorded, not the one running. The
+# state was stable, not transient.
+RC_DIR="$TMPDIR/reconcile"; mkdir -p "$RC_DIR"
+write_ctrld_config "$RC_DIR/ctrld.toml" abc123 76.76.2.22 doh   # the real, running protocol
+printf 'RESOLVER_ID=abc123\nBOOTSTRAP_IP=76.76.2.22\nDNS_TYPE=doh3\nPREFERRED_PROTOCOL=doh3\n' \
+    > "$RC_DIR/controld.env"                                    # what was recorded before the interruption
+
+DNS_TYPE=doh3
+# assert_true, not a bare call — a mutated reconcile_dns_type that fails here
+# must show as a clean FAIL, not crash the whole suite under set -e.
+assert_true "reports a correction was made" \
+    reconcile_dns_type "$RC_DIR/controld.env" "$RC_DIR/ctrld.toml"
+assert_eq "and updates DNS_TYPE in the caller's shell" "doh" "$DNS_TYPE"
+assert_file_contains "and persists it to the env file" "$RC_DIR/controld.env" '^DNS_TYPE=doh$'
+assert_false "PREFERRED_PROTOCOL is never touched — that is what the user asked for" \
+    grep -q '^PREFERRED_PROTOCOL=doh$' "$RC_DIR/controld.env"
+assert_file_contains "it stays what it was" "$RC_DIR/controld.env" '^PREFERRED_PROTOCOL=doh3$'
+
+# Already-correct state must report nothing to do, and touch nothing — the
+# common case runs every 5 minutes and must stay silent and cheap.
+sed -i 's/^DNS_TYPE=.*/DNS_TYPE=doh/' "$RC_DIR/controld.env"   # now agrees with ctrld.toml
+RC_ENV_BEFORE="$(cat "$RC_DIR/controld.env")"
+DNS_TYPE=doh
+# Bare, direct calls expecting failure would trip this suite's own `set -e`
+# (a non-zero exit from an unguarded statement is fatal in ash); assert_false
+# already runs the call inside an `if`, which set -e exempts, same as every
+# other non-zero-expecting assertion in this suite.
+assert_false "reports nothing needed to fix" \
+    reconcile_dns_type "$RC_DIR/controld.env" "$RC_DIR/ctrld.toml"
+assert_eq "and the file is byte-for-byte untouched" "$RC_ENV_BEFORE" "$(cat "$RC_DIR/controld.env")"
+
+# A ctrld.toml that cannot be read (missing, or no readable upstream.0) is not
+# this function's problem to report — it must fail closed, not correct
+# DNS_TYPE to garbage.
+DNS_TYPE=doh3
+assert_false "an unreadable config reports nothing to correct" \
+    reconcile_dns_type "$RC_DIR/controld.env" "$RC_DIR/does-not-exist.toml"
+assert_file_contains "and DNS_TYPE is left alone on disk" "$RC_DIR/controld.env" '^DNS_TYPE=doh$'
+
+# Nor is a protocol this project does not manage adopted — on disk or in the
+# caller's shell, which is where do_upgrade_check and reconfigure.sh read it
+# from for every decision they make after the call.
+DNS_TYPE=doh3
+assert_false "a protocol this project does not manage is not adopted" \
+    reconcile_dns_type "$RC_DIR/controld.env" "$RP_DIR/bogus.toml"
+assert_eq "and the caller's DNS_TYPE is left alone" "doh3" "$DNS_TYPE"
+assert_file_contains "and so is the file" "$RC_DIR/controld.env" '^DNS_TYPE=doh$'
+
+# An env file old enough to have no DNS_TYPE line at all is still supported —
+# load_env and post-cfg.sh both default the value rather than refusing the
+# file. `sed s/^DNS_TYPE=.*/` has nothing to rewrite there, so the correction
+# was reported but never written, and every watchdog cycle then rediscovered
+# and re-logged the same divergence, five minutes apart, indefinitely.
+printf 'RESOLVER_ID=abc123\nPREFERRED_PROTOCOL=doh3\n' > "$RC_DIR/legacy.env"
+DNS_TYPE=doh3
+assert_true "an env file with no DNS_TYPE line still gets the correction" \
+    reconcile_dns_type "$RC_DIR/legacy.env" "$RC_DIR/ctrld.toml"
+assert_file_contains "the line is appended rather than silently skipped" \
+    "$RC_DIR/legacy.env" '^DNS_TYPE=doh$'
+assert_false "so the very next pass has nothing left to correct" \
+    reconcile_dns_type "$RC_DIR/legacy.env" "$RC_DIR/ctrld.toml"
+
+# Appending must never conjure an env file that was not there: every caller
+# runs load_env first, so a missing file means something is wrong upstream.
+# DNS_TYPE has to disagree with the config here, or the function would return
+# non-zero for the wrong reason and the assertion would pass either way.
+DNS_TYPE=doh3
+assert_false "a missing env file reports nothing to correct" \
+    reconcile_dns_type "$RC_DIR/no-such.env" "$RC_DIR/ctrld.toml"
+assert_false "and is not created" test -f "$RC_DIR/no-such.env"
+
+describe "do_upgrade_check() — must consult the real protocol, not just the record"
+
+# reconcile_dns_type is stubbed here to control exactly what it reports,
+# isolating do_upgrade_check's own decision from reconcile_dns_type's own file
+# handling (already tested directly above) — the same technique the watchdog
+# tests already use to isolate a caller's control flow from its
+# collaborators. Everything happens inside a subshell: PATH, the stub
+# definition and DNS_TYPE/PREFERRED_PROTOCOL are all gone the moment it exits,
+# so nothing here can leak into a test that runs after it. Only what actually
+# landed on disk — the log file, the counter file — is asserted on, outside
+# the subshell where assert_* must run for PASS/FAIL to be counted at all.
+DUC_BIN="$TMPDIR/duc-bin"; mkdir -p "$DUC_BIN"
+DUC_LOG="$TMPDIR/duc.log"; export DUC_LOG
+printf '#!/bin/sh\necho "$*" >> "$DUC_LOG"\n' > "$DUC_BIN/logger"
+chmod +x "$DUC_BIN/logger"
+rm -f /tmp/controld-upgrade.count
+
+: > "$DUC_LOG"
+( PATH="$DUC_BIN:$PATH"
+  DNS_TYPE=doh3; PREFERRED_PROTOCOL=doh3   # the stuck state: both agree, wrongly
+  reconcile_dns_type() { DNS_TYPE=doh; return 0; }   # simulates finding+fixing a real divergence
+  do_upgrade_check
+) >/dev/null 2>&1 || true
+assert_contains "a correction is logged" "$(cat "$DUC_LOG")" "DNS_TYPE corrected to doh"
+assert_true "and preferred-vs-actual now genuinely differs, so the upgrade counter starts" \
+    test -f /tmp/controld-upgrade.count
+rm -f /tmp/controld-upgrade.count
+
+: > "$DUC_LOG"
+( PATH="$DUC_BIN:$PATH"
+  DNS_TYPE=doh3; PREFERRED_PROTOCOL=doh3
+  reconcile_dns_type() { return 1; }   # nothing to correct
+  do_upgrade_check
+) >/dev/null 2>&1 || true
+assert_not_contains "nothing is logged when there is nothing to correct" \
+    "$(cat "$DUC_LOG")" "DNS_TYPE corrected"
+assert_false "and — already on preferred — the counter is not started" \
+    test -f /tmp/controld-upgrade.count
+
+# Anchored to the call itself and blind to comments: a bare file-wide
+# `grep -q 'reconcile_dns_type &&'` also matched the comment left behind by
+# commenting the call out, so it passed against code with the fix removed.
+assert_true "do_upgrade_check actually calls reconcile_dns_type" \
+    code_grep "$SCRIPT_DIR/lib.sh" -E \
+    '^[[:space:]]*reconcile_dns_type /cfg/controld\.env /cfg/ctrld\.toml &&'
 
 describe "uninstall.sh — a full purge, not just file removal"
 

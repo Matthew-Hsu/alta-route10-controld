@@ -140,7 +140,19 @@ do_show() {
     [ "$_pref" = "$DNS_TYPE" ] || printf "  %-20s %s ${DIM}(watchdog will return to it)${RESET}\n" "Preferred:" "$(proto_label "$_pref")"
     printf "  %-20s %s\n" "Bootstrap IP:" "${BOOTSTRAP_IP}"
     printf "  %-20s %s\n" "ctrld version:" "${CTRLD_VERSION}"
-    printf "  %-20s %s\n" "ctrld running:" "$(pidof ctrld 2>/dev/null && echo 'yes (PID above)' || echo 'no')"
+    # pidof prints the PID itself, so the old one-liner put that on stdout
+    # inside the substitution and then appended "yes (PID above)" as a second
+    # line — printf's %s took both, and the readout wrapped mid-field:
+    #   ctrld running:       6249
+    #   yes (PID above)
+    # Capture first, print once, the same shape status.sh already uses (and
+    # like status.sh, several PIDs render as "yes (PID 123 456)").
+    _rc_pid="$(pidof ctrld 2>/dev/null || true)"
+    if [ -n "$_rc_pid" ]; then
+        printf "  %-20s %s\n" "ctrld running:" "yes (PID ${_rc_pid})"
+    else
+        printf "  %-20s %s\n" "ctrld running:" "no"
+    fi
 
     if [ -f /cfg/ctrld.toml ]; then
         # Show upstreams

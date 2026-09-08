@@ -627,29 +627,51 @@ describe "readouts must report the protocol running, not the one recorded"
 # invisible to it — while it printed the recorded protocol as an OK line — is
 # the one report that should never have missed this.
 RO_DIR="$TMPDIR/readouts"; rm -rf "$RO_DIR"; mkdir -p "$RO_DIR"
-write_ctrld_config "$RO_DIR/ctrld.toml" abc123 76.76.2.22 doq
 
 RO_BIN="$TMPDIR/ro-bin"; mkdir -p "$RO_BIN"
 for _rc in uci iptables crontab ip nslookup logread pidof netstat; do
     printf '#!/bin/sh\nexit 1\n' > "$RO_BIN/$_rc"; chmod +x "$RO_BIN/$_rc"
 done
 
+# What audit.sh will actually report as the recorded values.
+#
+# It calls load_env, which sources /cfg/controld.env whenever that file exists
+# and silently wins over anything exported here. In a sandbox there is no such
+# file and the exports below stand; on a real router there is, so hardcoding
+# "1.3.6" and "doh3" made this pass only where /cfg does not exist — a
+# sandbox-only pass of exactly the kind this project keeps getting caught by.
+# Read the recorded values from wherever audit.sh is going to read them.
+if [ -f /cfg/controld.env ]; then
+    RO_REC="$(sed -n 's/^DNS_TYPE=//p' /cfg/controld.env | head -1)"
+    RO_VER="$(sed -n 's/^CTRLD_VERSION=//p' /cfg/controld.env | head -1)"
+fi
+# Empty covers both the no-/cfg case and a file that omits the key: load_env
+# leaves the exported value alone, so these are what audit.sh ends up with.
+RO_REC="${RO_REC:-doh3}"
+RO_VER="${RO_VER:-1.3.6}"
+# Any protocol that is deliberately not the recorded one.
+case "$RO_REC" in doq) RO_OTHER=doh3 ;; *) RO_OTHER=doq ;; esac
+
+write_ctrld_config "$RO_DIR/ctrld.toml"  abc123 76.76.2.22 "$RO_OTHER"
+write_ctrld_config "$RO_DIR/agree.toml"  abc123 76.76.2.22 "$RO_REC"
+
 # audit.sh runs off-device, so this is an outcome test on its real output.
 # CTRLD_VERSION has to be set for the line under test to be reached at all.
 RO_OUT="$(PATH="$RO_BIN:$PATH" CTRLD_TOML="$RO_DIR/ctrld.toml" \
-    CTRLD_VERSION=1.3.6 DNS_TYPE=doh3 RESOLVER_ID=abc123 FORCED_DNS=1 \
+    CTRLD_VERSION="$RO_VER" DNS_TYPE="$RO_REC" RESOLVER_ID=abc123 FORCED_DNS=1 \
     sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
 # Anchored to the version line itself: the divergence finding below also
-# names DoQ, so a bare "DoQ (QUIC)" would pass on that alone.
+# names the running protocol, so a bare label would pass on that alone.
 assert_contains "audit.sh names the protocol ctrld.toml runs" "$RO_OUT" \
-    "ctrld 1.3.6 on DoQ (QUIC)"
-assert_not_contains "not the one controld.env records" "$RO_OUT" "ctrld 1.3.6 on DoH3"
+    "ctrld ${RO_VER} on $(proto_label "$RO_OTHER")"
+assert_not_contains "not the one controld.env records" "$RO_OUT" \
+    "ctrld ${RO_VER} on $(proto_label "$RO_REC")"
 assert_contains "and raises the divergence as its own finding" "$RO_OUT" \
-    "but ctrld.toml runs DoQ (QUIC)"
+    "but ctrld.toml runs $(proto_label "$RO_OTHER")"
 
 # Agreeing files must stay silent, or every clean install reports a finding.
-RO_OK="$(PATH="$RO_BIN:$PATH" CTRLD_TOML="$RO_DIR/ctrld.toml" \
-    CTRLD_VERSION=1.3.6 DNS_TYPE=doq RESOLVER_ID=abc123 FORCED_DNS=1 \
+RO_OK="$(PATH="$RO_BIN:$PATH" CTRLD_TOML="$RO_DIR/agree.toml" \
+    CTRLD_VERSION="$RO_VER" DNS_TYPE="$RO_REC" RESOLVER_ID=abc123 FORCED_DNS=1 \
     sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
 assert_not_contains "and says nothing when the two agree" "$RO_OK" "but ctrld.toml runs"
 

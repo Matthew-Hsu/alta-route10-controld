@@ -961,6 +961,37 @@ assert_false "status.sh still never writes to controld.env" \
 
 
 
+describe "lib.sh bootstrap — a missing library must never fail silently"
+
+# `.` is a POSIX special built-in: a failed one exits a non-interactive shell
+# on the spot, so `. lib.sh 2>/dev/null || <fallback>` never reaches its
+# fallback under the router's ash, or dash — bash is the outlier that runs it.
+# reconfigure.sh, benchmark.sh and uninstall.sh all bootstrapped that way, and
+# with stderr discarded on top they produced no output whatsoever and exit 2
+# when run from a directory with no lib.sh beside them. Their /cfg fallback,
+# written for exactly that case, was unreachable. uninstall.sh is the one that
+# mattered: the README teaches fetching a single script into /tmp, and doing
+# that with the uninstaller removed nothing while looking like it had run.
+#
+# The invariant holds in every environment, which is what makes it testable
+# here and on a router: never silent. Where /cfg/lib.sh exists the fallback
+# now works and the script prints its usage; where it does not, it says so.
+BS_DIR="$TMPDIR/bootstrap"; rm -rf "$BS_DIR"; mkdir -p "$BS_DIR"
+for _bs in reconfigure.sh benchmark.sh uninstall.sh status.sh audit.sh; do
+    cp "$SCRIPT_DIR/$_bs" "$BS_DIR/$_bs"
+    # --help exits before any of these touches the system, uninstall included.
+    _bs_out="$(cd "$BS_DIR" && sh "./$_bs" --help 2>&1 || true)"
+    rm -f "$BS_DIR/$_bs"
+    assert_true "${_bs} says something when lib.sh is not beside it" \
+        [ -n "$_bs_out" ]
+done
+
+# The shape that caused it, not the wording of any one instance.
+for _bs in reconfigure.sh benchmark.sh uninstall.sh status.sh audit.sh setup.sh; do
+    assert_false "${_bs} does not bootstrap through a discarded failed dot" \
+        code_grep "$SCRIPT_DIR/$_bs" -E '^[[:space:]]*\. .*lib\.sh" 2>/dev/null'
+done
+
 describe "reconfigure.sh --show — one field, one line"
 
 # `$(pidof ctrld 2>/dev/null && echo 'yes (PID above)')` put the PID on stdout

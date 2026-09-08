@@ -244,7 +244,7 @@ doesn't support at all, see [Not Supported](#not-supported) near the top of
 this document.
 
 **Verified on hardware.** An Alta Labs Route 10 (BusyBox v1.33.1), six LAN
-bridges, forced DNS enabled, `ctrld` 1.5.7 over DoH3, across five
+bridges, forced DNS enabled, `ctrld` 1.5.7 over DoH3, across six
 install-and-reboot cycles:
 
 - Install, and re-install over an existing install, each followed by a reboot
@@ -260,6 +260,18 @@ install-and-reboot cycles:
 - A full `uninstall.sh` run: files, cron, redirect rules, the `/etc/firewall.user`
   block and the forced-DNS flag all gone, the router's own cron jobs and the
   stock `force_dns_port` list untouched, and DNS still resolving afterwards
+- Protocol reconciliation, end to end. `ctrld.toml` was retargeted behind
+  `controld.env`'s back to reproduce the divergence, and from there:
+  `status.sh`, `audit.sh` and `benchmark.sh` each reported the protocol the
+  config actually carried and named the mismatch; the watchdog corrected the
+  record within one 5-minute cycle, unprompted; the self-upgrade that
+  correction re-arms then counted six healthy cycles, probed the preferred
+  protocol on its test port, and switched production back about thirty
+  minutes later with nothing asked of anyone; `reconfigure.sh` corrected the
+  record on its next run and stayed silent on the one after; and
+  `--protocol --to <preferred>` worked in a single step, where it used to
+  no-op. A reboot afterwards came back with the two files in agreement and no
+  spurious correction logged.
 
 **Not exercised on hardware.** These pass the test suite and are believed
 correct, but no one has run them on a real device:
@@ -272,7 +284,7 @@ correct, but no one has run them on a real device:
 | **`benchmark.sh`'s daemon cleanup** | The benchmark starts throwaway `ctrld` instances on a spare port. That it leaves none behind is gated as a destructive test and skipped by default. |
 | **Keeping a `ctrld` newer than the pin** | A re-install must not roll a newer binary back to `CTRLD_PIN`. Unit-tested; no router has been ahead of the pin to try it on. |
 | **A real auto-update** | `controld-update.sh`'s version comparison, checksum verification and rollback are unit-tested. No router has taken an actual upgrade through it. |
-| **Protocol reconciliation after an interrupted change** | `ctrld.toml` and `controld.env` disagreeing about which protocol is running. The divergence itself was observed on hardware, but every fix for it — the watchdog's healthy and fallback paths, `reconfigure.sh`, and what `status.sh`, `audit.sh` and `benchmark.sh` report — is unit-tested only. Reproducing it on a device means interrupting a fallback between a retry and the record of its result. |
+| **Reconciliation on the paths that only run while DNS is failing** | The divergence and every repair for it are now verified on hardware, but two paths there are not, because both need DNS to actually fail on the device: the fallback loop seeding its chain from the reconciled protocol rather than the recorded one, and a reboot landing between a retarget and the record of its result — the interruption that produces the divergence in the first place. |
 
 Every defect in this project's history that CI could not see appeared on a
 router first: a BusyBox awk regex, a cron guard matching another service's

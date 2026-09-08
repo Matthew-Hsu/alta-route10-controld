@@ -1429,7 +1429,13 @@ disable_forced_dns() {
 # Rate-limited by UPGRADE_INTERVAL healthy cycles. Honors DRY_RUN.
 # Requires load_env first (DNS_TYPE, PREFERRED_PROTOCOL, RESOLVER_ID, BOOTSTRAP_IP).
 do_upgrade_check() {
-    _ucf="/tmp/controld-upgrade.count"
+    # Overridable for the same reason as CTRLD_TOML: this suite exercises
+    # do_upgrade_check, and on a router the counter it was reading and deleting
+    # was the live one — running the tests there reset the router's own
+    # self-upgrade timer, delaying a return to the preferred protocol by up to
+    # a full UPGRADE_INTERVAL. The default is the real path, so nothing about
+    # how the watchdog behaves changes.
+    _ucf="${UPGRADE_COUNT_FILE:-/tmp/controld-upgrade.count}"
     _uint="${UPGRADE_INTERVAL:-6}"   # ~30 min at 5-min cron
     _uport=5360
 

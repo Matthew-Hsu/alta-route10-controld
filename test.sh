@@ -887,7 +887,16 @@ DUC_BIN="$TMPDIR/duc-bin"; mkdir -p "$DUC_BIN"
 DUC_LOG="$TMPDIR/duc.log"; export DUC_LOG
 printf '#!/bin/sh\necho "$*" >> "$DUC_LOG"\n' > "$DUC_BIN/logger"
 chmod +x "$DUC_BIN/logger"
-rm -f /tmp/controld-upgrade.count
+
+# The counter lives in a sandbox, not at do_upgrade_check's real path. This
+# block used to read, write and delete the live file: on a router that reset
+# the watchdog's own self-upgrade timer, so running the suite there could
+# hold a fallback protocol in place for another full interval. Recorded
+# before and compared after, so a regression shows up as a failure rather
+# than as someone's router quietly taking longer to recover.
+UPGRADE_COUNT_FILE="$TMPDIR/duc-upgrade.count"; export UPGRADE_COUNT_FILE
+DUC_REAL_BEFORE="$(cat /tmp/controld-upgrade.count 2>/dev/null || echo ABSENT)"
+rm -f "$UPGRADE_COUNT_FILE"
 
 : > "$DUC_LOG"
 ( PATH="$DUC_BIN:$PATH"
@@ -897,8 +906,8 @@ rm -f /tmp/controld-upgrade.count
 ) >/dev/null 2>&1 || true
 assert_contains "a correction is logged" "$(cat "$DUC_LOG")" "DNS_TYPE corrected to doh"
 assert_true "and preferred-vs-actual now genuinely differs, so the upgrade counter starts" \
-    test -f /tmp/controld-upgrade.count
-rm -f /tmp/controld-upgrade.count
+    test -f "$UPGRADE_COUNT_FILE"
+rm -f "$UPGRADE_COUNT_FILE"
 
 : > "$DUC_LOG"
 ( PATH="$DUC_BIN:$PATH"
@@ -909,7 +918,13 @@ rm -f /tmp/controld-upgrade.count
 assert_not_contains "nothing is logged when there is nothing to correct" \
     "$(cat "$DUC_LOG")" "DNS_TYPE corrected"
 assert_false "and — already on preferred — the counter is not started" \
-    test -f /tmp/controld-upgrade.count
+    test -f "$UPGRADE_COUNT_FILE"
+
+# The point of the override: a router running this suite must come out of it
+# with its own self-upgrade timer exactly as it was.
+assert_eq "and the router's own counter is left exactly as it was" \
+    "$DUC_REAL_BEFORE" "$(cat /tmp/controld-upgrade.count 2>/dev/null || echo ABSENT)"
+unset UPGRADE_COUNT_FILE
 
 # Anchored to the call itself and blind to comments: a bare file-wide
 # `grep -q 'reconcile_dns_type &&'` also matched the comment left behind by

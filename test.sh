@@ -961,6 +961,28 @@ assert_false "status.sh still never writes to controld.env" \
 
 
 
+describe "reconfigure.sh --show — one field, one line"
+
+# `$(pidof ctrld 2>/dev/null && echo 'yes (PID above)')` put the PID on stdout
+# inside the substitution and then appended a second line, so printf's %s took
+# both and the field wrapped mid-readout:
+#     ctrld running:       6249
+#     yes (PID above)
+# Seen on a router while verifying something else. status.sh already does this
+# correctly — capture the PID, then print one line — so this matches it, and
+# several PIDs render as "yes (PID 123 456)" in both.
+#
+# Source assertions: nothing in this suite runs reconfigure.sh as a subprocess,
+# because it reads and writes the real /cfg paths and doing that on a router
+# would overwrite a live install.
+assert_true "the running-PID field is captured before it is printed" \
+    code_grep "$SCRIPT_DIR/reconfigure.sh" -E \
+    '^[[:space:]]*_rc_pid="\$\(pidof ctrld 2>/dev/null \|\| true\)"'
+# The shape of the bug, not just the old wording: any substitution that runs
+# pidof and chains a label onto it prints two lines into one field.
+assert_false "no substitution prints the PID and a label together" \
+    code_grep "$SCRIPT_DIR/reconfigure.sh" -E '\$\(pidof ctrld[^)]*&&'
+
 describe "uninstall.sh — a full purge, not just file removal"
 
 # Leaving force_dns set means https-dns-proxy keeps hijacking 53 and 853 after

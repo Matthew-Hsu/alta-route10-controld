@@ -84,6 +84,13 @@ in a sandbox test. **Anything touching iptables, cron, `/etc/firewall.user` or
 boot persistence must be exercised on a real device, including a reboot**,
 before it is called done.
 
+The suite itself is not exempt. An `audit.sh` outcome test passed everywhere
+`/cfg/controld.env` did not exist and failed the moment it did, because
+`load_env` sources that file and silently wins over the environment the test
+had set up. A test that reads a real path is only testing the sandbox until
+someone runs it on a router — derive the expected values from wherever the
+code under test will actually read them.
+
 **Time is one of the things a sandbox gets wrong.** A loop bounded by iteration
 count rather than wall clock is only as fast as its slowest probe, and probe
 costs differ by an order of magnitude between CI and a router: a DNS query to a

@@ -13,8 +13,23 @@
 set -e
 
 LIB_DIR="$(dirname "$0")"
-# shellcheck source=lib.sh
-. "$LIB_DIR/lib.sh" 2>/dev/null || { [ -f /cfg/lib.sh ] && . /cfg/lib.sh; } || { echo "lib.sh not found" >&2; exit 1; }
+# `.` is a POSIX special built-in: when it fails, a non-interactive shell exits
+# on the spot, so a `|| fallback` after it is unreachable under the router's
+# ash (and dash) — bash is the outlier that runs it. With stderr discarded on
+# top, running any of these from a directory without lib.sh beside it produced
+# no output at all and exit 2, and the /cfg fallback below never ran. Test for
+# whether the file is there instead, the way setup.sh already does.
+if [ -f "$LIB_DIR/lib.sh" ]; then
+    # shellcheck source=lib.sh
+    . "$LIB_DIR/lib.sh"
+elif [ -f /cfg/lib.sh ]; then
+    # Running on a router where lib.sh was installed to /cfg/
+    # shellcheck source=/dev/null
+    . /cfg/lib.sh
+else
+    echo "Error: lib.sh not found." >&2
+    exit 1
+fi
 
 # ── Help ──
 

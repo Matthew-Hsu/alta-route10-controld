@@ -619,6 +619,71 @@ assert_false "the snapshot is cleaned up on success" test -f "$WD_DIV/ctrld.toml
 assert_true "audit.sh names the snapshot"     grep -q 'ctrld.toml.fallback' "$SCRIPT_DIR/audit.sh"
 assert_true "uninstall.sh removes it"         grep -q 'ctrld.toml.fallback' "$SCRIPT_DIR/uninstall.sh"
 
+describe "watchdog — the fallback chain must start from the protocol actually running"
+
+# The fallback loop seeds next_proto from DNS_TYPE. Reconciliation happens on
+# the healthy branch only (do_upgrade_check), and this path never reaches it,
+# so a router that rebooted mid-fallback walks the chain from the stale name.
+# With the chain "doh3 doh", ctrld.toml really on doh and DNS_TYPE saying
+# doh3, next_proto(doh3) is doh: attempt 1 retargets to the protocol that just
+# failed, and attempt 3 does it again — one attempt in three tries anything
+# new, while every client on every bridge has no DNS. Seeded from the truth,
+# next_proto(doh) wraps to doh3 and the first attempt is productive.
+WD_DRIFT="$TMPDIR/wd-drift"
+rm -rf "$WD_DRIFT"; mkdir -p "$WD_DRIFT"
+
+WDGEN_DRIFT="$TMPDIR/watchdog-drift.sh"
+sed -n "/^cat > \/cfg\/watchdog.sh << 'WATCHDOG'/,/^WATCHDOG$/p" "$SCRIPT_DIR/setup.sh" \
+    | sed '1d;$d' \
+    | sed -e "s|/cfg/|${WD_DRIFT}/|g" \
+          -e "s|/tmp/controld-dns-fail.count|${TMPDIR}/wd-drift-fail.count|g" > "$WDGEN_DRIFT"
+
+# Exactly the state found on the router: the config runs DoH, the env still
+# names DoH3, and PREFERRED_PROTOCOL agrees with the env.
+cat > "$WD_DRIFT/controld.env" << 'WDDRIFTENV'
+RESOLVER_ID=abc123
+BOOTSTRAP_IP=76.76.2.22
+DNS_TYPE=doh3
+PREFERRED_PROTOCOL=doh3
+FORCED_DNS=0
+WDDRIFTENV
+write_ctrld_config "$WD_DRIFT/ctrld.toml" abc123 76.76.2.22 doh
+
+# reconcile_dns_type and retarget_upstreams stay real — they are what this
+# asserts on. The first restart succeeds, so the loop stops after one attempt
+# and the config records which protocol that attempt chose.
+cat > "$WD_DRIFT/lib.sh" << WDDRIFTLIB
+. "$SCRIPT_DIR/lib.sh"
+check_dns()                  { return 1; }
+stop_ctrld()                 { :; }
+start_ctrld()                { return 0; }
+restart_ctrld()              { return 0; }
+ensure_iptables()            { return 1; }
+ensure_firewall_user_rules() { return 1; }
+ensure_forced_dns()          { :; }
+do_upgrade_check()           { :; }
+remove_dns_redirects()       { :; }
+WDDRIFTLIB
+
+WD_DRIFT_BIN="$TMPDIR/wd-drift-bin"; mkdir -p "$WD_DRIFT_BIN"
+WD_DRIFT_LOG="$TMPDIR/wd-drift.log"; : > "$WD_DRIFT_LOG"
+printf '#!/bin/sh\necho 4143\n' > "$WD_DRIFT_BIN/pidof"
+printf '#!/bin/sh\necho "$*" >> "%s"\n' "$WD_DRIFT_LOG" > "$WD_DRIFT_BIN/logger"
+chmod +x "$WD_DRIFT_BIN/pidof" "$WD_DRIFT_BIN/logger"
+
+( PATH="$WD_DRIFT_BIN:$PATH"; WD_LOCK="$TMPDIR/wd-drift.lock"; FAIL_THRESHOLD=1
+  export WD_LOCK FAIL_THRESHOLD; sh "$WDGEN_DRIFT" ) >/dev/null 2>&1
+
+assert_file_contains "the first attempt tries a protocol that has not just failed" \
+    "$WD_DRIFT/ctrld.toml" 'type = "doh3"'
+assert_file_contains "and the env records it" "$WD_DRIFT/controld.env" '^DNS_TYPE=doh3$'
+assert_contains "the correction is logged" "$(cat "$WD_DRIFT_LOG")" \
+    "DNS_TYPE corrected to doh"
+# The pre-fallback line named the stale protocol, so the syslog record of a
+# recovery disagreed with the config the recovery actually started from.
+assert_contains "and the pre-fallback line names what was really running" \
+    "$(cat "$WD_DRIFT_LOG")" "DNS failed on doh after"
+
 describe "running_protocol() — what ctrld.toml is actually configured for"
 
 # The main upstream (upstream.0) is the router's ordinary-DNS protocol by

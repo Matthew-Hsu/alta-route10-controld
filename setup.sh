@@ -946,6 +946,22 @@ if [ "$fails" -lt "$FAIL_THRESHOLD" ]; then
 fi
 rm -f "$FAIL_COUNT_FILE"
 
+# The chain below is walked from DNS_TYPE, so DNS_TYPE has to be true before
+# the first attempt. Reconciliation otherwise happens only on the healthy
+# branch, inside do_upgrade_check — which this path by definition never
+# reaches. A router that rebooted mid-fallback comes back with ctrld.toml on
+# one protocol and controld.env naming another, and the next sustained
+# failure then seeds next_proto from the stale name: with the chain
+# "doh3 doh" and ctrld.toml actually on DoH while DNS_TYPE says DoH3,
+# attempts 1 and 3 both retarget to DoH — the protocol that just failed —
+# leaving one attempt in three doing anything new, while the whole LAN has no
+# DNS. It also makes the two log lines below say what is really running.
+# Guarded: an install whose lib.sh predates this has no such function, and
+# this must not be the line that stops a recovery.
+command -v reconcile_dns_type >/dev/null 2>&1 && \
+    reconcile_dns_type /cfg/controld.env /cfg/ctrld.toml && \
+    logger -t watchdog "DNS_TYPE corrected to ${DNS_TYPE} (ctrld.toml disagreed)"
+
 # Sustained DNS failure -- try protocol fallback
 logger -t watchdog "DNS failed on ${DNS_TYPE} after ${FAIL_THRESHOLD} consecutive checks, starting fallback"
 

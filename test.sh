@@ -128,7 +128,7 @@ assert_false() {
 # assertion that quietly stops testing anything looks exactly like one that
 # passes.
 # Usage: code_grep <file> [grep-opts] <pattern>   (same for code_lineno)
-code_only()   { sed 's/^[[:space:]]*#.*$//' "$1"; }
+code_only()   { sed 's/^[[:space:]]*#.*$//' "$@"; }
 code_grep()   { _cg_f="$1"; shift; code_only "$_cg_f" | grep -q "$@"; }
 code_lineno() { _cl_f="$1"; shift; code_only "$_cl_f" | grep -n "$@" | head -1 | cut -d: -f1; }
 
@@ -616,8 +616,8 @@ assert_false "the snapshot is cleaned up on success" test -f "$WD_DIV/ctrld.toml
 # audit.sh and uninstall.sh must both know the snapshot by name, or an
 # interrupted recovery leaves a file that is reported as foreign and never
 # removed.
-assert_true "audit.sh names the snapshot"     grep -q 'ctrld.toml.fallback' "$SCRIPT_DIR/audit.sh"
-assert_true "uninstall.sh removes it"         grep -q 'ctrld.toml.fallback' "$SCRIPT_DIR/uninstall.sh"
+assert_true "audit.sh names the snapshot"     code_grep "$SCRIPT_DIR/audit.sh" 'ctrld.toml.fallback'
+assert_true "uninstall.sh removes it"         code_grep "$SCRIPT_DIR/uninstall.sh" 'ctrld.toml.fallback'
 
 describe "readouts must report the protocol running, not the one recorded"
 
@@ -935,7 +935,7 @@ assert_true "and that variable comes from running_protocol, not DNS_TYPE" \
     code_grep "$SCRIPT_DIR/status.sh" -E \
     '^[[:space:]]*_st_running="\$\(running_protocol\)"'
 assert_false "status.sh still never writes to controld.env" \
-    grep -qE 'sed -i.*controld\.env|> */cfg/controld\.env' "$SCRIPT_DIR/status.sh"
+    code_grep "$SCRIPT_DIR/status.sh" -E 'sed -i.*controld\.env|> */cfg/controld\.env'
 
 
 
@@ -944,25 +944,25 @@ describe "uninstall.sh — a full purge, not just file removal"
 # Leaving force_dns set means https-dns-proxy keeps hijacking 53 and 853 after
 # the app is gone: someone uninstalling to get their DNS back is still caught.
 assert_true "uninstall disables forced DNS" \
-    grep -q 'disable_forced_dns' "$SCRIPT_DIR/uninstall.sh"
+    code_grep "$SCRIPT_DIR/uninstall.sh" 'disable_forced_dns'
 # force_dns_port is not ours: see the dedicated section below. Uninstall must
 # never delete it, and must say why it is still listed.
 assert_false "uninstall does not delete the package port list" \
-    grep -q 'uci delete https-dns-proxy.config.force_dns_port' "$SCRIPT_DIR/uninstall.sh"
+    code_grep "$SCRIPT_DIR/uninstall.sh" 'uci delete https-dns-proxy.config.force_dns_port'
 assert_true "uninstall explains the port list it leaves behind" \
-    grep -q 'stock package default, inert with force_dns=0' "$SCRIPT_DIR/uninstall.sh"
+    code_grep "$SCRIPT_DIR/uninstall.sh" 'stock package default, inert with force_dns=0'
 assert_true "uninstall removes the empty /etc/controld ctrld creates" \
-    grep -q 'rmdir /etc/controld' "$SCRIPT_DIR/uninstall.sh"
+    code_grep "$SCRIPT_DIR/uninstall.sh" 'rmdir /etc/controld'
 assert_true "uninstall clears runtime state" \
-    grep -q 'controld-degraded' "$SCRIPT_DIR/uninstall.sh"
+    code_grep "$SCRIPT_DIR/uninstall.sh" 'controld-degraded'
 assert_true "uninstall checks rc.local ownership" \
-    grep -q 'is_our_rc_local' "$SCRIPT_DIR/uninstall.sh"
+    code_grep "$SCRIPT_DIR/uninstall.sh" 'is_our_rc_local'
 assert_true "uninstall restores a pre-install rc.local" \
-    grep -q 'rc.local.pre-controld' "$SCRIPT_DIR/uninstall.sh"
+    code_grep "$SCRIPT_DIR/uninstall.sh" 'rc.local.pre-controld'
 assert_false "rc.local is not in the blind removal list" \
-    grep -qE '^\s+/cfg/rc.local ' "$SCRIPT_DIR/uninstall.sh"
+    code_grep "$SCRIPT_DIR/uninstall.sh" -E '^\s+/cfg/rc.local '
 assert_true "setup backs up a foreign rc.local" \
-    grep -q 'rc.local.pre-controld' "$SCRIPT_DIR/setup.sh"
+    code_grep "$SCRIPT_DIR/setup.sh" 'rc.local.pre-controld'
 
 # The redirect port is per-install (setup.sh moves off 5354 when it is taken),
 # so uninstall must read controld.env before it removes anything. Without it,
@@ -970,15 +970,15 @@ assert_true "setup backs up a foreign rc.local" \
 # pointing at a port with nothing behind it. A source assertion because the
 # behaviour needs /cfg, uci and iptables; it checks ordering, not presence,
 # since a load_env below the first use would be no better than none.
-UNINST_LOADS=$(grep -n '^load_env' "$SCRIPT_DIR/uninstall.sh" | head -1 | cut -d: -f1)
-UNINST_USES=$(grep -n 'remove_dns_redirects "' "$SCRIPT_DIR/uninstall.sh" | head -1 | cut -d: -f1)
+UNINST_LOADS=$(code_lineno "$SCRIPT_DIR/uninstall.sh" '^load_env')
+UNINST_USES=$(code_lineno "$SCRIPT_DIR/uninstall.sh" 'remove_dns_redirects "')
 UNINST_ORDER=no
 if [ -n "$UNINST_LOADS" ] && [ -n "$UNINST_USES" ] && [ "$UNINST_LOADS" -lt "$UNINST_USES" ]; then
     UNINST_ORDER=yes
 fi
 assert_eq "uninstall loads the install's config before removing rules" "yes" "$UNINST_ORDER"
 assert_false "uninstall does not hardcode the default port" \
-    grep -qE 'grep -c "5354"|--to-ports 5354' "$SCRIPT_DIR/uninstall.sh"
+    code_grep "$SCRIPT_DIR/uninstall.sh" -E 'grep -c "5354"|--to-ports 5354'
 
 # The teardown must survive everything that runs after it.
 #
@@ -1053,8 +1053,8 @@ assert_contains     "the managed block is still there to hold them" \
 
 # uninstall.sh must not announce the teardown before the last thing that can
 # undo it. The check has to come after disable_forced_dns.
-UF_FWCHECK=$(grep -n 'carries no redirect to port' "$SCRIPT_DIR/uninstall.sh" | head -1 | cut -d: -f1)
-UF_DISABLE=$(grep -n '^    disable_forced_dns$' "$SCRIPT_DIR/uninstall.sh" | head -1 | cut -d: -f1)
+UF_FWCHECK=$(code_lineno "$SCRIPT_DIR/uninstall.sh" 'carries no redirect to port')
+UF_DISABLE=$(code_lineno "$SCRIPT_DIR/uninstall.sh" '^    disable_forced_dns$')
 UF_ORDER=no
 if [ -n "$UF_FWCHECK" ] && [ -n "$UF_DISABLE" ] && [ "$UF_DISABLE" -lt "$UF_FWCHECK" ]; then
     UF_ORDER=yes
@@ -1121,7 +1121,7 @@ unset CRON_STORE
 # crontab, so status.sh grepping syslog for watchdog messages is not caught.
 for _cs in setup.sh status.sh uninstall.sh reconfigure.sh audit.sh; do
     assert_eq "${_cs} matches cron jobs by script path, not the bare word" "" \
-        "$(grep -vE '^[[:space:]]*#' "$SCRIPT_DIR/$_cs" \
+        "$(code_only "$SCRIPT_DIR/$_cs" \
            | grep 'crontab' | grep -E '(watchdog|controld-update)' | grep -v '/cfg/')"
 done
 
@@ -1233,7 +1233,7 @@ assert_eq "a second enable adds no duplicates" "53 8530 853" \
 PATH="$FD_SAVED_PATH"
 unset UCI_STORE FW_USER SYSFS_NET DNS_PORT FORCED_DNS
 assert_false "setup.sh never hardcodes FORCED_DNS=0" \
-    grep -q '^FORCED_DNS=0$' "$SCRIPT_DIR/setup.sh"
+    code_grep "$SCRIPT_DIR/setup.sh" '^FORCED_DNS=0$'
 
 describe "version split — tools version vs pinned ctrld"
 
@@ -1243,9 +1243,9 @@ assert_match "CTRLD_PIN is semver"  "$CTRLD_PIN"  '^[0-9]+\.[0-9]+\.[0-9]+$'
 # setup.sh at a ctrld release that does not exist.
 assert_false "the two versions are not the same variable" [ "$VERSION" = "$CTRLD_PIN" ]
 assert_true  "download URLs use the pin, not the tools version" \
-    grep -q 'releases/download/v${CTRLD_PIN}' "$SCRIPT_DIR/setup.sh"
+    code_grep "$SCRIPT_DIR/setup.sh" 'releases/download/v${CTRLD_PIN}'
 assert_false "no download URL is built from VERSION" \
-    grep -q 'releases/download/v${VERSION}' "$SCRIPT_DIR/setup.sh"
+    code_grep "$SCRIPT_DIR/setup.sh" 'releases/download/v${VERSION}'
 
 describe "checksum_for_asset() — release verification"
 
@@ -1333,6 +1333,9 @@ for _fn in $(grep -oE '^[a-z_][a-z0-9_]*\(\)' "$SCRIPT_DIR/lib.sh" | tr -d '()')
     # input and blocks forever, hanging the whole suite instead of failing.
     # shellcheck disable=SC2086  # the file list must word-split
     _refs=$(grep -hoE "\b${_fn}\b" $LIB_SCAN </dev/null 2>/dev/null | wc -l)
+    # The one scan that must keep reading comments: a function's own "# Usage:"
+    # line is deliberately counted as a self-reference, so code_only here would
+    # make every documented function look like it had one caller too many.
     _self=$(grep -cE "^${_fn}\(\)|^# Usage: ${_fn}\b" "$SCRIPT_DIR/lib.sh")
     [ "$((_refs - _self))" -gt 0 ] || LIB_DEAD="${LIB_DEAD} ${_fn}"
 done
@@ -1374,10 +1377,10 @@ assert_false "reports failure when there is no log at all" \
 # comment above the call and the "checked logread and ..." message both name it
 # on purpose, and matching those would fail for the wrong reason.
 assert_eq "status.sh does not invoke logread itself" "" \
-    "$(grep -vE '^[[:space:]]*#' "$SCRIPT_DIR/status.sh" \
+    "$(code_only "$SCRIPT_DIR/status.sh" \
        | grep -E '\$\(logread|logread[[:space:]]*\||^[[:space:]]*logread' || true)"
 assert_true  "status.sh goes through the helper" \
-    grep -q 'log_lines ' "$SCRIPT_DIR/status.sh"
+    code_grep "$SCRIPT_DIR/status.sh" 'log_lines '
 
 # A rotated syslog must not blank the section. syslogd -b N moves the live file
 # to <file>.0 and starts a new one, so on a router that logs steadily the event
@@ -1413,7 +1416,8 @@ assert_contains "an event that has already rotated is still reported" \
 # hardcoded, so a tag added later cannot go missing the same way.
 SL_PAT="$(sed -n "s/.*log_lines '\([^']*\)'.*/\1/p" "$SCRIPT_DIR/status.sh")"
 assert_true "status.sh has an activity filter to check" test -n "$SL_PAT"
-for _sl_tag in $(grep -rho 'logger -t [A-Za-z0-9._-]*' "$SCRIPT_DIR"/*.sh \
+for _sl_tag in $(for _sl_f in "$SCRIPT_DIR"/*.sh; do code_only "$_sl_f"; done \
+                 | grep -o 'logger -t [A-Za-z0-9._-]*' \
                  | sed 's/logger -t //' | sort -u); do
     if printf ' %s: message body\n' "$_sl_tag" | grep -qE "$SL_PAT"; then
         _sl_hit=yes
@@ -1442,10 +1446,10 @@ describe "audit.sh — report our own artifacts as ours"
 # The arm itself, not its wording: matching the message text passes even if the
 # case label is changed to something else entirely.
 assert_true "ctrld.prev has its own case arm" \
-    grep -qE '^\s*/cfg/ctrld\.prev\)' "$SCRIPT_DIR/audit.sh"
+    code_grep "$SCRIPT_DIR/audit.sh" -E '^\s*/cfg/ctrld\.prev\)'
 for _ak in ctrld.prev ctrld.toml.bak rc.local.pre-controld; do
     assert_true "${_ak} is on the manifest" \
-        grep -q "^KNOWN=.* ${_ak} " "$SCRIPT_DIR/audit.sh"
+        code_grep "$SCRIPT_DIR/audit.sh" "^KNOWN=.* ${_ak} "
 done
 # FORCED_DNS in controld.env is the source of truth (3bc68c3); uci is restored
 # from it. Reading uci alone reported correct port-853 rules as drift in the
@@ -1510,21 +1514,24 @@ describe "bench_stop() — never the production resolver"
 # restart left it that way until the watchdog's next cycle. The throwaway
 # daemon is identified by the config path it was started with instead.
 assert_true "bench_stop matches on the config path" \
-    grep -q 'trld run -c ${_bs_conf}' "$SCRIPT_DIR/lib.sh"
+    code_grep "$SCRIPT_DIR/lib.sh" 'trld run -c ${_bs_conf}'
 # Scoped to the benchmark regions: a stop_ctrld elsewhere is meant to stop the
 # production daemon, and only a benchmark must never do so.
-SETUP_BENCH="$(sed -n '/── Inline benchmark ──/,/rm -f "\$BENCH_CONF"/p' "$SCRIPT_DIR/setup.sh")"
-RECONF_BENCH="$(sed -n '/^do_benchmark() {/,/^}/p' "$SCRIPT_DIR/reconfigure.sh")"
+# setup.sh's region is delimited by a section comment, so it has to be sliced
+# before comments are blanked, not after — code_only reads the slice from
+# standard input here. reconfigure.sh's is delimited by code either way.
+SETUP_BENCH="$(sed -n '/── Inline benchmark ──/,/rm -f "\$BENCH_CONF"/p' "$SCRIPT_DIR/setup.sh" | code_only)"
+RECONF_BENCH="$(code_only "$SCRIPT_DIR/reconfigure.sh" | sed -n '/^do_benchmark() {/,/^}/p')"
 assert_not_contains "setup.sh's benchmark does not reach for pidof"     "$SETUP_BENCH"  "pidof"
 assert_not_contains "reconfigure.sh's benchmark does not reach for pidof" "$RECONF_BENCH" "pidof"
 assert_contains     "setup.sh's benchmark uses the shared runner"       "$SETUP_BENCH"  "bench_protocol"
 assert_contains     "reconfigure.sh's benchmark uses the shared runner" "$RECONF_BENCH" "bench_protocol"
 assert_eq "benchmark.sh never kills ctrld by pidof" "" \
-    "$(grep -n 'pidof ctrld' "$SCRIPT_DIR/benchmark.sh" || true)"
+    "$(code_only "$SCRIPT_DIR/benchmark.sh" | grep -n 'pidof ctrld' || true)"
 # netstat prints the local address before the PID column, so the old
 # leftover-sweep pattern could never match.
 assert_false "no PID-to-port correlation is left" \
-    grep -q 'netstat -tlnp.*\${_p}' "$SCRIPT_DIR/benchmark.sh"
+    code_grep "$SCRIPT_DIR/benchmark.sh" 'netstat -tlnp.*\${_p}'
 
 describe "carry_policy_blocks() — a config rewrite must not drop split DNS"
 
@@ -1799,15 +1806,15 @@ assert_false "trailing zeros are not newer"        version_gt 1.5.7 1.5.7.0
 # The pin is a starting point; the weekly updater moves CTRLD_VERSION past it.
 # Downloading it unconditionally rewound both the binary and the record.
 assert_true "setup.sh keeps an installed ctrld newer than the pin" \
-    grep -q 'version_gt "$CTRLD_INSTALLED" "$CTRLD_PIN"' "$SCRIPT_DIR/setup.sh"
+    code_grep "$SCRIPT_DIR/setup.sh" 'version_gt "$CTRLD_INSTALLED" "$CTRLD_PIN"'
 assert_false "setup.sh no longer records the pin unconditionally" \
-    grep -qE '^CTRLD_VERSION="\$\{CTRLD_PIN\}"$' "$SCRIPT_DIR/setup.sh"
+    code_grep "$SCRIPT_DIR/setup.sh" -E '^CTRLD_VERSION="\$\{CTRLD_PIN\}"$'
 # Deleting this writes an empty CTRLD_VERSION into controld.env, which breaks
 # post-cfg.sh's self-heal and the weekly updater. Nothing covered it.
 assert_true "the keep branch records the version it kept" \
-    grep -q 'CTRLD_VERSION="$CTRLD_INSTALLED"' "$SCRIPT_DIR/setup.sh"
+    code_grep "$SCRIPT_DIR/setup.sh" 'CTRLD_VERSION="$CTRLD_INSTALLED"'
 assert_true "a kept binary must prove it runs" \
-    grep -q '/cfg/ctrld --version' "$SCRIPT_DIR/setup.sh"
+    code_grep "$SCRIPT_DIR/setup.sh" '/cfg/ctrld --version'
 
 describe "write_env_file() — a rewrite must not drop the keys it does not manage"
 
@@ -1897,7 +1904,7 @@ assert_eq "the second PID, alone"  "4144" "$(sed -n 2p "$SC_LOG")"
 # and update paths, so no caller may reintroduce it.
 for _ks in lib.sh setup.sh reconfigure.sh uninstall.sh benchmark.sh status.sh audit.sh; do
     assert_false "${_ks} does not pack multiple PIDs into one kill" \
-        grep -qE 'kill (-9 )?"\$\(pidof' "$SCRIPT_DIR/$_ks"
+        code_grep "$SCRIPT_DIR/$_ks" -E 'kill (-9 )?"\$\(pidof'
 done
 
 describe "start_ctrld() — a timeout in seconds, not one per slow probe"
@@ -1971,7 +1978,7 @@ assert_eq "the generated watchdog's inline start_ctrld gates on the port too" "1
 # setup.sh carried a private _port_in_use with the same two commands. The dead-code
 # scan only catches an unused function, not a duplicated one.
 assert_false "setup.sh no longer carries a private copy of the port check" \
-    grep -q '_port_in_use()' "$SCRIPT_DIR/setup.sh"
+    code_grep "$SCRIPT_DIR/setup.sh" '_port_in_use()'
 
 describe "list_upstreams() / policy_rule_count() — what the readouts report"
 
@@ -2218,11 +2225,11 @@ unset RESOLVER_ID BOOTSTRAP_IP CTRLD_VERSION DNS_TYPE PREFERRED_PROTOCOL
 
 # Both writers must go through it, or the bug comes back in one of them
 assert_true "setup.sh writes the env file through the helper" \
-    grep -q '^write_env_file /cfg/controld.env' "$SCRIPT_DIR/setup.sh"
+    code_grep "$SCRIPT_DIR/setup.sh" '^write_env_file /cfg/controld.env'
 assert_true "reconfigure.sh does too" \
-    grep -q 'write_env_file /cfg/controld.env' "$SCRIPT_DIR/reconfigure.sh"
+    code_grep "$SCRIPT_DIR/reconfigure.sh" 'write_env_file /cfg/controld.env'
 assert_false "no here-doc reads the file it is truncating" \
-    grep -q 'FORCED_DNS=$(preserved_forced_dns' "$SCRIPT_DIR/setup.sh"
+    code_grep "$SCRIPT_DIR/setup.sh" 'FORCED_DNS=$(preserved_forced_dns'
 
 describe "set_fallback_resolver() — the backstop must rotate too"
 
@@ -2259,9 +2266,11 @@ unset UCI_STORE
 
 # Both callers must use it — setup.sh on install, reconfigure.sh on rotation
 assert_true "setup.sh points the fallback at ControlD" \
-    grep -q 'set_fallback_resolver "$RESOLVER_ID"' "$SCRIPT_DIR/setup.sh"
-assert_true "reconfigure.sh rotates the fallback with the resolver" \
-    sh -c "sed -n '/^do_resolver/,/^}/p' '$SCRIPT_DIR/reconfigure.sh' | grep -q set_fallback_resolver"
+    code_grep "$SCRIPT_DIR/setup.sh" 'set_fallback_resolver "$RESOLVER_ID"'
+RECONF_DO_RESOLVER="$(code_only "$SCRIPT_DIR/reconfigure.sh" \
+    | sed -n '/^do_resolver/,/^}/p')"
+assert_contains "reconfigure.sh rotates the fallback with the resolver" \
+    "$RECONF_DO_RESOLVER" "set_fallback_resolver"
 
 describe "audit.sh — reports without touching anything"
 
@@ -2292,8 +2301,8 @@ assert_not_contains "audit.sh never deletes iptables rules" "$(cat "$AUDIT_LOG")
 assert_eq "audit.sh only ever reads the crontab" "" \
     "$(grep '^crontab' "$AUDIT_LOG" | grep -v '^crontab -l$')"
 # No in-place edits or removals anywhere in the source either
-assert_false "audit.sh contains no in-place sed" grep -q 'sed -i' "$SCRIPT_DIR/audit.sh"
-assert_false "audit.sh contains no rm"           grep -qE '(^|[^a-z-])rm ' "$SCRIPT_DIR/audit.sh"
+assert_false "audit.sh contains no in-place sed" code_grep "$SCRIPT_DIR/audit.sh" 'sed -i'
+assert_false "audit.sh contains no rm"           code_grep "$SCRIPT_DIR/audit.sh" -E '(^|[^a-z-])rm '
 
 # An audit that names the wrong version is worse than none: audit.sh can be run
 # from a checkout in /tmp while the router runs something older.
@@ -2320,17 +2329,17 @@ assert_true "audit.sh rejects unknown flags" sh -c "! sh '$SCRIPT_DIR/audit.sh' 
 
 # It must be installed and, just as importantly, removed again
 assert_true "setup.sh installs audit.sh" \
-    grep -q 'UTILITY_SCRIPTS=.*audit\.sh' "$SCRIPT_DIR/setup.sh"
+    code_grep "$SCRIPT_DIR/setup.sh" 'UTILITY_SCRIPTS=.*audit\.sh'
 assert_true "uninstall.sh removes audit.sh" \
-    grep -q '/cfg/audit\.sh' "$SCRIPT_DIR/uninstall.sh"
+    code_grep "$SCRIPT_DIR/uninstall.sh" '/cfg/audit\.sh'
 # A failed reconfigure leaves this behind, holding the previous resolver ID
 assert_true "uninstall.sh removes a stale ctrld.toml.bak" \
-    grep -q '/cfg/ctrld\.toml\.bak' "$SCRIPT_DIR/uninstall.sh"
+    code_grep "$SCRIPT_DIR/uninstall.sh" '/cfg/ctrld\.toml\.bak'
 # backup.sh stored its backup on the partition it existed to protect, and its
 # file list was five files short of a working install
 assert_false "backup.sh is gone" [ -f "$SCRIPT_DIR/backup.sh" ]
 assert_true "uninstall.sh removes the directory it left behind" \
-    grep -q 'rm -rf /cfg/controld-backup' "$SCRIPT_DIR/uninstall.sh"
+    code_grep "$SCRIPT_DIR/uninstall.sh" 'rm -rf /cfg/controld-backup'
 
 describe "--help flags on all scripts"
 for script in setup.sh status.sh benchmark.sh uninstall.sh reconfigure.sh audit.sh; do

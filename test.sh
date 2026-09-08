@@ -619,6 +619,53 @@ assert_false "the snapshot is cleaned up on success" test -f "$WD_DIV/ctrld.toml
 assert_true "audit.sh names the snapshot"     grep -q 'ctrld.toml.fallback' "$SCRIPT_DIR/audit.sh"
 assert_true "uninstall.sh removes it"         grep -q 'ctrld.toml.fallback' "$SCRIPT_DIR/uninstall.sh"
 
+describe "readouts must report the protocol running, not the one recorded"
+
+# status.sh was fixed for this; audit.sh and benchmark.sh read DNS_TYPE the
+# same way and were wrong the same way. audit.sh is the project's drift
+# detector, so a divergence between controld.env and ctrld.toml being
+# invisible to it — while it printed the recorded protocol as an OK line — is
+# the one report that should never have missed this.
+RO_DIR="$TMPDIR/readouts"; rm -rf "$RO_DIR"; mkdir -p "$RO_DIR"
+write_ctrld_config "$RO_DIR/ctrld.toml" abc123 76.76.2.22 doq
+
+RO_BIN="$TMPDIR/ro-bin"; mkdir -p "$RO_BIN"
+for _rc in uci iptables crontab ip nslookup logread pidof netstat; do
+    printf '#!/bin/sh\nexit 1\n' > "$RO_BIN/$_rc"; chmod +x "$RO_BIN/$_rc"
+done
+
+# audit.sh runs off-device, so this is an outcome test on its real output.
+# CTRLD_VERSION has to be set for the line under test to be reached at all.
+RO_OUT="$(PATH="$RO_BIN:$PATH" CTRLD_TOML="$RO_DIR/ctrld.toml" \
+    CTRLD_VERSION=1.3.6 DNS_TYPE=doh3 RESOLVER_ID=abc123 FORCED_DNS=1 \
+    sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+# Anchored to the version line itself: the divergence finding below also
+# names DoQ, so a bare "DoQ (QUIC)" would pass on that alone.
+assert_contains "audit.sh names the protocol ctrld.toml runs" "$RO_OUT" \
+    "ctrld 1.3.6 on DoQ (QUIC)"
+assert_not_contains "not the one controld.env records" "$RO_OUT" "ctrld 1.3.6 on DoH3"
+assert_contains "and raises the divergence as its own finding" "$RO_OUT" \
+    "but ctrld.toml runs DoQ (QUIC)"
+
+# Agreeing files must stay silent, or every clean install reports a finding.
+RO_OK="$(PATH="$RO_BIN:$PATH" CTRLD_TOML="$RO_DIR/ctrld.toml" \
+    CTRLD_VERSION=1.3.6 DNS_TYPE=doq RESOLVER_ID=abc123 FORCED_DNS=1 \
+    sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+assert_not_contains "and says nothing when the two agree" "$RO_OK" "but ctrld.toml runs"
+
+# benchmark.sh measures against live resolvers, so nothing in this suite runs
+# it — these are source assertions, comment-blind, like its existing ones.
+# The comparison is what matters: reading DNS_TYPE there meant a stale record
+# matching the winner printed "(already active)" and hid the fix command.
+assert_true "benchmark.sh takes its current protocol from running_protocol" \
+    code_grep "$SCRIPT_DIR/benchmark.sh" -E \
+    '^BENCH_CURRENT="\$\(running_protocol\)" \|\| BENCH_CURRENT="\$DNS_TYPE"'
+assert_true "and compares the winner against that, not against DNS_TYPE" \
+    code_grep "$SCRIPT_DIR/benchmark.sh" -E \
+    '^if \[ "\$fastest_proto" != "\$BENCH_CURRENT" \]; then'
+assert_false "so no live comparison against DNS_TYPE is left" \
+    code_grep "$SCRIPT_DIR/benchmark.sh" -E '!= "\$DNS_TYPE"'
+
 describe "watchdog — the fallback chain must start from the protocol actually running"
 
 # The fallback loop seeds next_proto from DNS_TYPE. Reconciliation happens on

@@ -73,6 +73,15 @@ done
 
 load_env || die "Run setup.sh first.  (/cfg/controld.env not found)"
 
+# What the router is running, which is not always what controld.env records —
+# see running_protocol in lib.sh. This script only measures and recommends, it
+# never writes, so it reads the config directly rather than waiting for
+# something else to reconcile the record. The difference is not cosmetic: with
+# the record stale, a benchmark whose winner happened to match the recorded
+# name printed "(already active)" and withheld the one command that would
+# actually have moved the router onto it.
+BENCH_CURRENT="$(running_protocol)" || BENCH_CURRENT="$DNS_TYPE"
+
 if [ -z "$RESOLVER_ID" ]; then
     die "RESOLVER_ID is empty.  Check /cfg/controld.env"
 fi
@@ -92,7 +101,7 @@ trap cleanup EXIT
 print_banner
 print_header "DNS Protocol Benchmark"
 printf "  Resolver:       ${BOLD}%s${RESET}\n" "$RESOLVER_ID"
-printf "  Current proto:  %s\n" "$(proto_label "$DNS_TYPE")"
+printf "  Current proto:  %s\n" "$(proto_label "$BENCH_CURRENT")"
 printf "  Queries/protc:  %d\n" "$QUERIES"
 printf "  Test domains:   %d\n" "$BENCH_DOMAIN_COUNT"
 printf "  Test port:      %d  (production on %d)\n" "$TEST_PORT" "$DNS_PORT"
@@ -146,9 +155,9 @@ fi
 rec_label=$(proto_label "$fastest_proto")
 print_ok "Recommended: ${rec_label}  (${fastest_ms}ms avg)"
 
-if [ "$fastest_proto" != "$DNS_TYPE" ]; then
+if [ "$fastest_proto" != "$BENCH_CURRENT" ]; then
     printf "\n"
-    print_warn "Current protocol is $(proto_label "$DNS_TYPE")."
+    print_warn "Current protocol is $(proto_label "$BENCH_CURRENT")."
     printf "  To switch to ${GREEN}${rec_label}${RESET}:\n\n"
     # This used to print `rm /cfg/ctrld.toml` + re-run post-cfg.sh, which is the
     # one procedure docs/troubleshooting.md warns discards any split-DNS policy:

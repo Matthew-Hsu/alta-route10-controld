@@ -159,6 +159,10 @@ SYSFS_NET="${SYSFS_NET:-/sys/class/net}"
 # audit.sh compares the two: running a newer checkout against an older install
 # is drift worth naming.
 INSTALLED_LIB="${INSTALLED_LIB:-/cfg/lib.sh}"
+# The ctrld config the router actually runs from. Overridable for the same
+# reason as the two above: the readouts that report what protocol is running
+# are otherwise only checkable by grepping their own source.
+CTRLD_TOML="${CTRLD_TOML:-/cfg/ctrld.toml}"
 
 # List the LAN bridges that DNS must be intercepted on, one per line.
 #
@@ -377,7 +381,7 @@ list_upstreams() {
 # this router using for ordinary DNS right now."
 # Usage: running_protocol [config]
 running_protocol() {
-    _rnp_type="$(list_upstreams "${1:-/cfg/ctrld.toml}" | $AWK -F'\t' '$1 == "0" { print $3; exit }')"
+    _rnp_type="$(list_upstreams "${1:-$CTRLD_TOML}" | $AWK -F'\t' '$1 == "0" { print $3; exit }')"
     # Fail closed on anything this project does not manage. That covers the
     # empty string from a missing file and list_upstreams' "(unset)" for a
     # block with no type, but equally a hand-edited or half-written value:
@@ -410,7 +414,7 @@ running_protocol() {
 # Usage: reconcile_dns_type [env_file] [ctrld_config]
 reconcile_dns_type() {
     _rdt_env="${1:-/cfg/controld.env}"
-    _rdt_toml="${2:-/cfg/ctrld.toml}"
+    _rdt_toml="${2:-$CTRLD_TOML}"
     [ -f "$_rdt_env" ] || return 1
     _rdt_actual="$(running_protocol "$_rdt_toml")" || return 1
     [ "$_rdt_actual" != "$DNS_TYPE" ] || return 1

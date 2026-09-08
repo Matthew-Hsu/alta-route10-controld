@@ -93,7 +93,18 @@ else
 fi
 
 if [ -n "${CTRLD_VERSION:-}" ]; then
-    print_ok "ctrld ${CTRLD_VERSION} on $(proto_label "${DNS_TYPE:-doh3}")"
+    # The protocol reported is the one ctrld.toml is configured for, not the
+    # one controld.env records. Those disagree after a protocol change that
+    # was interrupted between rewriting the config and recording the result,
+    # and an audit naming the protocol the router is not running is the same
+    # mistake as an audit naming a version it is not running.
+    _au_running="$(running_protocol)" || _au_running=""
+    print_ok "ctrld ${CTRLD_VERSION} on $(proto_label "${_au_running:-${DNS_TYPE:-doh3}}")"
+    if [ -n "$_au_running" ] && [ "$_au_running" != "${DNS_TYPE:-doh3}" ]; then
+        # review, not drift: the next healthy watchdog cycle reconciles this
+        # on its own, the same reason the fallback snapshot is only reviewed.
+        review "controld.env records $(proto_label "${DNS_TYPE:-doh3}") but ctrld.toml runs $(proto_label "$_au_running") — an interrupted protocol change; the next healthy watchdog cycle corrects it, or any reconfigure.sh action does it now"
+    fi
 else
     review "No ctrld version recorded — /cfg/controld.env missing or unreadable"
 fi

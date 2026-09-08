@@ -91,6 +91,20 @@ had set up. A test that reads a real path is only testing the sandbox until
 someone runs it on a router — derive the expected values from wherever the
 code under test will actually read them.
 
+**The router's shell is BusyBox `ash`, and bashisms fail quietly there.** A
+developer shell is almost always bash, which accepts a good deal that `ash`
+does not, and the difference usually shows up as silence rather than an error.
+The one that shipped: `.` is a POSIX special built-in, so a failed `.` exits a
+non-interactive shell on the spot and any `|| fallback` after it never runs —
+bash is the outlier that reaches it. Three scripts bootstrapped `lib.sh` that
+way with stderr discarded, so running one from a directory without `lib.sh`
+beside it produced no output at all and exit 2, and their `/cfg` fallback had
+never once worked on the device. `uninstall.sh` was among them: it removed
+nothing and looked no different from having succeeded. Process substitution
+(`<(cmd)`) is the same trap in miniature — a syntax error on the router, fine
+on a Mac. Prefer POSIX constructs, and when a script must degrade, make it say
+so on stderr: a silent exit is indistinguishable from success.
+
 **Time is one of the things a sandbox gets wrong.** A loop bounded by iteration
 count rather than wall clock is only as fast as its slowest probe, and probe
 costs differ by an order of magnitude between CI and a router: a DNS query to a

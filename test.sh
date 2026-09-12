@@ -1871,6 +1871,38 @@ audit_drift_count() {
     printf '%s' "${_adc:-0}"
 }
 
+describe "audit.sh — a wiped firewall.user block must not pass as healthy"
+
+# An empty firewall.user with an install recorded means the redirects exist in
+# the live table but nowhere that survives a firewall reload. The watchdog
+# rewrites the block, so this only bites while cron is dead as well — and a
+# firmware update resetting /etc can take both, so it is not left to that.
+FW_BIN="$TMPDIR/fwbin"; mkdir -p "$FW_BIN"
+for _fs in uci iptables ip nslookup logread pidof netstat crontab; do
+    printf '#!/bin/sh\nexit 1\n' > "$FW_BIN/$_fs"; chmod +x "$FW_BIN/$_fs"
+done
+FW_EMPTY="$TMPDIR/fw-empty.user"; : > "$FW_EMPTY"
+
+FW_OUT="$(PATH="$FW_BIN:$PATH" FW_USER="$FW_EMPTY" CTRLD_VERSION=1.5.7 \
+    sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+assert_contains "an empty firewall.user is reported when an install is recorded" \
+    "$FW_OUT" "will not survive a firewall reload"
+# Severity from the count, for the same reason.
+printf '# controld-dns-redirect BEGIN\n# controld-dns-redirect END\n' > "$TMPDIR/fw-ok.user"
+FW_OK="$(PATH="$FW_BIN:$PATH" FW_USER="$TMPDIR/fw-ok.user" CTRLD_VERSION=1.5.7 \
+    sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+assert_eq "an empty firewall.user adds exactly one drift item" \
+    "$(( $(audit_drift_count "$FW_OK") + 1 ))" "$(audit_drift_count "$FW_OUT")"
+
+# Nothing installed: an empty firewall.user is simply correct.
+if [ -f /cfg/controld.env ] && grep -q '^CTRLD_VERSION=' /cfg/controld.env 2>/dev/null; then
+    skip "bare checkout (this router's controld.env supplies CTRLD_VERSION)"
+else
+    FW_NONE="$(PATH="$FW_BIN:$PATH" FW_USER="$FW_EMPTY" sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+    assert_not_contains "but not when nothing is installed" \
+        "$FW_NONE" "will not survive a firewall reload"
+fi
+
 describe "audit.sh — a wiped crontab must not pass as healthy"
 
 # The neighbouring check inspects only the jobs that are present, so an empty

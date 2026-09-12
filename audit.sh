@@ -137,6 +137,14 @@ case "$blocks" in
     1) print_ok "Exactly one managed block in ${FW_USER}" ;;
     0) if [ -s "$FW_USER" ] && grep -q REDIRECT "$FW_USER" 2>/dev/null; then
            drift "${FW_USER} has REDIRECT lines but no managed block"
+       elif [ -n "${CTRLD_VERSION:-}" ]; then
+           # No block is correct only when nothing is installed. With an
+           # install recorded, the redirects are gone from the one file that
+           # survives a firewall reload — they hold until the next reload and
+           # then vanish. The watchdog rewrites the block, so this is only
+           # reachable while cron is dead too; a firmware update resetting
+           # /etc can take both, which is why it is not left to that.
+           drift "No managed block in ${FW_USER} — redirects will not survive a firewall reload"
        else
            print_ok "No managed block in ${FW_USER}, and nothing stray"
        fi ;;

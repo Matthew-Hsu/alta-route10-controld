@@ -1864,6 +1864,23 @@ SETUP_UP="$(sed -n "/cat > \/cfg\/controld-update.sh << 'UPDATESCRIPT'/,/^UPDATE
 assert_contains "post-cfg.sh adopts the old spelling too"        "$SETUP_PC" 'CURLD_VERSION'
 assert_contains "the weekly updater adopts the old spelling too" "$SETUP_UP" 'CURLD_VERSION'
 
+describe "audit.sh — a boot hook that never runs must fail the audit"
+
+# Reported as `review` once, so audit.sh exited 0 while boot persistence was
+# dead: nothing would reinstall cron, restore the redirects or re-apply forced
+# DNS at the next boot, and nothing self-heals it in the meantime. Every other
+# review item either self-corrects on a healthy watchdog cycle or is cosmetic.
+# A firmware update resetting /etc is how this arises, and the exit code is
+# what gets checked afterwards.
+#
+# Source assertion, not an outcome test: this arm fires only when /cfg/rc.local
+# exists and /etc/rc.local does not source it, and staging that means writing
+# to /etc/rc.local — which on a router is the live boot hook. Nothing in this
+# suite is worth breaking a router's boot to assert.
+assert_true "a boot hook that is never sourced is drift, not a review note" \
+    code_grep "$SCRIPT_DIR/audit.sh" -E \
+    '^[[:space:]]*drift "/cfg/rc\.local exists but /etc/rc\.local does not source it'
+
 describe "audit.sh version drift — which way round"
 
 # The else branch hardcoded "the router is behind the checkout", so auditing an

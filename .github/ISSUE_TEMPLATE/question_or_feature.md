@@ -1,8 +1,8 @@
 ---
 name: Question or feature request
-about: Anything that isn't a bug report — a question, an idea, or feedback.
+about: A question, an idea, or feedback, rather than a bug report.
 title: ""
 labels: []
 ---
-<!-- For something not behaving as documented, use "Bug report" instead —
-     that one asks for what's actually needed to reproduce it. -->
+<!-- For something not behaving as documented, use "Bug report" instead.
+     That one asks for what's actually needed to reproduce it. -->

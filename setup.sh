@@ -4,7 +4,8 @@
 #   wget -O /tmp/setup.sh https://raw.githubusercontent.com/Matthew-Hsu/alta-route10-controld/master/setup.sh
 #   sh /tmp/setup.sh
 #
-# lib.sh is auto-downloaded if not present — no need to wget it separately.
+# lib.sh is auto-downloaded if not present, so there is no need to wget it
+# separately.
 #
 # Supports: DoH (HTTP/2), DoH3 (HTTP/3), DoQ (QUIC)
 # All prompts have defaults in [brackets] -- press Enter to accept.
@@ -300,8 +301,8 @@ fi
 # CTRLD_PIN is where a fresh install starts, not a version to hold the router
 # at: the weekly updater moves CTRLD_VERSION forward from it. Downloading the
 # pin unconditionally therefore rolled a re-install back to it and rewrote the
-# recorded version down to match, undoing however many updates had landed —
-# silently, and on the operation the README calls the upgrade path.
+# recorded version down to match, undoing however many updates had landed. It
+# did that silently, and on the operation the README calls the upgrade path.
 #
 # Only a strictly newer install is kept. An install sitting exactly on the pin
 # is re-downloaded as before, so re-running setup.sh still repairs a corrupt
@@ -309,7 +310,7 @@ fi
 CTRLD_INSTALLED="$(sed -n 's/^CTRLD_VERSION=\([0-9.]*\).*/\1/p' /cfg/controld.env 2>/dev/null | head -1)"
 # `-x` alone is not health: a truncated or half-flashed binary still satisfies
 # it, and once the weekly updater has moved past the pin this branch is the
-# steady state — so re-running the installer would have kept a broken binary
+# steady state, so re-running the installer would have kept a broken binary
 # rather than repairing it. Make it prove it runs.
 if [ -x /cfg/ctrld ] && [ -n "$CTRLD_INSTALLED" ] \
    && version_gt "$CTRLD_INSTALLED" "$CTRLD_PIN" \
@@ -351,7 +352,7 @@ print_ok "/cfg/controld.env written"
 
 # A re-install used to overwrite this outright, with no backup and no
 # carry-over, so every policy upstream, network block and routing rule was
-# gone — on the operation the README calls always safe and the documented
+# gone, on the operation the README calls always safe and the documented
 # upgrade path, and silently in the non-interactive form, which never reaches
 # the wizard below. reconfigure.sh has preserved these across a rewrite since
 # bc9fafd; setup.sh now uses the same carry-over.
@@ -568,7 +569,8 @@ if check_dns "127.0.0.1#${DNS_PORT}"; then
     ensure_iptables "$DNS_PORT" || true
     # Persist the redirects so a firewall reload restores them instantly
     command -v ensure_firewall_user_rules >/dev/null 2>&1 && { ensure_firewall_user_rules "$DNS_PORT" || true; }
-    # Restore forced-DNS state (port 853 + uci) if enabled — survives reboot/firmware
+    # Restore forced-DNS state (port 853 + uci) if enabled. Survives a reboot
+    # and a firmware update.
     command -v ensure_forced_dns >/dev/null 2>&1 && ensure_forced_dns
     logger -t post-cfg "ctrld started (${DNS_TYPE}), DNS redirected to ${DNS_PORT} on: $(lan_ifaces | tr '\n' ' ')"
 else
@@ -853,8 +855,8 @@ fi
 # share the fail-count file, where one instance's reset erases another's
 # debounce, and they rewrite ctrld.toml underneath each other through the
 # fallback loop. Three at once were observed on a router. Timing alone is not a
-# guarantee — a stalled resolver can still stretch a cycle past five minutes —
-# so the invariant is enforced rather than assumed.
+# guarantee, because a stalled resolver can still stretch a cycle past five
+# minutes, so the invariant is enforced rather than assumed.
 #
 # mkdir is the atomic primitive available everywhere; BusyBox is not always
 # built with flock. A lock whose owner is gone is cleared rather than honoured,
@@ -892,7 +894,7 @@ MAX_RESTART_ATTEMPTS=3
 # A restart that *works* used to exit 0 as well, and that is just as wrong once
 # the teardown above can actually fire. The health path below is what re-adds
 # the redirects, restores forced DNS and clears the degraded flag, and after a
-# teardown all of that is gone — so the very cycle that revived ctrld left the
+# teardown all of that is gone, so the very cycle that revived ctrld left the
 # router with a healthy resolver and no redirects, and per-device visibility
 # stayed off until some later cycle happened to find ctrld already running.
 # Observed on hardware: ctrld back on PID 9949 and answering, 0 redirect rules,
@@ -916,7 +918,8 @@ FAIL_COUNT_FILE="/tmp/controld-dns-fail.count"
 FAIL_THRESHOLD="${FAIL_THRESHOLD:-2}"
 
 if check_dns "127.0.0.1#${DNS_PORT}"; then
-    # DNS healthy — self-heal forced-DNS state (drift only) + check discovery inputs.
+    # DNS healthy: self-heal forced-DNS state (drift only) and check the
+    # discovery inputs.
     # ensure_iptables is idempotent (iptables -C per rule) and picks up bridges
     # added since install, so a new VLAN starts resolving through ctrld within
     # 5 minutes instead of at the next reboot.
@@ -948,12 +951,12 @@ rm -f "$FAIL_COUNT_FILE"
 
 # The chain below is walked from DNS_TYPE, so DNS_TYPE has to be true before
 # the first attempt. Reconciliation otherwise happens only on the healthy
-# branch, inside do_upgrade_check — which this path by definition never
+# branch, inside do_upgrade_check, which this path by definition never
 # reaches. A router that rebooted mid-fallback comes back with ctrld.toml on
 # one protocol and controld.env naming another, and the next sustained
 # failure then seeds next_proto from the stale name: with the chain
 # "doh3 doh" and ctrld.toml actually on DoH while DNS_TYPE says DoH3,
-# attempts 1 and 3 both retarget to DoH — the protocol that just failed —
+# attempts 1 and 3 both retarget to DoH, the protocol that just failed,
 # leaving one attempt in three doing anything new, while the whole LAN has no
 # DNS. It also makes the two log lines below say what is really running.
 # Guarded: an install whose lib.sh predates this has no such function, and
@@ -976,8 +979,8 @@ logger -t watchdog "restored iptables rules"
 # tried last while controld.env still named the original. With the chain
 # "doh3 doh" and three attempts that lands on DoH, and nothing reconciles the
 # two afterwards: the next cycle restarts ctrld from the toml and logs the env's
-# protocol, so the router runs DoH while status.sh reports DoH3 — across
-# reboots, since both files are on /cfg. Restoring the snapshot leaves the pair
+# protocol, so the router runs DoH while status.sh reports DoH3, and it does
+# so across reboots, since both files are on /cfg. Restoring the snapshot leaves the pair
 # consistent on the protocol that was at least known to have worked once.
 _wd_snapshot=/cfg/ctrld.toml.fallback
 cp /cfg/ctrld.toml "$_wd_snapshot" 2>/dev/null || _wd_snapshot=""
@@ -1041,7 +1044,7 @@ print_ok "Watchdog installed (5-min health check + protocol fallback)"
 
 # /etc/rc.local sources this path only when it exists, which makes it the
 # sanctioned spot for a user's own boot hooks. Never overwrite one we did not
-# write — keep a copy so nothing is lost silently.
+# write: keep a copy so nothing is lost silently.
 if [ -f /cfg/rc.local ] && ! is_our_rc_local /cfg/rc.local; then
     cp /cfg/rc.local /cfg/rc.local.pre-controld
     print_warn "Existing /cfg/rc.local was not ours — saved to /cfg/rc.local.pre-controld"
@@ -1111,7 +1114,7 @@ cat > /cfg/controld-update.sh << 'UPDATESCRIPT'
 # resolves, and it is put back if it cannot.
 [ -f /cfg/controld.env ] || exit 0
 . /cfg/controld.env
-# Old upstream spelling — see the note in post-cfg.sh above.
+# Old upstream spelling. See the note in post-cfg.sh above.
 CTRLD_VERSION="${CTRLD_VERSION:-${CURLD_VERSION:-}}"
 
 if [ -f /cfg/lib.sh ]; then
@@ -1184,7 +1187,7 @@ if start_ctrld_wait; then
     exit 0
 fi
 
-# New binary will not resolve — put the old one back and leave the recorded
+# New binary will not resolve: put the old one back and leave the recorded
 # version alone so next week retries.
 logger -t controld-update "${LATEST} failed to resolve after install — rolling back to ${CURRENT}"
 for _kp in $(pidof ctrld 2>/dev/null); do kill "$_kp" 2>/dev/null || true; done

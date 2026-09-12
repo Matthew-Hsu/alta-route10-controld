@@ -159,3 +159,8 @@ deliberately adopt a newer upstream `ctrld`.
 POSIX `sh`, not bash. The router runs BusyBox ash. No process substitution,
 no arrays, no `[[ ]]`. Prefer shell builtins over spawning `awk`/`sed` where it
 is a wash, and when you do use `awk`, avoid passing regexes through `-v`.
+
+For prose, this project follows `blader/humanizer`'s `SKILL.md`, which covers
+markdown, commit messages, PR bodies and shell comments alike. See AGENTS.md's
+"Prose" section for how to apply it and, more importantly, for the comments and
+strings that code reads and that must never be reworded.

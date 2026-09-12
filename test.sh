@@ -374,6 +374,13 @@ sed -n "/^cat > \/cfg\/rc.local << 'RCLOCAL'/,/^RCLOCAL$/p" "$SCRIPT_DIR/setup.s
     | sed '1d;$d' > "$RCGEN"
 assert_true  "the generated hook carries the marker" is_our_rc_local "$RCGEN"
 
+# is_our_rc_local also matches the logger line, so the assertion above still
+# passes with the marker comment deleted. That comment is an interface rather
+# than commentary (AGENTS.md, "Prose"), so assert the marker itself, or a prose
+# pass over setup.sh could drop it with the suite staying green.
+assert_true  "the generated hook carries the marker literally" \
+    grep -qF "$RC_MARKER" "$RCGEN"
+
 # It is sourced by /etc/rc.local, which runs its own logic afterwards: an exit
 # or set -e here would silently skip the rest of the router's boot script.
 assert_false "generated hook has no exit"   grep -qE '^[[:space:]]*exit' "$RCGEN"

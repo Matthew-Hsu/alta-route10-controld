@@ -31,8 +31,8 @@ environment almost certainly has none of that.
 
 - Before saying a feature works, check README.md's "Verification Status"
   section. If it is in the "not exercised on hardware" table, say so rather
-  than implying the suite covers it — and if you do verify one on a device,
-  move the row and record what you ran.
+  than implying the suite covers it. If you do verify one on a device, move
+  the row and record what you ran.
 
 ## Verify before you claim
 
@@ -52,8 +52,8 @@ what's written there.
 
 **But never put a URL in a commit message or PR body**, including a session
 link your harness adds automatically. Many harnesses append one; remove it.
-This is not optional and it is not a matter of taste — see `CONTRIBUTING.md`
-for why. Cite commits by hash and files by path instead.
+This is a hard rule. See `CONTRIBUTING.md` for why. Cite commits by hash and
+files by path instead.
 
 ## Scope discipline
 

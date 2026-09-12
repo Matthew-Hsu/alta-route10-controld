@@ -23,7 +23,7 @@ a `Co-Authored-By` trailer or similar tool attribution. Leave it.
 **No URLs in commit messages or PR bodies.** Not session links, not tool
 homepages, not anything else. A commit message is read in `git log` on a
 router over SSH, years after the link stops resolving, by someone who cannot
-click it — attribution is a name, not a link. If your tool appends one by
+click it. Attribution is a name, not a link. If your tool appends one by
 default, strip it before committing. Reference commits by hash and files by
 path; both stay meaningful offline and forever.
 
@@ -79,7 +79,7 @@ BusyBox awk mangling a regex, a cron guard matching another service's job, a
 config flag reset on re-install, `logread` failing on firmware whose syslogd
 has no buffer, a wait loop that was fast in a sandbox and pathological on
 hardware, and the watchdog's own protocol-fallback loop left half-applied by a
-reboot landing mid-retry — nothing external ever interrupts a process mid-run
+reboot landing mid-retry. Nothing external ever interrupts a process mid-run
 in a sandbox test. **Anything touching iptables, cron, `/etc/firewall.user` or
 boot persistence must be exercised on a real device, including a reboot**,
 before it is called done.
@@ -88,20 +88,20 @@ The suite itself is not exempt. An `audit.sh` outcome test passed everywhere
 `/cfg/controld.env` did not exist and failed the moment it did, because
 `load_env` sources that file and silently wins over the environment the test
 had set up. A test that reads a real path is only testing the sandbox until
-someone runs it on a router — derive the expected values from wherever the
+someone runs it on a router. Derive the expected values from wherever the
 code under test will actually read them.
 
 **The router's shell is BusyBox `ash`, and bashisms fail quietly there.** A
 developer shell is almost always bash, which accepts a good deal that `ash`
 does not, and the difference usually shows up as silence rather than an error.
 The one that shipped: `.` is a POSIX special built-in, so a failed `.` exits a
-non-interactive shell on the spot and any `|| fallback` after it never runs —
-bash is the outlier that reaches it. Three scripts bootstrapped `lib.sh` that
+non-interactive shell on the spot and any `|| fallback` after it never runs.
+Bash is the outlier that reaches it. Three scripts bootstrapped `lib.sh` that
 way with stderr discarded, so running one from a directory without `lib.sh`
 beside it produced no output at all and exit 2, and their `/cfg` fallback had
 never once worked on the device. `uninstall.sh` was among them: it removed
 nothing and looked no different from having succeeded. Process substitution
-(`<(cmd)`) is the same trap in miniature — a syntax error on the router, fine
+(`<(cmd)`) is the same trap in miniature: a syntax error on the router, fine
 on a Mac. Prefer POSIX constructs, and when a script must degrade, make it say
 so on stderr: a silent exit is indistinguishable from success.
 
@@ -136,7 +136,7 @@ on `master` moves it, and that commit is tagged.** A branch never bumps it, no
 matter how much it changes.
 
 Two reasons. Unmerged work is not released, so a branch that raises `VERSION`
-is claiming a version that does not exist yet — and if it is never merged, or
+is claiming a version that does not exist yet, and if it is never merged, or
 merged after something else that did the same, the number is simply wrong. And
 two branches that both bump collide on the one line guaranteed to conflict.
 

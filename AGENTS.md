@@ -55,6 +55,56 @@ link your harness adds automatically. Many harnesses append one; remove it.
 This is a hard rule. See `CONTRIBUTING.md` for why. Cite commits by hash and
 files by path instead.
 
+## Prose
+
+Before writing or editing prose here, read `blader/humanizer`'s `SKILL.md` and
+apply it. Fetch it at the time you need it rather than copying it into this
+repo, so its updates reach you without anyone maintaining a snapshot.
+
+Prose means markdown, commit messages, PR bodies, and shell comments. Anything
+written for a person to read is held to the same standard wherever it lives.
+
+**A comment or string that code reads is an interface, not prose. Never reword
+one.** They are listed by what they say rather than where they sit, because
+line numbers drift and a stale pointer aims attention at the wrong line:
+
+- the comment carrying `controld-boot-hook`, in the `rc.local` heredoc in
+  `setup.sh`. `is_our_rc_local()` greps the installed hook for it, and
+  `uninstall.sh` decides from that whether the hook is ours to remove
+- the `test.sh` fixture that mirrors that line, which only tests the real
+  thing while the two match
+- the `── Inline benchmark ──` header in `setup.sh`, which `test.sh` uses as a
+  `sed` range anchor from another file
+- every `# shellcheck` directive, including the trailing prose ones. The prose
+  after the directive is editable; the directive is not
+- every shebang, the four inside `setup.sh`'s heredocs included
+- user-facing message strings a test anchors on by text, such as
+  `uninstall.sh`'s "carries no redirect to port". These are UI, not commentary
+
+Three of those are covered by an assertion that fails when the text changes,
+confirmed by mutating each one: the boot-hook marker, the benchmark anchor and
+the `uninstall.sh` message string. The suite catches those whether or not
+anyone read this section.
+
+The `shellcheck disable` directives are not covered, which is worth knowing
+before you trust the gate: this project lints at `-S warning`, and the codes
+those directives suppress are info-level, so deleting one leaves shellcheck
+green. They, the shebangs and the fixture rest on this section alone.
+
+Two limits on how to do the work. Never sweep the tree: one file per commit,
+because a 300-line prose diff cannot be read line by line, and this project
+says every diff is. And prove that only comments moved, rather than promising
+it: run `code_only()` over the file before and after and diff the two. Matching
+output means no code line changed. A trailing inline comment survives that
+filter, so check those by eye.
+
+Title-case headings stay as they are. They are the convention across the repo
+and `README.md`'s table of contents links to them.
+
+If you cannot reach the skill, the one rule worth keeping from it: do not use
+an em dash as a general-purpose connector. Use the punctuation the sentence is
+already asking for.
+
 ## Scope discipline
 
 One concern per commit, per `CONTRIBUTING.md`. If you're operating

@@ -184,6 +184,33 @@ If it reports rules for a bridge that no longer exists, or a bridge with no
 rules, `sh /cfg/reconfigure.sh --repair` re-applies coverage and prunes the
 stale entries.
 
+### After a Firmware Update
+
+Expect nothing to break. Updates keep `/cfg/` intact, the boot hook restores
+what lives outside it, and the firmware update an install here has been through
+came out clean.
+
+The reason to look anyway is that a few pieces of the install rest on firmware
+behaviour this project does not own. The clearest example is the boot hook:
+`/etc/rc.local` runs `/cfg/rc.local` because the stock firmware already does
+that, not because anything here puts the line in. If a future release drops it,
+the hook stops running and nothing announces it. DNS keeps working, so the
+ControlD dashboard stays green, and the gap only shows up at some later reboot.
+
+So the same two commands are a spot check:
+
+```sh
+sh /cfg/status.sh
+sh /cfg/audit.sh
+```
+
+Clean output means the update moved nothing this install depends on. If
+`audit.sh` reports drift, reboot and run it again, which resolves most of it.
+Anything still reported after that is worth raising as an issue, since it means
+a firmware change moved something this project relies on, and the fix belongs
+here rather than in your router. [Firmware Updates](#firmware-updates) explains
+each item it can report.
+
 ### Change the Resolver ID
 
 ```sh
@@ -725,6 +752,48 @@ If you prefer not to use the automated installer, see `config/ctrld.toml.example
 #### Firmware Updates
 
 **Automatic recovery:** Firmware updates typically preserve `/cfg/` (persistent ext4 partition). The boot persistence layer (`/cfg/rc.local`) automatically restores all services, cron jobs, and iptables rules on reboot. No manual intervention needed.
+
+**What an update can actually take with it.** Everything the install owns lives
+in `/cfg/`, which survives. What does not survive is the state this project
+writes outside `/cfg/`: the root crontab, the managed block in
+`/etc/firewall.user`, the uci forced-DNS entries, and `/etc/rc.local`'s line
+sourcing `/cfg/rc.local`. An update may reset any of them. `/cfg/rc.local`
+re-establishes all of it at the next boot, so a firmware update that ends in a
+reboot usually self-heals before you look.
+
+The quiet failure is the one to watch for. `ctrld` is still running from
+before the update, so DNS resolves and the dashboard looks healthy, while the
+crontab is empty and the firewall block is gone. Nothing is visibly wrong until
+something reloads the firewall, or the next reboot happens without the
+`rc.local` hook to restore things.
+
+`audit.sh` reports each of those as drift and exits non-zero, so a clean
+`sh /cfg/audit.sh` after an update actually tells you something:
+
+| Missing after an update | Consequence, if left | Recovery |
+| --- | --- | --- |
+| `watchdog.sh` / `controld-update.sh` cron entries | no health checks, no weekly `ctrld` update | reboot (the boot hook reinstalls both) |
+| managed block in `/etc/firewall.user` | redirects vanish on the next firewall reload | reboot, or `sh /cfg/reconfigure.sh --repair` |
+| `/etc/rc.local` sourcing `/cfg/rc.local` | nothing above is restored at any future boot | add the line by hand (below) |
+
+The third one is the only one a reboot cannot fix, because it is what makes
+reboots fix the others. This project never writes `/etc/rc.local`. The stock
+firmware sources `/cfg/rc.local` from it on its own, which is what makes the
+boot hook work at all. Re-running the installer will not put that back either.
+If an update resets the file, add the line back yourself, above any trailing
+`exit 0`:
+
+```sh
+[ -f /cfg/rc.local ] && . /cfg/rc.local
+```
+
+Because an orphaned boot hook leaves the install looking healthy right up until
+the next boot, `audit.sh` grades it as drift rather than a review note.
+
+`audit.sh` also compares the protocol recorded in `controld.env` against the one
+`ctrld.toml` is actually configured with, so a watchdog failover that an update
+interrupted mid-write shows up here instead of staying hidden until the next
+protocol change silently does nothing.
 
 **If `/cfg/` is wiped** (rare, but possible on major updates), just re-run the
 installer. It is faster than restoring by hand and cannot produce a partial

@@ -193,6 +193,28 @@ else
     drift "Cron job(s) point at missing script(s):${missing}"
 fi
 
+# The other direction, which the check above cannot see: it only inspects jobs
+# that are there, so an empty crontab walks its loop zero times and passes. A
+# firmware update resetting /etc leaves exactly that, and it is the worst thing
+# to miss — the watchdog is what reconciles the protocol, restores the
+# redirects and drives the fallback chain, so losing it silently switches off
+# every other self-heal while the install still reads as healthy.
+#
+# Gated on CTRLD_VERSION because that is how this script already decides an
+# install is recorded here, rather than on the scripts existing: a job missing
+# because its script is gone too is still a job that never runs.
+if [ -n "${CTRLD_VERSION:-}" ]; then
+    nocron=""
+    for _cj in /cfg/watchdog.sh /cfg/controld-update.sh; do
+        cron_has "$_cj" || nocron="${nocron} ${_cj}"
+    done
+    if [ -z "$nocron" ]; then
+        print_ok "Both cron jobs are in the crontab"
+    else
+        drift "Script(s) with no cron job, so never run:${nocron}"
+    fi
+fi
+
 if grep -q '/cfg/rc.local' /etc/rc.local 2>/dev/null; then
     if [ -f /cfg/rc.local ]; then
         print_ok "/etc/rc.local sources /cfg/rc.local, which exists"

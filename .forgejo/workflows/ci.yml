@@ -20,6 +20,10 @@ jobs:
         run: |
           apt-get update -qq && apt-get install -y -qq shellcheck >/dev/null
           find . -name "*.sh" -exec shellcheck -s sh -S warning -e SC2154,SC3043,SC2034 {} +
+          # -S warning never reports SC2086, so the disable directives guarding
+          # deliberate word-splitting are invisible to it. Check that one code
+          # on its own; see .github/workflows/ci.yml for why not -S info.
+          find . -name "*.sh" -exec shellcheck -s sh -S info -i SC2086 {} +
 
   test:
     runs-on: docker

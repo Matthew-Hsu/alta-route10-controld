@@ -12,7 +12,7 @@ set -e
 LIB_DIR="$(dirname "$0")"
 # `.` is a POSIX special built-in: when it fails, a non-interactive shell exits
 # on the spot, so a `|| fallback` after it is unreachable under the router's
-# ash (and dash) — bash is the outlier that runs it. With stderr discarded on
+# ash (and dash), and bash is the outlier that runs it. With stderr discarded on
 # top, running any of these from a directory without lib.sh beside it produced
 # no output at all and exit 2, and the /cfg fallback below never ran. Test for
 # whether the file is there instead, the way setup.sh already does.
@@ -80,8 +80,8 @@ done
 
 load_env || die "Run setup.sh first.  (/cfg/controld.env not found)"
 
-# What the router is running, which is not always what controld.env records —
-# see running_protocol in lib.sh. This script only measures and recommends, it
+# What the router is running, which is not always what controld.env records.
+# See running_protocol in lib.sh. This script only measures and recommends, it
 # never writes, so it reads the config directly rather than waiting for
 # something else to reconcile the record. The difference is not cosmetic: with
 # the record stale, a benchmark whose winner happened to match the recorded

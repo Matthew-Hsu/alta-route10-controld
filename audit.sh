@@ -205,7 +205,14 @@ if grep -q '/cfg/rc.local' /etc/rc.local 2>/dev/null; then
         drift "/etc/rc.local sources /cfg/rc.local but the file is gone"
     fi
 elif [ -f /cfg/rc.local ]; then
-    review "/cfg/rc.local exists but /etc/rc.local does not source it — it never runs"
+    # drift, not review: every other review item either self-corrects on the
+    # next healthy watchdog cycle or is cosmetic. This one does neither. A boot
+    # hook that is no longer sourced means nothing reinstalls cron, restores the
+    # redirects or re-applies forced DNS at the next boot — and the install goes
+    # on looking healthy until that boot, which is the worst moment to find out.
+    # A firmware update resetting /etc is exactly how it happens, and an exit
+    # code is what a person checks afterwards.
+    drift "/cfg/rc.local exists but /etc/rc.local does not source it — it never runs"
 fi
 
 # ── Coverage ─────────────────────────────────────────────────────────────────

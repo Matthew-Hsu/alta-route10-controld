@@ -1,8 +1,8 @@
 #!/bin/sh
-# audit.sh — check a ControlD install for drift, staleness and leftovers.
+# audit.sh: check a ControlD install for drift, staleness and leftovers.
 # Read-only: this script never changes anything.
 #
-# status.sh answers "is it working". This answers "is it clean" — duplicate
+# status.sh answers "is it working". This answers "is it clean": duplicate
 # rules from repeated installs, references to things that no longer exist,
 # artifacts left by earlier versions, and whether packets are actually
 # reaching ctrld rather than merely having rules that say they should.
@@ -62,7 +62,7 @@ review() { REVIEW=$((REVIEW + 1)); print_warn "$1"; }
 print_banner
 load_env >/dev/null 2>&1 || true
 DNS_PORT="${DNS_PORT:-5354}"
-# controld.env is the source of truth for this, not uci — that is the point of
+# controld.env is the source of truth for this, not uci, which is the point of
 # 3bc68c3, and ensure_forced_dns restores uci from it. Reading uci alone meant
 # that after a firmware update wiped /etc/config, but before the watchdog's
 # next cycle put it back, the port-853 rules this project had correctly kept
@@ -78,7 +78,7 @@ print_header "Installed"
 
 # $VERSION is whichever lib.sh this process sourced, which is not necessarily
 # the one on the router: audit.sh can be run from a checkout in /tmp. Report
-# both, and say so when they differ — an audit describing a version the router
+# both, and say so when they differ. An audit describing a version the router
 # is not running is worse than no audit.
 _installed_ver="$(sed -n 's/^VERSION="\(.*\)"/\1/p' "$INSTALLED_LIB" 2>/dev/null | head -1)"
 if [ -z "$_installed_ver" ]; then
@@ -140,7 +140,7 @@ case "$blocks" in
        elif [ -n "${CTRLD_VERSION:-}" ]; then
            # No block is correct only when nothing is installed. With an
            # install recorded, the redirects are gone from the one file that
-           # survives a firewall reload — they hold until the next reload and
+           # survives a firewall reload: they hold until the next reload and
            # then vanish. The watchdog rewrites the block, so this is only
            # reachable while cron is dead too; a firmware update resetting
            # /etc can take both, which is why it is not left to that.
@@ -204,7 +204,7 @@ fi
 # The other direction, which the check above cannot see: it only inspects jobs
 # that are there, so an empty crontab walks its loop zero times and passes. A
 # firmware update resetting /etc leaves exactly that, and it is the worst thing
-# to miss — the watchdog is what reconciles the protocol, restores the
+# to miss. The watchdog is what reconciles the protocol, restores the
 # redirects and drives the fallback chain, so losing it silently switches off
 # every other self-heal while the install still reads as healthy.
 #
@@ -238,7 +238,7 @@ elif [ -f /cfg/rc.local ]; then
     # drift, not review: every other review item either self-corrects on the
     # next healthy watchdog cycle or is cosmetic. This one does neither. A boot
     # hook that is no longer sourced means nothing reinstalls cron, restores the
-    # redirects or re-applies forced DNS at the next boot — and the install goes
+    # redirects or re-applies forced DNS at the next boot, and the install goes
     # on looking healthy until that boot, which is the worst moment to find out.
     # A firmware update resetting /etc is exactly how it happens, and an exit
     # code is what a person checks afterwards.
@@ -274,7 +274,7 @@ for _if in $bridges; do
     done
 done
 
-# Rules can be present and still never match — wrong bridge, or a rule earlier
+# Rules can be present and still never match: wrong bridge, or a rule earlier
 # in the chain taking the traffic first. Counters are the only proof.
 print_header "Packets Actually Intercepted"
 counts="$(iptables -t nat -L PREROUTING -nv 2>/dev/null \
@@ -300,7 +300,7 @@ print_header "Leftovers"
 
 # /etc/controld is created by the ctrld binary itself on start; uninstall rmdirs
 # it. ctrld.toml.bak is reconfigure.sh's rollback copy, normally removed on
-# success — one surviving a failed reconfigure still holds the previous
+# success, and one surviving a failed reconfigure still holds the previous
 # resolver ID.
 found=0
 for _p in /etc/controld /etc/ctrld.toml /etc/init.d/ctrld /root/.ctrld \
@@ -325,7 +325,7 @@ done
 
 # Anything in /cfg that looks like ours but is not on the install manifest.
 # Everything this project can create in /cfg. Paths the leftovers block above
-# already names belong here too, or each one is reported twice — once as a
+# already names belong here too, or each one is reported twice: once as a
 # known leftover and again as unexpected.
 KNOWN=" controld.env ctrld ctrld.toml post-cfg.sh controld-update.sh watchdog.sh lib.sh status.sh benchmark.sh reconfigure.sh audit.sh uninstall.sh rc.local ctrld.prev ctrld.toml.bak ctrld.toml.fallback rc.local.pre-controld "
 unknown=""

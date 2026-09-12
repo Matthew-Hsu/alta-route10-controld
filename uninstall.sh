@@ -10,7 +10,7 @@
 LIB_DIR="$(dirname "$0")"
 # `.` is a POSIX special built-in: when it fails, a non-interactive shell exits
 # on the spot, so a `|| fallback` after it is unreachable under the router's
-# ash (and dash) — bash is the outlier that runs it. With stderr discarded on
+# ash (and dash), and bash is the outlier that runs it. With stderr discarded on
 # top, running any of these from a directory without lib.sh beside it produced
 # no output at all and exit 2, and the /cfg fallback below never ran. Test for
 # whether the file is there instead, the way setup.sh already does.
@@ -31,7 +31,7 @@ fi
 # other script loads this before touching iptables; this one did not, so on a
 # moved install it deleted rules for 5354 (there are none), left the real
 # redirects in place pointing at a port with nothing behind it, and then
-# reported success — the router's own lookups do not traverse PREROUTING, so
+# reported success. The router's own lookups do not traverse PREROUTING, so
 # even the closing DNS check passed while every LAN client was dark.
 load_env >/dev/null 2>&1 || true
 
@@ -42,7 +42,7 @@ FORCE=0
 # Files installed by setup.sh
 # rc.local and lib.sh belong here too: the boot hook re-runs the install and the
 # library regenerates the firewall rules, so leaving either behind means an
-# uninstalled router puts the DNS redirects back on the next reboot — pointing
+# uninstalled router puts the DNS redirects back on the next reboot, pointing
 # at a ctrld binary that is no longer there.
 # Everything setup.sh installs. uninstall.sh removes itself last, and lib.sh
 # goes with the rest: leaving the utility scripts behind without it would just
@@ -107,7 +107,7 @@ done
 
 # Also check for cron jobs. Matched by script path, never by keyword: the
 # router ships "* * * * * /usr/bin/wireguard_watchdog", which the bare word
-# matched — so this reported a ControlD install on a router that had none.
+# matched, so this reported a ControlD install on a router that had none.
 if cron_has /cfg/watchdog.sh || cron_has /cfg/controld-update.sh; then
     _found=1
 fi
@@ -213,7 +213,7 @@ print_step "Removing iptables rules..."
 
 # Delete only the rules this project added. Flushing the whole PREROUTING chain
 # (what this used to do) also removes the firewall's own zone jumps, so every
-# port forward and UPnP mapping stops working until the firewall is reloaded —
+# port forward and UPnP mapping stops working until the firewall is reloaded,
 # an unrelated outage caused by uninstalling something else.
 remove_dns_redirects "$DNS_PORT"
 
@@ -246,7 +246,7 @@ fi
 # ── Restore forced DNS ──
 
 # Without this, force_dns stays set in uci and https-dns-proxy keeps hijacking
-# ports 53 and 853 after the app is gone — someone uninstalling to get their
+# ports 53 and 853 after the app is gone, so someone uninstalling to get their
 # DNS back would still be intercepted. force_dns is the only switch we own;
 # see disable_forced_dns for why force_dns_port is left alone.
 print_step "Disabling forced DNS..."
@@ -260,9 +260,9 @@ fi
 # Verified here rather than claimed above, because disable_forced_dns writes to
 # this file too: it re-asserts the managed block so a live install keeps its
 # port-53 redirects when the DoT hijack is switched off. That made the earlier
-# "rules will not return on reload" message untrue — the block came back after
-# it was printed. The teardown is now checked after everything that can write
-# the file, and a leftover is reported instead of announced as a success.
+# "rules will not return on reload" message untrue, since the block came back
+# after it was printed. The teardown is now checked after everything that can
+# write the file, and a leftover is reported instead of announced as a success.
 if [ -f "$FW_USER" ]; then
     remove_block "$FW_USER" "$FW_MARKER"
     _fw_left="$(grep -c -- "REDIRECT --to-port ${DNS_PORT}" "$FW_USER" 2>/dev/null || true)"
@@ -320,7 +320,7 @@ fi
 print_step "Removing cron jobs..."
 # cron_remove matches the script path. "grep -v watchdog" also matched the
 # router's own /usr/bin/wireguard_watchdog job and deleted it as collateral,
-# with nothing to put it back — the same failure fixed elsewhere in 04815f0,
+# with nothing to put it back, the same failure fixed elsewhere in 04815f0,
 # which this caller was missed by.
 if cron_has /cfg/watchdog.sh || cron_has /cfg/controld-update.sh; then
     cron_remove /cfg/watchdog.sh

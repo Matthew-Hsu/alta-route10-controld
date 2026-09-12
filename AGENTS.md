@@ -81,15 +81,32 @@ line numbers drift and a stale pointer aims attention at the wrong line:
 - user-facing message strings a test anchors on by text, such as
   `uninstall.sh`'s "carries no redirect to port". These are UI, not commentary
 
-Three of those are covered by an assertion that fails when the text changes,
-confirmed by mutating each one: the boot-hook marker, the benchmark anchor and
-the `uninstall.sh` message string. The suite catches those whether or not
-anyone read this section.
+Every one of those is guarded, so the suite catches a breakage whether or not
+anyone read this section. Each guard was confirmed by mutating the thing it
+protects and watching it fail. The shebangs and the `shellcheck disable`
+directives needed guards built for them: removing a generated script's shebang
+passed all 501 assertions, and deleting a directive left shellcheck green,
+because the main lint runs at `-S warning` and SC2086 is info-level. CI now
+makes a second, narrow pass for that one code.
 
-The `shellcheck disable` directives are not covered, which is worth knowing
-before you trust the gate: this project lints at `-S warning`, and the codes
-those directives suppress are info-level, so deleting one leaves shellcheck
-green. They, the shebangs and the fixture rest on this section alone.
+When you add an interface, add its guard in the same commit, and prove the
+guard works by breaking the thing it protects and watching it fail. You have
+added one whenever code starts reading text that reads like commentary or like
+a message: a new marker grepped out of a file, a new section header used as a
+range anchor, a new printed line a test keys on. Add it to the list above too,
+so a person knows without reading the assertion.
+
+A guard firing on a change you meant to make is the guard working. Update it
+and say in the commit what moved. Deleting one to get green is how this project
+ends up back where it started, with a documented rule and nothing enforcing it.
+
+That rule is the only thing covering an interface added later, so treat it as
+load-bearing. The guards above protect these six and nothing else: add a
+seventh without one and the suite stays green, both when you add it and when
+someone reworks the comment away months later, in a different change, with
+nothing to connect the breakage back to the edit that caused it. Simulating
+exactly that is how this section was checked. Whether a new interface is
+guarded is a decision someone makes, not something the tooling notices.
 
 Two limits on how to do the work. Never sweep the tree: one file per commit,
 because a 300-line prose diff cannot be read line by line, and this project

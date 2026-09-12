@@ -381,6 +381,43 @@ assert_true  "the generated hook carries the marker" is_our_rc_local "$RCGEN"
 assert_true  "the generated hook carries the marker literally" \
     grep -qF "$RC_MARKER" "$RCGEN"
 
+# RCFIX above hand-writes the marker line that setup.sh generates. Assert the
+# two still match: a fixture shaped like the real file only tests the real file
+# while it stays shaped like it.
+assert_eq "the fixture's marker line matches the generated hook" \
+    "$(grep -F "$RC_MARKER" "$RCGEN"  | head -1)" \
+    "$(grep -F "$RC_MARKER" "$RCFIX"  | head -1)"
+
+# Every script setup.sh generates is executed directly: watchdog.sh and
+# controld-update.sh from cron, post-cfg.sh from the boot hook. A shell running
+# a file with no shebang falls back to /bin/sh, so losing one is survivable
+# rather than fatal, which is exactly why nothing noticed when it was removed
+# from watchdog.sh and all 501 assertions still passed. Shebangs are an
+# interface (AGENTS.md, "Prose"), so check the first line of each.
+# Enumerated from setup.sh rather than listed here, so a script added later is
+# covered without anyone remembering to extend this loop. A hardcoded list is
+# the kind of guard that silently stops keeping up with the code it guards.
+GEN_SCRIPTS="$(grep -oE "^cat > /cfg/[A-Za-z0-9._-]+ << '[A-Z]+'" "$SCRIPT_DIR/setup.sh" \
+    | sed "s|^cat > /cfg/||; s| << '|:|; s|'\$||")"
+
+# Two failures share this assertion, and both want a person to look. If the
+# pattern above stops matching, the loop below runs over nothing and passes
+# while testing nothing. If the count went up, a new script now ships to
+# routers: check it is wired into cron or the boot hook, that uninstall.sh
+# removes it, and that its own interfaces are guarded (AGENTS.md, "Prose"),
+# then raise this number.
+assert_eq "setup.sh generates the 4 scripts this suite knows about" "4" \
+    "$(printf '%s\n' "$GEN_SCRIPTS" | grep -c .)"
+
+# shellcheck disable=SC2086  # one name:TAG pair per word is the point
+for _gen in $GEN_SCRIPTS; do
+    _gen_name="${_gen%%:*}"
+    _gen_tag="${_gen##*:}"
+    assert_eq "generated ${_gen_name} opens with a shebang" "#!/bin/sh" \
+        "$(sed -n "/^cat > \/cfg\/${_gen_name} << '${_gen_tag}'/,/^${_gen_tag}\$/p" \
+            "$SCRIPT_DIR/setup.sh" | sed -n '2p')"
+done
+
 # It is sourced by /etc/rc.local, which runs its own logic afterwards: an exit
 # or set -e here would silently skip the rest of the router's boot script.
 assert_false "generated hook has no exit"   grep -qE '^[[:space:]]*exit' "$RCGEN"

@@ -1,5 +1,5 @@
 #!/bin/sh
-# lib.sh — shared function library for Alta Route 10 + ControlD
+# lib.sh: shared function library for Alta Route 10 + ControlD
 # Source this file: . /path/to/lib.sh
 
 # Version of these scripts, semver: MAJOR for a change that breaks an existing
@@ -36,12 +36,13 @@ AWK="${AWK:-awk}"
 FW_USER="${FW_USER:-/etc/firewall.user}"
 FW_MARKER="controld-dns-redirect"
 # Identifies /cfg/rc.local as ours. /etc/rc.local sources that path only if it
-# exists, so it is the sanctioned place for a user's own boot hooks — we must
+# exists, so it is the sanctioned place for a user's own boot hooks. We must
 # never clobber or delete someone else's.
 RC_MARKER="controld-boot-hook"
 # 443-only fallback targets (DoH3/DoH). DoQ/DoT use port 853 which ISPs/mobile
-# networks can block, so they are never automatic fallback *targets* — they can
-# still be the user's primary protocol. See watchdog self-upgrade for recovery.
+# networks can block, so they are never automatic fallback *targets*, though
+# they can still be the user's primary protocol. See watchdog self-upgrade
+# for recovery.
 FALLBACK_CHAIN="doh3 doh"
 
 # ── Colors ──
@@ -97,7 +98,7 @@ load_env() {
     [ -f "$env_file" ] || return 1
     # shellcheck source=/dev/null
     . "$env_file"
-    # The original project — CookieTyrant's, which this is a fork of — misspelled
+    # The original project (CookieTyrant's, which this is a fork of) misspelled
     # this key as CURLD_VERSION in its very first commit (f6c81a6). This fork
     # corrected it in d0bc3b0. Adopt the old spelling when only it is present, so
     # an install carried over from the upstream repo keeps working instead of
@@ -153,7 +154,7 @@ next_proto() {
 
 # ── LAN Interface Discovery ──
 
-# Root of the sysfs network tree — overridable so tests can point at a fixture.
+# Root of the sysfs network tree, overridable so tests can point at a fixture.
 SYSFS_NET="${SYSFS_NET:-/sys/class/net}"
 # The library the router is running, as opposed to the one this process sourced.
 # audit.sh compares the two: running a newer checkout against an older install
@@ -225,7 +226,7 @@ ipv4_network() {
     }'
 }
 
-# Subnet of a LAN bridge — lan_cidr br-lan_10 -> 192.168.10.0/24
+# Subnet of a LAN bridge: lan_cidr br-lan_10 -> 192.168.10.0/24
 # Non-zero (and no output) when the bridge has no IPv4 address.
 lan_cidr() {
     _lan_addr="$(ip -4 -o addr show dev "$1" 2>/dev/null | awk '{print $4; exit}')"
@@ -303,8 +304,8 @@ toml_blocks() {
 
 # Lowest unused index in a [<table>.N] family, so split-DNS policies allocate
 # without overwriting an existing block. Counting blocks (the old approach) only
-# works while indices are contiguous — they are not once a policy is removed or
-# an install is upgraded.
+# works while indices are contiguous, and they are not once a policy is removed
+# or an install is upgraded.
 # Usage: next_toml_index <config> <table>   e.g. next_toml_index cfg.toml network
 next_toml_index() {
     _nti_file="${1:-/cfg/ctrld.toml}"
@@ -324,7 +325,8 @@ next_toml_index() {
 # Both readouts that show upstreams used `grep -A<n>` with a fixed offset into
 # the block, and both had the wrong offset: -A1 stops at bootstrap_ip so every
 # name printed empty, -A3 stops at name so no protocol ever printed. The offset
-# is also not stable — it depends on how many keys a block happens to carry.
+# is also not stable, since it depends on how many keys a block happens to
+# carry.
 # Parse the block instead, and match the header exactly: a `grep "[upstream.1]"`
 # also matches [upstream.10].
 # Usage: list_upstreams <config>
@@ -359,14 +361,14 @@ list_upstreams() {
 }
 
 # The protocol the main upstream (upstream.0) is actually configured for,
-# read from the file ctrld runs against — as opposed to DNS_TYPE in
+# read from the file ctrld runs against, as opposed to DNS_TYPE in
 # controld.env, which only reflects reality when the code path that last
 # changed it ran to completion.
 #
 # It does not, always: the watchdog's fallback loop retargets ctrld.toml to
 # a candidate protocol before it knows whether the restart will succeed, and
 # only commits DNS_TYPE once it does (or restores ctrld.toml on total
-# failure). A process killed in between — a reboot is the observed case —
+# failure). A process killed in between, and a reboot is the observed case,
 # can leave ctrld.toml on one protocol while DNS_TYPE still names another,
 # and nothing before this reconciled them: self-upgrade compared
 # PREFERRED_PROTOCOL against the wrong value and never fired, a manual
@@ -376,7 +378,7 @@ list_upstreams() {
 #
 # upstream.0 is the main resolver by convention everywhere in this project
 # (write_ctrld_config always creates it there; the extra-upstream helpers
-# explicitly exclude it) — every split-DNS profile is additional to it, not
+# explicitly exclude it): every split-DNS profile is additional to it, not
 # instead of it, so it is the one instance whose protocol answers "what is
 # this router using for ordinary DNS right now."
 # Usage: running_protocol [config]
@@ -387,7 +389,7 @@ running_protocol() {
     # block with no type, but equally a hand-edited or half-written value:
     # callers persist this into DNS_TYPE and build endpoints from it, so
     # answering with something get_endpoint cannot map is worse than
-    # answering "unknown". A truncated config is squarely in scope here —
+    # answering "unknown". A truncated config is squarely in scope here, since
     # an interrupted write is the whole reason this function exists.
     valid_proto "$_rnp_type" || return 1
     printf '%s' "$_rnp_type"
@@ -396,20 +398,20 @@ running_protocol() {
 # Bring an env file's DNS_TYPE back in line with what a ctrld config is
 # actually running, if they disagree. Sets DNS_TYPE in the caller's shell to
 # the corrected value either way (this is a plain function call, not a
-# subshell, so the assignment is visible after it returns — same as
+# subshell, so the assignment is visible after it returns, same as
 # load_env). Never touches PREFERRED_PROTOCOL: that is what the user asked
 # for, not a record of what is running, and this function only corrects the
 # latter.
 #
 # Every caller that needs "what protocol is the router using right now" goes
-# through this or running_protocol directly, rather than trusting DNS_TYPE —
+# through this or running_protocol directly, rather than trusting DNS_TYPE:
 # self-upgrade (do_upgrade_check), a manual protocol/resolver/benchmark change
 # (reconfigure.sh), and status.sh's own display each read DNS_TYPE, and each
 # was fooled independently by the same stale value before this existed.
 #
 # Returns 0 (and persists the correction) if DNS_TYPE was wrong; 1 if it
-# already matched, or if either file could not be read well enough to say —
-# a missing ctrld.toml, or a config whose protocol is not one this project
+# already matched, or if either file could not be read well enough to say, such
+# as a missing ctrld.toml, or a config whose protocol is not one this project
 # manages, is not this function's problem to report.
 # Usage: reconcile_dns_type [env_file] [ctrld_config]
 reconcile_dns_type() {
@@ -422,7 +424,7 @@ reconcile_dns_type() {
         sed -i "s/^DNS_TYPE=.*/DNS_TYPE=${_rdt_actual}/" "$_rdt_env"
     else
         # An env file old enough to predate DNS_TYPE has no line for sed to
-        # rewrite, and this project still supports one — load_env and
+        # rewrite, and this project still supports one: load_env and
         # post-cfg.sh both default the value rather than refusing the file.
         # Rewriting nothing while returning "corrected" made the self-heal
         # never heal: every watchdog cycle found the same divergence and
@@ -437,7 +439,7 @@ reconcile_dns_type() {
 #
 # Counted on the quoted key, not on the separator. Both callers matched `="` or
 # `=\[`, while every rule this project writes is `{"key" = ["upstream.N"]}`
-# with spaces around the "=", so both counts were always zero — a config full
+# with spaces around the "=", so both counts were always zero and a config full
 # of MAC rules reported none.
 # Usage: policy_rule_count <config> <mac|network>
 policy_rule_count() {
@@ -459,7 +461,7 @@ policy_rule_count() {
 # policy that references them. (Copying just the header lines, as reconfigure
 # once did, left ctrld with empty [upstream.N] tables and a policy pointing at
 # nothing.) Returns 0 when something was carried, 1 when there was nothing to
-# carry — so a caller can stay quiet on a config that never had policies.
+# carry, so a caller can stay quiet on a config that never had policies.
 #
 # The caller retargets afterwards: preserved upstreams still carry the old
 # protocol, and leaving them means a policy keeps using a transport the user
@@ -482,8 +484,8 @@ carry_policy_blocks() {
 
 # Add one split-DNS rule, creating whatever structure is missing.
 #
-# The callers anchored an insert on the list header — sed "/^    macs = \[/a..."
-# — which silently does nothing when the policy carries only the other kind of
+# The callers anchored an insert on the list header, sed "/^    macs = \[/a...",
+# which silently does nothing when the policy carries only the other kind of
 # list. That is the shape the setup wizard writes whenever route type 1 (CIDR
 # only) or 2 (MAC only) is chosen, so adding the first rule of the other kind
 # was a no-op: the [upstream.N] block had already been appended, ctrld was
@@ -505,11 +507,11 @@ policy_add_rule() {
     _par_before="$(grep -cF "\"${_par_key}\"" "$_par_file" 2>/dev/null || true)"
 
     # One matcher for the header, shared with the awk branch below. They used
-    # to disagree — an unanchored grep here, an exact string compare there — so
+    # to disagree (an unanchored grep here, an exact string compare there), so
     # a trailing space or a CRLF line ending put this function down a path that
     # found no policy and silently wrote nothing.
     if ! grep -qE '^\[listener\.0\.policy\][[:space:]]*\r?$' "$_par_file" 2>/dev/null; then
-        # No policy table yet — create it around this rule
+        # No policy table yet, so create it around this rule
         {
             printf '\n[listener.0.policy]\n'
             printf '    name = "Split DNS Policy"\n'
@@ -520,7 +522,7 @@ policy_add_rule() {
     elif grep -q "^[[:space:]]*${_par_list}[[:space:]]*=[[:space:]]*\[" "$_par_file"; then
         # Inserted after the FIRST matching list header only. The sed form this
         # replaces had no address restriction, so a file carrying the header
-        # twice got the rule twice — and the count check still passed.
+        # twice got the rule twice, and the count check still passed.
         _par_tmp="${_par_file}.policy.$$"
         if ! $AWK -v list="$_par_list" -v entry="$_par_entry" '
             { sub(/\r$/, "") }
@@ -560,8 +562,8 @@ policy_add_rule() {
 
 # True when version <a> is strictly newer than version <b>.
 #
-# Compared field by field as numbers, so 1.10.0 beats 1.9.0 — a string compare
-# gets that backwards. sort -V would do it but is not in BusyBox's sort.
+# Compared field by field as numbers, so 1.10.0 beats 1.9.0, which a string
+# compare gets backwards. sort -V would do it but is not in BusyBox's sort.
 # Usage: version_gt 1.6.0 1.5.7
 version_gt() {
     $AWK -v a="$1" -v b="$2" 'BEGIN {
@@ -617,7 +619,7 @@ BENCH_CONF="${BENCH_CONF:-/tmp/ctrld-bench.toml}"
 #
 # setup.sh's copy read: awk "{print \$(((_bi - 1) % 5 + 1))}". _bi is a shell
 # variable and awk never saw it, so awk evaluated an uninitialised zero and the
-# expression came out as $0 — the whole record. Every query then looked up a
+# expression came out as $0, the whole record. Every query then looked up a
 # single hostname made of all five domains joined by spaces, all ten failed,
 # and every protocol reported FAILED (0/10) before setup fell back to DoH3.
 # The index is computed in the shell so awk is only ever handed a number.
@@ -636,7 +638,7 @@ bench_domain() {
 #
 # `date +%s%N 2>/dev/null || date +%s` looked like a fallback and was not.
 # BusyBox date does not fail on an unsupported %N unless built with
-# FEATURE_DATE_NANO — it succeeds and prints "1788539662%N", so the `||` never
+# FEATURE_DATE_NANO. It succeeds and prints "1788539662%N", so the `||` never
 # fired. A length check then fed that string to $(( )), and an arithmetic error
 # is fatal to the whole shell in ash and dash: neither `|| true` nor `if !`
 # contains it, so the benchmark would have taken setup.sh down mid-install.
@@ -686,7 +688,7 @@ BWCEOF
 #
 # Never by pidof. That is the production resolver for every LAN client, and
 # killing it while the port-53 redirects still point at DNS_PORT is not a
-# fallback but a black hole — reconfigure.sh's benchmark did exactly that
+# fallback but a black hole. reconfigure.sh's benchmark did exactly that
 # before each of three protocols, taking the whole LAN's DNS down for the run.
 #
 # Nor by correlating PID to port: benchmark.sh swept leftovers with
@@ -728,7 +730,8 @@ bench_protocol() {
         BENCH_AVG="FAIL"; BENCH_OK=0; BENCH_FAIL="$_bp_queries"
         return 1
     fi
-    # Something answered on the test port — confirm it is the daemon we started.
+    # Something answered on the test port, so confirm it is the daemon we
+    # started.
     # If the port was already taken (production can land on it: setup.sh's
     # fallback scan covers DNS_PORT+1..+100, which spans BENCH_PORT) our ctrld
     # fails to bind and exits, the probe above succeeds against the other
@@ -792,7 +795,7 @@ retarget_upstream_block() {
     _rub_ep="$(printf '%s\n' "$_rub_block" \
         | sed -n 's/^[[:space:]]*endpoint[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' | head -1)"
     if ! _rub_id="$(resolver_from_endpoint "$_rub_ep")"; then
-        # Not a ControlD endpoint — leave this upstream exactly as it is
+        # Not a ControlD endpoint, so leave this upstream exactly as it is
         printf '%s\n' "$_rub_block"
         return 0
     fi
@@ -806,7 +809,7 @@ retarget_upstream_block() {
 # each upstream's own resolver ID.
 #
 # Protocol changes used to be done with an unanchored sed, which rewrote every
-# endpoint line in the file to the main resolver's — so one protocol fallback
+# endpoint line in the file to the main resolver's, so one protocol fallback
 # silently repointed a split-DNS profile (kids, guest) at the default profile,
 # with nothing failing and nothing logged. Switching transport is per upstream;
 # the resolver each one points at is its identity and must survive.
@@ -872,7 +875,7 @@ port_in_use() {
 # `timeout` is seconds of wall clock. It used to be an iteration count, and
 # every iteration ran an nslookup against the DNS port: when ctrld exits during
 # startup that port is closed and each probe costs the resolver's own timeout
-# — about 5s on a Route 10 — so a "15 second" start actually took ~90. The
+# about 5s on a Route 10, so a "15 second" start actually took ~90. The
 # watchdog's worst case is one start plus three fallback attempts, which put a
 # full recovery cycle over six minutes, longer than its own five-minute cron
 # interval, and the overlapping instances then raced each other over the
@@ -919,7 +922,7 @@ restart_ctrld() {
 # Was /cfg/rc.local written by this project?
 #
 # Hooks generated before the marker existed have to be recognised too, or an
-# upgraded install leaves its own boot hook behind on uninstall — and that hook
+# upgraded install leaves its own boot hook behind on uninstall, and that hook
 # then re-adds cron jobs at the next boot pointing at scripts that were just
 # deleted. The legacy signature is the logger line every version has emitted.
 # Usage: is_our_rc_local [file]
@@ -936,8 +939,8 @@ is_our_rc_local() {
 #
 # Matching the bare word "watchdog" also matches the router's own
 # wireguard_watchdog job. rc.local then believed ours was already installed and
-# skipped reinstalling it after every reboot — so the health check silently
-# stopped running — while status.sh reported a job that was not there. Match the
+# skipped reinstalling it after every reboot, so the health check silently
+# stopped running while status.sh reported a job that was not there. Match the
 # script path, never a word that another service might share.
 # Usage: cron_has /cfg/watchdog.sh [crontab-file]
 cron_has() {
@@ -965,11 +968,11 @@ LOG_FILES="${LOG_FILES:-/var/log/messages /tmp/log/messages}"
 #
 # logread only works when syslogd was started with -C, which creates the
 # shared-memory ring buffer it reads. The Route 10 runs
-# `syslogd -n -b 2 -t -u` — no -C — so logread fails outright with "can't find
-# syslogd buffer", and every logger call this project makes looked lost. They
-# are not: syslogd defaults to a file, and -b 2 rotates it. status.sh silently
-# printed no watchdog section at all on that firmware, and troubleshooting.md
-# opened with a logread command that could never work there.
+# `syslogd -n -b 2 -t -u`, with no -C, so logread fails outright with "can't
+# find syslogd buffer", and every logger call this project makes looked lost.
+# They are not: syslogd defaults to a file, and -b 2 rotates it. status.sh
+# silently printed no watchdog section at all on that firmware, and
+# troubleshooting.md opened with a logread command that could never work there.
 # Usage: log_lines <extended-regex> [count]
 log_lines() {
     _ll_pat="$1"; _ll_n="${2:-20}"
@@ -980,7 +983,7 @@ log_lines() {
                 # syslogd -b N keeps rotated history alongside the live file as
                 # <file>.0 (most recently rotated) and <file>.1 (older).
                 # Reading only the live file made the caller's output go blank
-                # the moment it rotated, however recent the event — and
+                # the moment it rotated, however recent the event, and
                 # docs/troubleshooting.md already told the reader status.sh
                 # handled these. Oldest first, so tail still yields the most
                 # recent matching lines.
@@ -1069,7 +1072,7 @@ ensure_iptables() {
         if ensure_redirect_rule append "$iface" tcp 53 "$port"; then added=$((added + 1)); fi
     done
     if [ "$added" -gt 0 ]; then
-        # Rules are back — whatever tore them down is no longer true
+        # Rules are back, so whatever tore them down is no longer true
         rm -f "$DEGRADED_FLAG" 2>/dev/null || true
         return 0
     fi
@@ -1079,8 +1082,9 @@ ensure_iptables() {
 # Tear the DNS redirects down, on every bridge and both ports.
 #
 # Last resort for the watchdog: with ctrld dead the redirects point port 53 at a
-# closed port, so every client on every bridge loses DNS entirely — worse than
-# not intercepting at all. Removing them hands resolution back to dnsmasq ->
+# closed port, so every client on every bridge loses DNS entirely, which is
+# worse than not intercepting at all. Removing them hands resolution back to
+# dnsmasq ->
 # https-dns-proxy: still encrypted, just without per-device visibility.
 # post-cfg.sh and the watchdog re-add the rules once ctrld answers again.
 # Usage: remove_dns_redirects [port]
@@ -1099,7 +1103,7 @@ remove_dns_redirects() {
 }
 
 # Delete redirect rules pointing at our port on interfaces that are not LAN
-# bridges any more — a VLAN removed from the router, or br-lan_2 left behind by
+# bridges any more: a VLAN removed from the router, or br-lan_2 left behind by
 # the era when the bridge list was hardcoded. Rules are otherwise only ever
 # added, so stale ones linger until a reboot. Prints the number removed.
 # Usage: prune_stale_redirects [port]
@@ -1237,7 +1241,8 @@ preserved_forced_dns() {
 # the here-doc that reads that same file always sees it empty. setup.sh did
 # exactly that: the preserved value was silently always empty, and only the uci
 # fallback inside preserved_forced_dns kept forced DNS alive across a re-install
-# — until a firmware update wiped /etc/config, when the setting vanished with it.
+# It held until a firmware update wiped /etc/config, when the setting vanished
+# with it.
 # Usage: write_env_file [path]
 # CURLD_VERSION is listed so it is never carried forward: an env file inherited
 # from the original project has it, load_env adopts its value, and the first
@@ -1251,14 +1256,14 @@ write_env_file() {
     # Everything the file carries that this function does not manage, read
     # before the redirect below truncates it.
     #
-    # This used to emit six keys and nothing else, so every rewrite — any
-    # reconfigure.sh --protocol/--resolver/--benchmark, and every setup.sh
-    # re-install — silently deleted the rest. DNS_PORT went, while ctrld.toml
+    # This used to emit six keys and nothing else, so every rewrite, meaning any
+    # reconfigure.sh --protocol/--resolver/--benchmark and every setup.sh
+    # re-install, silently deleted the rest. DNS_PORT went, while ctrld.toml
     # kept the moved port: at the next boot post-cfg.sh probed 5354, failed its
     # health check, added no redirects, and the watchdog then read a failing
     # DNS check every five minutes and churned the protocol chain against a
-    # problem that was never the protocol. LAN_IFACES_EXCLUDE went too — the
-    # documented way to leave a guest VLAN on its own DNS — so the watchdog
+    # problem that was never the protocol. LAN_IFACES_EXCLUDE went too, the
+    # documented way to leave a guest VLAN on its own DNS, so the watchdog
     # started intercepting that VLAN within five minutes of an unrelated
     # protocol change.
     _wef_keep=""
@@ -1297,7 +1302,7 @@ WEFEOF
 # This is the backstop that answers whenever ctrld is down, so it has to move
 # with the resolver ID. Rotating an ID and leaving this behind means a retired
 # or leaked profile still resolves for the whole LAN every time ctrld restarts.
-# Every configured instance is updated — the router ships three, but the count
+# Every configured instance is updated. The router ships three, but the count
 # is read from uci rather than assumed.
 # Usage: set_fallback_resolver <resolver-id> <bootstrap-ip>
 set_fallback_resolver() {
@@ -1317,7 +1322,7 @@ set_fallback_resolver() {
 
 # ── Forced DNS ──
 
-# Write FORCED_DNS=<0|1> to /cfg/controld.env — update in place or append if absent.
+# Write FORCED_DNS=<0|1> to /cfg/controld.env, in place or appended if absent.
 # Usage: set_forced_dns_flag <0|1>
 set_forced_dns_flag() {
     _val="$1"
@@ -1338,7 +1343,7 @@ ensure_forced_dns() {
     _port="${DNS_PORT:-5354}"
     _changed=0
 
-    # 1. uci config — restored here so it survives firmware wipes of /etc/config
+    # 1. uci config, restored here so it survives firmware wipes of /etc/config
     _cur="$(uci -q get https-dns-proxy.config.force_dns 2>/dev/null || echo "0")"
     [ "$_cur" = "1" ] || { uci set https-dns-proxy.config.force_dns=1; _changed=1; }
     # Ensure 53 and 853 are both in force_dns_port. Additive on purpose: the
@@ -1360,7 +1365,7 @@ ensure_forced_dns() {
         logger -t forced-dns "restored uci force_dns=1 (ports 53,853)"
     fi
 
-    # 2. port-853 iptables rules — restored here so they survive reboot.
+    # 2. port-853 iptables rules, restored here so they survive reboot.
     #    Checked per bridge, so a VLAN added after install is covered too.
     _added=0
     for _if in $(lan_ifaces); do
@@ -1371,7 +1376,7 @@ ensure_forced_dns() {
         logger -t forced-dns "restored ${_added} port-853 redirect rule(s)"
     fi
 
-    # 3. firewall.user — persist the 53 + 853 rules so a firewall reload
+    # 3. firewall.user, persisting the 53 + 853 rules so a firewall reload
     #    restores them instantly (rewritten only when the bridge list drifts)
     ensure_firewall_user_rules "$_port" || true
 
@@ -1393,7 +1398,7 @@ disable_forced_dns() {
         FORCED_DNS=0
         # Only re-assert a block that is still there. This call means "keep the
         # persisted rules in step with the new setting", which is right when
-        # forced DNS is toggled off on a live install — the port-53 redirects
+        # forced DNS is toggled off on a live install: the port-53 redirects
         # stay. uninstall.sh calls this *after* tearing the block out, and
         # ensure_firewall_user_rules creates one when none exists, so it wrote
         # twelve port-53 REDIRECTs back into /etc/firewall.user pointing at a
@@ -1431,7 +1436,7 @@ disable_forced_dns() {
 do_upgrade_check() {
     # Overridable for the same reason as CTRLD_TOML: this suite exercises
     # do_upgrade_check, and on a router the counter it was reading and deleting
-    # was the live one — running the tests there reset the router's own
+    # was the live one, so running the tests there reset the router's own
     # self-upgrade timer, delaying a return to the preferred protocol by up to
     # a full UPGRADE_INTERVAL. The default is the real path, so nothing about
     # how the watchdog behaves changes.
@@ -1448,12 +1453,12 @@ do_upgrade_check() {
     # Both paths are named rather than left to the defaults, matching how the
     # rest of this function already names them, and that is also what keeps
     # SC2120 quiet without a suppression comment: the warning fires on a
-    # function whose only in-file call passes nothing, which is why load_env —
-    # same optional-path signature, never called inside lib.sh — never trips it.
+    # function whose only in-file call passes nothing, which is why load_env,
+    # same signature and never called inside lib.sh, never trips it.
     reconcile_dns_type /cfg/controld.env /cfg/ctrld.toml && \
         logger -t watchdog "DNS_TYPE corrected to ${DNS_TYPE} (ctrld.toml disagreed)"
 
-    # Already on the preferred protocol — nothing to do; clear any stale counter
+    # Already on the preferred protocol, so clear any stale counter and stop
     [ "${PREFERRED_PROTOCOL:-$DNS_TYPE}" != "$DNS_TYPE" ] || { rm -f "$_ucf"; return 0; }
 
     _u=$(cat "$_ucf" 2>/dev/null || echo 0)
@@ -1496,7 +1501,7 @@ EOF
         nslookup google.com "127.0.0.1#${_uport}" >/dev/null 2>&1 && break
         sleep 1; _un=$((_un + 1))
     done
-    # Kill ONLY the test ctrld (matched by its config path) — never production
+    # Kill ONLY the test ctrld (matched by its config path), never production
     _killed=0
     for _p in $(ps w 2>/dev/null | grep '[c]trld run -c /tmp/ctrld-upgrade.toml' | awk '{print $1}'); do
         kill "$_p" 2>/dev/null; _killed=1
@@ -1511,7 +1516,7 @@ EOF
 
     logger -t watchdog "preferred $(proto_label "$PREFERRED_PROTOCOL") healthy — upgrading back"
     # Switch the transport in place. Regenerating the config here (what this
-    # used to do) silently deleted every split-DNS policy — automatically, about
+    # used to do) silently deleted every split-DNS policy, automatically, about
     # 30 minutes after any protocol fallback, with nothing logged.
     retarget_upstreams /cfg/ctrld.toml "$PREFERRED_PROTOCOL"
     if restart_ctrld /cfg/ctrld.toml; then

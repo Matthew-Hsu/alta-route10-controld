@@ -1,5 +1,5 @@
 #!/bin/sh
-# status.sh — report ControlD status on Alta Labs Route 10
+# status.sh: report ControlD status on Alta Labs Route 10
 # Uses lib.sh for output helpers and shared state.
 # shellcheck source=lib.sh
 
@@ -52,8 +52,9 @@ done
 
 print_banner
 
-# Load the install's settings up front — DNS_PORT and the LAN_IFACES overrides
-# are needed by the iptables section below, not just by the endpoint section.
+# Load the install's settings up front, because DNS_PORT and the LAN_IFACES
+# overrides are needed by the iptables section below, not just by the endpoint
+# section.
 load_env >/dev/null 2>&1 || true
 
 # ── Config Files ─────────────────────────────────────────────────────────────
@@ -178,7 +179,7 @@ print_header "ControlD Endpoint"
 
 if load_env; then
     print_ok "Resolver ID: ${RESOLVER_ID}"
-    # DNS_TYPE (env) can lag what ctrld.toml actually runs — see
+    # DNS_TYPE (env) can lag what ctrld.toml actually runs. See
     # running_protocol's comment in lib.sh. status.sh only reports; it never
     # writes, so this reads the truth straight from the file rather than
     # waiting for something else to have reconciled DNS_TYPE first.
@@ -219,14 +220,14 @@ fi
 if [ -f /cfg/watchdog.sh ]; then
     # The header prints unconditionally now. It used to appear only when
     # logread returned something, so on a router where logread cannot work
-    # — the Route 10 runs syslogd without -C — the whole section vanished with
+    # (the Route 10 runs syslogd without -C) the whole section vanished with
     # no indication that anything had been looked for.
     print_header "Recent ControlD Activity"
     # Matched on our own syslog tags, with the leading space that a syslog line
     # puts before the tag, and the colon that closes it. A bare "watchdog" also
     # matched the router's wireguard_watchdog and crond's "cmd /cfg/watchdog.sh"
     # execution notices, so this section showed another service's logs under our
-    # heading — the same bare-word trap as the cron guard in 04815f0.
+    # heading: the same bare-word trap as the cron guard in 04815f0.
     #
     # Every tag this project logs under has to be here. forced-dns and controld
     # were missing, so a cycle that restored the port-853 rules or rewrote

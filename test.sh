@@ -1,5 +1,5 @@
 #!/bin/sh
-# test.sh — comprehensive test suite for Alta Route 10 + ControlD
+# test.sh: comprehensive test suite for Alta Route 10 + ControlD
 # Run locally: sh test.sh
 # Run on router: sh /cfg/test.sh
 
@@ -113,7 +113,7 @@ assert_false() {
 # Source greps that only ever see code.
 #
 # An assertion that greps a whole file for the thing it is checking is
-# satisfied by a comment that merely mentions it — including the comment left
+# satisfied by a comment that merely mentions it, including the comment left
 # behind when the real line is commented out. That has already fooled one
 # assertion in this suite (a bare `grep -q running_protocol` matched a comment
 # naming the function rather than the call), so the filter lives in one place
@@ -124,7 +124,7 @@ assert_false() {
 # whichever dialect it was already written in. That is not cosmetic: forcing
 # -E on patterns written for BRE silently changes what they mean.
 # `_port_in_use()` and `trld run -c ${_bs_conf}` both stop matching, and
-# `FORCED_DNS=$(preserved_forced_dns` makes grep exit on "Unmatched (" — an
+# `FORCED_DNS=$(preserved_forced_dns` makes grep exit on "Unmatched (", and an
 # assertion that quietly stops testing anything looks exactly like one that
 # passes.
 # Usage: code_grep <file> [grep-opts] <pattern>   (same for code_lineno)
@@ -157,7 +157,7 @@ printf "  ${BOLD}  ControlD Tools Test Suite${RESET}\n"
 printf "  ${BOLD}═══════════════════════════════════════════════════${RESET}\n"
 
 # ══════════════════════════════════════════════════════════════════
-# UNIT TESTS — lib.sh functions
+# UNIT TESTS: lib.sh functions
 # ══════════════════════════════════════════════════════════════════
 
 describe "get_endpoint() — endpoint URL generation"
@@ -492,7 +492,7 @@ assert_contains "and tears the redirects down when nothing resolves" "$WD_OUT" "
 
 # A restart that works must not end the cycle either. The health path below is
 # what re-adds the redirects, restores forced DNS and clears the degraded flag,
-# and after a teardown all of that is gone — so exiting on a successful restart
+# and after a teardown all of that is gone, so exiting on a successful restart
 # left a healthy ctrld with no redirects until some later cycle. Seen on
 # hardware: ctrld answering, 0 redirect rules, 26 drift items. The teardown is
 # still a last resort that a healthy cycle must never walk into.
@@ -518,8 +518,8 @@ describe "watchdog — one instance at a time"
 
 # A recovery cycle used to run longer than the watchdog's own cron interval, so
 # instances overlapped on any real ctrld failure: three were alive at once in a
-# router's syslog, sharing the fail-count file — where one instance's reset
-# erases another's debounce — and rewriting ctrld.toml underneath each other
+# router's syslog, sharing the fail-count file (where one instance's reset
+# erases another's debounce) and rewriting ctrld.toml underneath each other
 # through the fallback loop. b1b5fbd made the cycle short, but a stalled
 # resolver can still stretch one past five minutes, so the invariant is
 # enforced rather than left to timing.
@@ -601,8 +601,8 @@ PREFERRED_PROTOCOL=doh3
 FORCED_DNS=0
 WDDIVENV
 
-# retarget_upstreams stays real — it is what rewrites the file — while ctrld can
-# never start, which is the case that walks the whole loop.
+# retarget_upstreams stays real, since it is what rewrites the file, while
+# ctrld can never start, which is the case that walks the whole loop.
 cat > "$WD_DIV/lib.sh" << WDDIVLIB
 . "$SCRIPT_DIR/lib.sh"
 check_dns()                  { return 1; }
@@ -668,7 +668,7 @@ describe "readouts must report the protocol running, not the one recorded"
 # status.sh was fixed for this; audit.sh and benchmark.sh read DNS_TYPE the
 # same way and were wrong the same way. audit.sh is the project's drift
 # detector, so a divergence between controld.env and ctrld.toml being
-# invisible to it — while it printed the recorded protocol as an OK line — is
+# invisible to it while it printed the recorded protocol as an OK line, is
 # the one report that should never have missed this.
 RO_DIR="$TMPDIR/readouts"; rm -rf "$RO_DIR"; mkdir -p "$RO_DIR"
 
@@ -682,7 +682,7 @@ done
 # It calls load_env, which sources /cfg/controld.env whenever that file exists
 # and silently wins over anything exported here. In a sandbox there is no such
 # file and the exports below stand; on a real router there is, so hardcoding
-# "1.3.6" and "doh3" made this pass only where /cfg does not exist — a
+# "1.3.6" and "doh3" made this pass only where /cfg does not exist, and a
 # sandbox-only pass of exactly the kind this project keeps getting caught by.
 # Read the recorded values from wherever audit.sh is going to read them.
 if [ -f /cfg/controld.env ]; then
@@ -720,7 +720,7 @@ RO_OK="$(PATH="$RO_BIN:$PATH" CTRLD_TOML="$RO_DIR/agree.toml" \
 assert_not_contains "and says nothing when the two agree" "$RO_OK" "but ctrld.toml runs"
 
 # benchmark.sh measures against live resolvers, so nothing in this suite runs
-# it — these are source assertions, comment-blind, like its existing ones.
+# it: these are source assertions, comment-blind, like its existing ones.
 # The comparison is what matters: reading DNS_TYPE there meant a stale record
 # matching the winner printed "(already active)" and hid the fix command.
 assert_true "benchmark.sh takes its current protocol from running_protocol" \
@@ -739,7 +739,7 @@ describe "watchdog — the fallback chain must start from the protocol actually 
 # so a router that rebooted mid-fallback walks the chain from the stale name.
 # With the chain "doh3 doh", ctrld.toml really on doh and DNS_TYPE saying
 # doh3, next_proto(doh3) is doh: attempt 1 retargets to the protocol that just
-# failed, and attempt 3 does it again — one attempt in three tries anything
+# failed, and attempt 3 does it again, so one attempt in three tries anything
 # new, while every client on every bridge has no DNS. Seeded from the truth,
 # next_proto(doh) wraps to doh3 and the first attempt is productive.
 WD_DRIFT="$TMPDIR/wd-drift"
@@ -762,7 +762,7 @@ FORCED_DNS=0
 WDDRIFTENV
 write_ctrld_config "$WD_DRIFT/ctrld.toml" abc123 76.76.2.22 doh
 
-# reconcile_dns_type and retarget_upstreams stay real — they are what this
+# reconcile_dns_type and retarget_upstreams stay real, since they are what this
 # asserts on. The first restart succeeds, so the loop stops after one attempt
 # and the config records which protocol that attempt chose.
 cat > "$WD_DRIFT/lib.sh" << WDDRIFTLIB
@@ -800,7 +800,7 @@ assert_contains "and the pre-fallback line names what was really running" \
 describe "running_protocol() — what ctrld.toml is actually configured for"
 
 # The main upstream (upstream.0) is the router's ordinary-DNS protocol by
-# convention everywhere in this project — every split-DNS profile is
+# convention everywhere in this project: every split-DNS profile is
 # additional to it, never instead of it.
 RP_DIR="$TMPDIR/running-protocol"
 mkdir -p "$RP_DIR"
@@ -822,7 +822,7 @@ assert_false "an upstream.0 with no type is not silently answered" \
 # something to report and record. The value is persisted into DNS_TYPE and fed
 # to get_endpoint and every later config rewrite, so adopting a hand-edited or
 # half-written type is worse than admitting the protocol cannot be determined
-# — and a half-written config is squarely in scope, since an interrupted write
+# and a half-written config is squarely in scope, since an interrupted write
 # is the whole reason this function exists.
 printf '[upstream.0]\n  name = "x"\n  type = "notaproto"\n' > "$RP_DIR/bogus.toml"
 assert_false "a protocol this project does not manage is not answered" \
@@ -840,7 +840,7 @@ describe "reconcile_dns_type() — DNS_TYPE must not diverge from what ctrld.tom
 # The scenario found on a router: a watchdog fallback attempt retargets
 # ctrld.toml to a candidate protocol before it knows whether the restart will
 # succeed, and only commits DNS_TYPE once it does. A reboot landing in
-# between — the observed case — leaves ctrld.toml on one protocol while
+# between, the observed case, leaves ctrld.toml on one protocol while
 # DNS_TYPE and PREFERRED_PROTOCOL still name another. Nothing before this
 # reconciled them: self-upgrade compared PREFERRED_PROTOCOL against the stale
 # DNS_TYPE and saw no difference, so it never fired; a manual
@@ -853,7 +853,7 @@ printf 'RESOLVER_ID=abc123\nBOOTSTRAP_IP=76.76.2.22\nDNS_TYPE=doh3\nPREFERRED_PR
     > "$RC_DIR/controld.env"                                    # what was recorded before the interruption
 
 DNS_TYPE=doh3
-# assert_true, not a bare call — a mutated reconcile_dns_type that fails here
+# assert_true, not a bare call: a mutated reconcile_dns_type that fails here
 # must show as a clean FAIL, not crash the whole suite under set -e.
 assert_true "reports a correction was made" \
     reconcile_dns_type "$RC_DIR/controld.env" "$RC_DIR/ctrld.toml"
@@ -863,7 +863,7 @@ assert_false "PREFERRED_PROTOCOL is never touched — that is what the user aske
     grep -q '^PREFERRED_PROTOCOL=doh$' "$RC_DIR/controld.env"
 assert_file_contains "it stays what it was" "$RC_DIR/controld.env" '^PREFERRED_PROTOCOL=doh3$'
 
-# Already-correct state must report nothing to do, and touch nothing — the
+# Already-correct state must report nothing to do, and touch nothing. The
 # common case runs every 5 minutes and must stay silent and cheap.
 sed -i 's/^DNS_TYPE=.*/DNS_TYPE=doh/' "$RC_DIR/controld.env"   # now agrees with ctrld.toml
 RC_ENV_BEFORE="$(cat "$RC_DIR/controld.env")"
@@ -877,14 +877,14 @@ assert_false "reports nothing needed to fix" \
 assert_eq "and the file is byte-for-byte untouched" "$RC_ENV_BEFORE" "$(cat "$RC_DIR/controld.env")"
 
 # A ctrld.toml that cannot be read (missing, or no readable upstream.0) is not
-# this function's problem to report — it must fail closed, not correct
+# this function's problem to report: it must fail closed, not correct
 # DNS_TYPE to garbage.
 DNS_TYPE=doh3
 assert_false "an unreadable config reports nothing to correct" \
     reconcile_dns_type "$RC_DIR/controld.env" "$RC_DIR/does-not-exist.toml"
 assert_file_contains "and DNS_TYPE is left alone on disk" "$RC_DIR/controld.env" '^DNS_TYPE=doh$'
 
-# Nor is a protocol this project does not manage adopted — on disk or in the
+# Nor is a protocol this project does not manage adopted, on disk or in the
 # caller's shell, which is where do_upgrade_check and reconfigure.sh read it
 # from for every decision they make after the call.
 DNS_TYPE=doh3
@@ -893,7 +893,7 @@ assert_false "a protocol this project does not manage is not adopted" \
 assert_eq "and the caller's DNS_TYPE is left alone" "doh3" "$DNS_TYPE"
 assert_file_contains "and so is the file" "$RC_DIR/controld.env" '^DNS_TYPE=doh$'
 
-# An env file old enough to have no DNS_TYPE line at all is still supported —
+# An env file old enough to have no DNS_TYPE line at all is still supported,
 # load_env and post-cfg.sh both default the value rather than refusing the
 # file. `sed s/^DNS_TYPE=.*/` has nothing to rewrite there, so the correction
 # was reported but never written, and every watchdog cycle then rediscovered
@@ -920,12 +920,12 @@ describe "do_upgrade_check() — must consult the real protocol, not just the re
 
 # reconcile_dns_type is stubbed here to control exactly what it reports,
 # isolating do_upgrade_check's own decision from reconcile_dns_type's own file
-# handling (already tested directly above) — the same technique the watchdog
+# handling (already tested directly above), the same technique the watchdog
 # tests already use to isolate a caller's control flow from its
 # collaborators. Everything happens inside a subshell: PATH, the stub
 # definition and DNS_TYPE/PREFERRED_PROTOCOL are all gone the moment it exits,
 # so nothing here can leak into a test that runs after it. Only what actually
-# landed on disk — the log file, the counter file — is asserted on, outside
+# landed on disk (the log file, the counter file) is asserted on, outside
 # the subshell where assert_* must run for PASS/FAIL to be counted at all.
 DUC_BIN="$TMPDIR/duc-bin"; mkdir -p "$DUC_BIN"
 DUC_LOG="$TMPDIR/duc.log"; export DUC_LOG
@@ -980,15 +980,15 @@ assert_true "do_upgrade_check actually calls reconcile_dns_type" \
 describe "reconfigure.sh and status.sh — wired to the real protocol, not the stale record"
 
 # reconfigure.sh hardcodes /cfg/ctrld.toml and /cfg/controld.env throughout,
-# like every other script here — running it as a real subprocess would write
-# to those paths and restart production ctrld if this ever executed on a
+# like every other script here, because running it as a real subprocess would
+# write to those paths and restart production ctrld if this ever executed on a
 # router, which test.sh is explicitly meant to support. Nothing in this suite
 # runs reconfigure.sh or status.sh as a subprocess for that reason, so this
-# checks wiring and ordering — the real reconciliation logic is exercised
+# checks wiring and ordering: the real reconciliation logic is exercised
 # directly above, safely, against sandbox paths.
 # code_lineno, not a bare grep -n: the comment above the call mentions
 # reconcile_dns_type, and so does the comment left behind if the call is ever
-# commented out — which is exactly how a reverted fix used to slip past this
+# commented out, which is exactly how a reverted fix used to slip past this
 # whole ordering check with the suite still green.
 RCF_LOADS=$(code_lineno "$SCRIPT_DIR/reconfigure.sh" -E '^if ! load_env')
 RCF_RECONCILES=$(code_lineno "$SCRIPT_DIR/reconfigure.sh" -E '^reconcile_dns_type && print_info')
@@ -1002,7 +1002,7 @@ assert_eq "reconfigure.sh reconciles right after loading, before anything reads 
     "yes" "$RCF_ORDER"
 
 # Anchored to the exact display line, not just a mention of the name
-# somewhere in the file — a comment referencing running_protocol elsewhere
+# somewhere in the file: a comment referencing running_protocol elsewhere
 # would otherwise satisfy a bare `grep -q running_protocol` the same way a
 # reverted fix (back to raw DNS_TYPE) would.
 assert_true "status.sh's Protocol line reads the real running protocol" \
@@ -1024,9 +1024,9 @@ describe "lib.sh bootstrap — a missing library must never fail silently"
 
 # `.` is a POSIX special built-in: a failed one exits a non-interactive shell
 # on the spot, so `. lib.sh 2>/dev/null || <fallback>` never reaches its
-# fallback under the router's ash, or dash — bash is the outlier that runs it.
-# reconfigure.sh, benchmark.sh and uninstall.sh all bootstrapped that way, and
-# with stderr discarded on top they produced no output whatsoever and exit 2
+# fallback under the router's ash, or dash, and bash is the outlier that runs
+# it. reconfigure.sh, benchmark.sh and uninstall.sh all bootstrapped that way,
+# and with stderr discarded on top they produced no output whatsoever and exit 2
 # when run from a directory with no lib.sh beside them. Their /cfg fallback,
 # written for exactly that case, was unreachable. uninstall.sh is the one that
 # mattered: the README teaches fetching a single script into /tmp, and doing
@@ -1059,7 +1059,7 @@ describe "reconfigure.sh --show — one field, one line"
 #     ctrld running:       6249
 #     yes (PID above)
 # Seen on a router while verifying something else. status.sh already does this
-# correctly — capture the PID, then print one line — so this matches it, and
+# correctly, capturing the PID then printing one line, so this matches it, and
 # several PIDs render as "yes (PID 123 456)" in both.
 #
 # Source assertions: nothing in this suite runs reconfigure.sh as a subprocess,
@@ -1100,7 +1100,7 @@ assert_true "setup backs up a foreign rc.local" \
 
 # The redirect port is per-install (setup.sh moves off 5354 when it is taken),
 # so uninstall must read controld.env before it removes anything. Without it,
-# DNS_PORT was lib.sh's 5354 default and a moved install kept every redirect —
+# DNS_PORT was lib.sh's 5354 default and a moved install kept every redirect,
 # pointing at a port with nothing behind it. A source assertion because the
 # behaviour needs /cfg, uci and iptables; it checks ordering, not presence,
 # since a load_env below the first use would be no better than none.
@@ -1117,7 +1117,7 @@ assert_false "uninstall does not hardcode the default port" \
 # The teardown must survive everything that runs after it.
 #
 # uninstall.sh removed the managed block, printed "rules will not return on
-# reload", and then called disable_forced_dns — which sets FORCED_DNS=0 and
+# reload", and then called disable_forced_dns, which sets FORCED_DNS=0 and
 # calls ensure_firewall_user_rules, and that creates a block when none exists.
 # So the block came back, holding twelve port-53 REDIRECTs aimed at a port
 # nothing would listen on once ctrld was gone. Found on a router. The next
@@ -1164,7 +1164,7 @@ assert_contains "the user's own unrelated rule is untouched" \
     "$UF_OUT" "dport 8080"
 
 # Toggling forced DNS off on a *live* install must still keep the port-53
-# rules persisted — that is what this call is for, and the guard above must not
+# rules persisted. That is what this call is for, and the guard above must not
 # have broken it.
 UF_LIVE="$(
     PATH="$UF_BIN:$PATH"
@@ -1279,7 +1279,7 @@ assert_eq "falls back to live uci state"      "1" "$(preserved_forced_dns "$TMPD
 printf 'FORCED_DNS=0\n' > "$TMPDIR/fd.env"
 assert_eq "uci on beats a stale 0 in the file" "1" "$(preserved_forced_dns "$TMPDIR/fd.env")"
 
-# setup.sh must actually preserve it — this fix was once described in a commit
+# setup.sh must actually preserve it. This fix was once described in a commit
 # before it was in the diff, and no test noticed. The assertion that replaced
 # that gap checked for the literal `FORCED_DNS=$(preserved_forced_dns ...)`
 # inside setup.sh's here-doc, and passed for months while that exact line read
@@ -1290,7 +1290,7 @@ describe "force_dns_port — a package default, not ours to delete"
 
 # 53 and 853 are the ports https-dns-proxy ships in its own /etc/config, and the
 # same pair is the init script's fallback when the option is absent. Deleting
-# them on uninstall removed a vendor default and did not stick either — the
+# them on uninstall removed a vendor default and did not stick either, since the
 # Route 10 wrote the option back on the next boot. Three fixes chased that
 # before anyone read the package, each guarded by a test that asserted where
 # the delete sat in the file rather than what the router ended up with. These
@@ -1446,7 +1446,7 @@ assert_file_contains "policy resolver round-trips too"    "$RT" 'endpoint = "htt
 describe "lib.sh carries no dead code"
 
 # check_port_in_use and proto_port were each defined, documented in a Usage
-# comment, and never called from anywhere — setup.sh carried its own private
+# comment, and never called from anywhere: setup.sh carried its own private
 # _port_in_use rather than using the shared one. A library function with no
 # caller still has to be read and maintained, and reads as available API.
 #
@@ -1478,8 +1478,8 @@ assert_eq "every lib.sh function has a caller" "" "$LIB_DEAD"
 describe "log_lines() — logread is not available on every router"
 
 # logread reads the shared-memory ring buffer that syslogd -C creates. The
-# Route 10 runs `syslogd -n -b 2 -t -u` — no -C — so logread fails outright and
-# every logger call this project makes appeared lost. They are not: syslogd
+# Route 10 runs `syslogd -n -b 2 -t -u`, with no -C, so logread fails outright
+# and every logger call this project makes appeared lost. They are not: syslogd
 # defaults to a file. status.sh printed no watchdog section at all there, with
 # nothing to say it had looked.
 LL_DIR="$TMPDIR/logs"; mkdir -p "$LL_DIR"
@@ -1507,7 +1507,7 @@ assert_not_contains "and the file is not read as well"   "$LL_OUT2" "added DNS r
 assert_false "reports failure when there is no log at all" \
     sh -c "PATH='$LL_BIN:\$PATH' LOG_FILES='$TMPDIR/no-such-log' sh -c \". '$SCRIPT_DIR/lib.sh'; logread() { return 1; }; log_lines watchdog\""
 
-# An actual invocation — command substitution or a pipe — not the word. The
+# An actual invocation, command substitution or a pipe, not the word. The
 # comment above the call and the "checked logread and ..." message both name it
 # on purpose, and matching those would fail for the wrong reason.
 assert_eq "status.sh does not invoke logread itself" "" \
@@ -1520,7 +1520,7 @@ assert_true  "status.sh goes through the helper" \
 # to <file>.0 and starts a new one, so on a router that logs steadily the event
 # you are looking for can be in .0 minutes after it happened. Reading only the
 # live file showed "no entries found" with the history sitting right next to it
-# — and docs/troubleshooting.md already claimed status.sh handled these files.
+# and docs/troubleshooting.md already claimed status.sh handled these files.
 LR_DIR="$TMPDIR/log-rotate"
 mkdir -p "$LR_DIR"
 printf 'Sep 4 10:00 h watchdog: oldest, in messages.1\n' > "$LR_DIR/messages.1"
@@ -1535,7 +1535,8 @@ assert_eq       "all three lines, none duplicated"   "3" "$(printf '%s\n' "$LR_O
 assert_eq       "oldest first, so tail keeps the newest" "live, in messages" \
     "$(printf '%s\n' "$LR_OUT" | tail -1 | sed 's/.*watchdog: //')"
 
-# An event only in the rotated file must still be found — the case the router hit.
+# An event only in the rotated file must still be found, the case the router
+# hit on hardware.
 rm -f "$LR_DIR/messages.0" "$LR_DIR/messages.1"
 printf 'Sep 4 11:00 h watchdog: added DNS redirect rules\n' > "$LR_DIR/messages.0"
 printf 'Sep 5 00:00 h crond: something else entirely\n'     > "$LR_DIR/messages"
@@ -1544,8 +1545,8 @@ assert_contains "an event that has already rotated is still reported" \
     "$LR_OUT2" "added DNS redirect rules"
 
 # Every tag this project logs under must be covered by status.sh's activity
-# filter. forced-dns and controld were not, so the lines a restore cycle emits —
-# the port-853 rules and the firewall.user rewrite — were invisible under a
+# filter. forced-dns and controld were not, so the lines a restore cycle emits,
+# the port-853 rules and the firewall.user rewrite, were invisible under a
 # heading that claims to show our activity. Derived from the sources rather than
 # hardcoded, so a tag added later cannot go missing the same way.
 SL_PAT="$(sed -n "s/.*log_lines '\([^']*\)'.*/\1/p" "$SCRIPT_DIR/status.sh")"
@@ -1576,7 +1577,7 @@ describe "audit.sh — report our own artifacts as ours"
 # ctrld.prev is the updater's rollback copy and the README documents it, but it
 # fell through to the "not installed by this project" arm. It, ctrld.toml.bak
 # and rc.local.pre-controld were also absent from the manifest, so each was
-# reported twice — once as a known leftover, again as unexpected in /cfg.
+# reported twice: once as a known leftover, again as unexpected in /cfg.
 # The arm itself, not its wording: matching the message text passes even if the
 # case label is changed to something else entirely.
 assert_true "ctrld.prev has its own case arm" \
@@ -1596,7 +1597,7 @@ AU_OUT="$(PATH="$AU_BIN:$PATH" FORCED_DNS=1 sh "$SCRIPT_DIR/audit.sh" 2>/dev/nul
 assert_contains "the env flag wins over live uci" "$AU_OUT" "forced DNS 1"
 # The fallback can only be exercised where nothing supplies the flag: audit.sh
 # reads /cfg/controld.env through load_env, and on a configured router that file
-# sets FORCED_DNS — so this asserted something the environment controls, and
+# sets FORCED_DNS, so this asserted something the environment controls, and
 # failed on a real install with forced DNS on. Skip rather than assert a lie.
 if [ -f /cfg/controld.env ] && grep -q '^FORCED_DNS=' /cfg/controld.env 2>/dev/null; then
     skip "uci fallback (this router's controld.env supplies FORCED_DNS)"
@@ -1612,7 +1613,7 @@ describe "bench_domain() — the benchmark must query real hostnames"
 # expression came out as $0, and every query looked up all five domains joined
 # by spaces as a single hostname. All ten failed, every protocol reported
 # FAILED (0/10), and setup fell through to "All protocols failed benchmark.
-# Defaulting to DoH3." — the menu option never once produced a result.
+# Defaulting to DoH3." The menu option never once produced a result.
 assert_eq "the first domain"  "google.com"     "$(bench_domain 1)"
 assert_eq "the second"        "cloudflare.com" "$(bench_domain 2)"
 assert_eq "the fifth"         "github.com"     "$(bench_domain 5)"
@@ -1644,7 +1645,7 @@ describe "bench_stop() — never the production resolver"
 
 # reconfigure.sh's benchmark ran `kill $(pidof ctrld)` before each of three
 # protocols. That is the resolver every LAN client is redirected to, so the
-# whole network lost DNS for the run — and a failure between the kill and the
+# whole network lost DNS for the run, and a failure between the kill and the
 # restart left it that way until the watchdog's next cycle. The throwaway
 # daemon is identified by the config path it was started with instead.
 assert_true "bench_stop matches on the config path" \
@@ -1652,7 +1653,7 @@ assert_true "bench_stop matches on the config path" \
 # Scoped to the benchmark regions: a stop_ctrld elsewhere is meant to stop the
 # production daemon, and only a benchmark must never do so.
 # setup.sh's region is delimited by a section comment, so it has to be sliced
-# before comments are blanked, not after — code_only reads the slice from
+# before comments are blanked, not after, because code_only reads the slice from
 # standard input here. reconfigure.sh's is delimited by code either way.
 SETUP_BENCH="$(sed -n '/── Inline benchmark ──/,/rm -f "\$BENCH_CONF"/p' "$SCRIPT_DIR/setup.sh" | code_only)"
 RECONF_BENCH="$(code_only "$SCRIPT_DIR/reconfigure.sh" | sed -n '/^do_benchmark() {/,/^}/p')"
@@ -1671,7 +1672,7 @@ describe "carry_policy_blocks() — a config rewrite must not drop split DNS"
 
 # setup.sh Step 5 overwrote ctrld.toml outright, with no backup and no
 # carry-over, so a re-install deleted every policy upstream, network block and
-# routing rule — on the operation the README calls "always safe", and silently
+# routing rule, on the operation the README calls "always safe", and silently
 # in the non-interactive form, which never reaches the wizard.
 CPB_OLD="$TMPDIR/carry-old.toml"
 write_ctrld_config "$CPB_OLD" old123 76.76.2.22 doh3
@@ -1725,11 +1726,11 @@ assert_false "a missing source is not an error to report as carried" \
     carry_policy_blocks "$CPB_TARGET" "$TMPDIR/no-such.toml"
 
 # setup.sh must take the backup and use it, and must not then run the wizard
-# over a carried policy — two [listener.0.policy] tables is invalid TOML and
+# over a carried policy: two [listener.0.policy] tables is invalid TOML and
 # ctrld would not start at all.
 # Run the real thing. Three greps for `cp`, `carry_policy_blocks` and the
 # CARRIED_POLICY guard used to stand in for this; they checked those strings
-# appeared, not that they ran in an order that works — deleting the
+# appeared, not that they ran in an order that works. Deleting the
 # retarget_upstreams call and moving the .bak removal above the carry gutted
 # the feature with the suite still fully green.
 #
@@ -1800,7 +1801,7 @@ describe "policy_add_rule() — a reported rule must actually be in the file"
 # first run of the setup wizard, which writes macs-only or networks-only
 # depending on the route type chosen.
 
-# 1. No policy table at all — one must be created around the rule
+# 1. No policy table at all: one must be created around the rule
 PA1="$TMPDIR/pol-none.toml"
 write_ctrld_config "$PA1" abc123 76.76.2.22 doh3
 assert_true "a first MAC rule creates the policy" \
@@ -1808,7 +1809,7 @@ assert_true "a first MAC rule creates the policy" \
 assert_file_contains "the policy table is there" "$PA1" '^\[listener.0.policy\]'
 assert_eq "and carries the rule" "1" "$(policy_rule_count "$PA1" mac)"
 
-# 2. A networks-only policy, adding a MAC rule — the case that silently failed
+# 2. A networks-only policy, adding a MAC rule: the case that silently failed
 PA2="$TMPDIR/pol-net-only.toml"
 write_ctrld_config "$PA2" abc123 76.76.2.22 doh3
 cat >> "$PA2" << 'PA2EOF'
@@ -1827,7 +1828,7 @@ assert_eq "the network rule is untouched"  "1" "$(policy_rule_count "$PA2" netwo
 assert_eq "the macs list is inside the policy table" "1" \
     "$(toml_blocks "$PA2" '[listener.0.policy]' | grep -c 'aa:bb:cc:dd:ee:02')"
 
-# 3. A macs-only policy, adding a network rule — the mirror case
+# 3. A macs-only policy, adding a network rule: the mirror case
 PA3="$TMPDIR/pol-mac-only.toml"
 write_ctrld_config "$PA3" abc123 76.76.2.22 doh3
 cat >> "$PA3" << 'PA3EOF'
@@ -1850,7 +1851,7 @@ assert_true "a second MAC rule is added" \
     policy_add_rule "$PA3" mac "aa:bb:cc:dd:ee:04" 3
 assert_eq "both MAC rules are present" "2" "$(policy_rule_count "$PA3" mac)"
 
-# A policy table must never be created twice — that is invalid TOML.
+# A policy table must never be created twice, which is invalid TOML.
 assert_eq "exactly one policy table" "1" \
     "$(grep -c '^\[listener.0.policy\]' "$PA3" | tr -d ' ')"
 
@@ -1919,7 +1920,7 @@ describe "audit.sh — a wiped firewall.user block must not pass as healthy"
 
 # An empty firewall.user with an install recorded means the redirects exist in
 # the live table but nowhere that survives a firewall reload. The watchdog
-# rewrites the block, so this only bites while cron is dead as well — and a
+# rewrites the block, so this only bites while cron is dead as well, and a
 # firmware update resetting /etc can take both, so it is not left to that.
 FW_BIN="$TMPDIR/fwbin"; mkdir -p "$FW_BIN"
 for _fs in uci iptables ip nslookup logread pidof netstat crontab; do
@@ -1977,10 +1978,10 @@ assert_contains "an empty crontab is reported, not passed over" \
 assert_contains "the watchdog is named"       "$CJ_GONE" "never run:.*watchdog\.sh"
 assert_contains "and so is the updater"       "$CJ_GONE" "controld-update\.sh"
 # Severity is the whole point. Reported as a review note it would print and
-# still exit 0, which is the failure this check exists to end — and asserting
+# still exit 0, which is the failure this check exists to end, and asserting
 # only the message text does not catch that, as reverting it proved.
 
-# Only the watchdog missing — the updater alone must not mask it.
+# Only the watchdog missing: the updater alone must not mask it.
 cat > "$CJ_BIN/crontab" <<'CJSTUB1'
 #!/bin/sh
 echo "0 3 * * 1 /cfg/controld-update.sh"
@@ -2016,7 +2017,7 @@ else
     # Severity from what audit did, not from how the line is written: as a
     # review note the count would not move and the exit code would not carry
     # it. Measured against the same empty crontab with the gate off, which is
-    # the only pair that differs by this check alone — comparing against a
+    # the only pair that differs by this check alone, since comparing against a
     # populated crontab instead just trades this drift item for the
     # neighbouring "points at missing script(s)" one.
     assert_eq "and with one recorded it is drift, not a review note" \
@@ -2034,7 +2035,7 @@ describe "audit.sh — a boot hook that never runs must fail the audit"
 #
 # Source assertion, not an outcome test: this arm fires only when /cfg/rc.local
 # exists and /etc/rc.local does not source it, and staging that means writing
-# to /etc/rc.local — which on a router is the live boot hook. Nothing in this
+# to /etc/rc.local, which on a router is the live boot hook. Nothing in this
 # suite is worth breaking a router's boot to assert.
 assert_true "a boot hook that is never sourced is drift, not a review note" \
     code_grep "$SCRIPT_DIR/audit.sh" -E \
@@ -2086,8 +2087,8 @@ describe "write_env_file() — a rewrite must not drop the keys it does not mana
 
 # The six managed keys were emitted and everything else was truncated away, so
 # any reconfigure.sh --protocol/--resolver/--benchmark, and every setup.sh
-# re-install, silently deleted DNS_PORT, LAN_IFACES and LAN_IFACES_EXCLUDE —
-# the documented overrides — along with POLICY_UPSTREAMS.
+# re-install, silently deleted DNS_PORT, LAN_IFACES and LAN_IFACES_EXCLUDE,
+# the documented overrides, along with POLICY_UPSTREAMS.
 WEF="$TMPDIR/wef.env"
 cat > "$WEF" << 'WEFTESTEOF'
 RESOLVER_ID=old123
@@ -2147,8 +2148,8 @@ describe "stop_ctrld() — kills every instance, not one packed argument"
 
 # pidof prints every PID on one line, and `kill "$(pidof ctrld)"` quoted them
 # into a single argument: kill rejects "4143 4144" wholesale and nothing dies.
-# It only bites once a second ctrld exists — a benchmark, or the self-upgrade
-# probe — which is exactly when stopping cleanly matters, and why a single
+# It only bites once a second ctrld exists, a benchmark or the self-upgrade
+# probe, which is exactly when stopping cleanly matters, and why a single
 # instance made it look fine for so long.
 #
 # kill is a builtin, so a PATH stub cannot see it; overriding it as a function
@@ -2177,7 +2178,7 @@ describe "start_ctrld() — a timeout in seconds, not one per slow probe"
 
 # `timeout` was an iteration count, and every iteration ran an nslookup against
 # the DNS port. On a Route 10 a query to a closed port costs the resolver's own
-# timeout — about 5s — so start_ctrld(15) took roughly 90 seconds. The watchdog's
+# timeout, about 5s, so start_ctrld(15) took roughly 90 seconds. The watchdog's
 # worst case is one start plus three fallback attempts, which put a full recovery
 # cycle at over six minutes against a five-minute cron interval: instances
 # overlapped, raced over the fail-count file, and the teardown was never reached.
@@ -2235,7 +2236,7 @@ if (
 assert_eq "a listener that answers is reported ready" "0" "$SC_R"
 
 # The generated watchdog carries its own copy of start_ctrld for the case where
-# lib.sh is missing. It ran the same unguarded loop, so it needs the same gate —
+# lib.sh is missing. It ran the same unguarded loop, so it needs the same gate,
 # that copy is heredoc text and nothing else in this suite executes it.
 assert_eq "the generated watchdog's inline start_ctrld gates on the port too" "1" \
     "$(sed -n "/^cat > \/cfg\/watchdog.sh << 'WATCHDOG'/,/^WATCHDOG$/p" "$SCRIPT_DIR/setup.sh" \
@@ -2289,10 +2290,10 @@ LU_OUT="$(list_upstreams "$LU")"
 assert_eq "one line per upstream" "3" "$(printf '%s\n' "$LU_OUT" | wc -l | tr -d ' ')"
 assert_contains "the main upstream carries its name and type" "$LU_OUT" "0.*ControlD.*doh3"
 assert_contains "a policy upstream keeps its own name and type" "$LU_OUT" "1.*ControlD-Kids.*doq"
-# A grep for "[upstream.1]" also matches [upstream.10] — the parse must not.
+# A grep for "[upstream.1]" also matches [upstream.10]. The parse must not.
 assert_contains "a two-digit index is read whole" "$LU_OUT" "10.*Quad9.*doh"
 # Checked on the real tab-separated fields. The previous form used `sh -c` with
-# an unexported variable AND `\t` inside an ERE, where it means a literal "t" —
+# an unexported variable AND `\t` inside an ERE, where it means a literal "t",
 # it could not fail, and an empty name shifts the protocol into the name column
 # because tab is IFS whitespace.
 assert_eq "no upstream reports an empty name"     "0" \
@@ -2475,7 +2476,7 @@ assert_file_contains "forced DNS survives the rewrite" "$WEF_ENV" "FORCED_DNS=1"
 assert_file_contains "the new resolver is written"     "$WEF_ENV" "RESOLVER_ID=newid123"
 assert_false "the old resolver is gone" grep -q 'oldid999' "$WEF_ENV"
 
-# A disabled install must stay disabled — the preserve must not be a hardcoded 1
+# A disabled install must stay disabled: the preserve must not be a hardcoded 1
 printf 'FORCED_DNS=0\n' > "$WEF_ENV"
 write_env_file "$WEF_ENV"
 assert_file_contains "a disabled install stays disabled" "$WEF_ENV" "FORCED_DNS=0"
@@ -2501,7 +2502,7 @@ describe "set_fallback_resolver() — the backstop must rotate too"
 
 # https-dns-proxy answers whenever ctrld is down. Before this existed,
 # reconfigure.sh --resolver changed ctrld but not the fallback, so a resolver
-# rotated away from — a leaked one, say — kept resolving for the whole LAN
+# rotated away from, a leaked one say, kept resolving for the whole LAN
 # every time ctrld restarted.
 FBR_SAVED_PATH="$PATH"
 PATH="$TMPDIR/ucibin:$PATH"          # stateful fake uci from the section above
@@ -2518,7 +2519,7 @@ assert_eq "instance 1 moved too" "https://dns.controld.com/newid123" \
     "$(uci -q get 'https-dns-proxy.@https-dns-proxy[1].resolver_url')"
 assert_eq "bootstrap follows the resolver" "76.76.2.22" \
     "$(uci -q get 'https-dns-proxy.@https-dns-proxy[0].bootstrap_dns')"
-# Only instances that exist are touched — no phantom third one is created
+# Only instances that exist are touched: no phantom third one is created
 assert_eq "no instance is invented" "" \
     "$(uci -q get 'https-dns-proxy.@https-dns-proxy[2].resolver_url')"
 
@@ -2530,7 +2531,7 @@ assert_true "reports failure when there is nothing to update" \
 PATH="$FBR_SAVED_PATH"
 unset UCI_STORE
 
-# Both callers must use it — setup.sh on install, reconfigure.sh on rotation
+# Both callers must use it: setup.sh on install, reconfigure.sh on rotation
 assert_true "setup.sh points the fallback at ControlD" \
     code_grep "$SCRIPT_DIR/setup.sh" 'set_fallback_resolver "$RESOLVER_ID"'
 RECONF_DO_RESOLVER="$(code_only "$SCRIPT_DIR/reconfigure.sh" \
@@ -2642,7 +2643,7 @@ _a=$(next_proto doh3); _b=$(next_proto "$_a")
 assert_eq "doh3 -> doh -> doh3 (cycle)" "doh3" "$_b"
 
 # ══════════════════════════════════════════════════════════════════
-# INTEGRATION TESTS — only run on actual router
+# INTEGRATION TESTS: only run on actual router
 # ══════════════════════════════════════════════════════════════════
 
 describe "Router integration tests"
@@ -2668,7 +2669,8 @@ else
     assert_true "iptables rules active ($RULES)" [ "$RULES" -gt 0 ]
 
     # Integration: cron jobs (wrap pipeline in sh -c so assert_true runs the
-    # whole check in-process — not in a pipeline subshell, which set -e aborts on)
+    # whole check in-process, not in a pipeline subshell, which set -e aborts
+    # on.)
     assert_true "watchdog cron installed"     cron_has /cfg/watchdog.sh
     assert_true "update cron installed"       cron_has /cfg/controld-update.sh
 
@@ -2682,7 +2684,7 @@ else
     # Opt-in, because this is surgery on a live router, not a test. It deletes
     # /cfg/ctrld.toml and runs the whole boot sequence: post-cfg.sh restarts
     # https-dns-proxy, rewrites dhcp uci and restarts dnsmasq, then stops and
-    # starts ctrld — so the LAN loses DNS for the duration. Worse, post-cfg.sh
+    # starts ctrld, so the LAN loses DNS for the duration. Worse, post-cfg.sh
     # waits on `while ! ping -c1 "$BOOTSTRAP_IP"` with no attempt limit, so if
     # the bootstrap host does not answer ICMP this never returns; interrupting
     # it then skips the restore below and leaves the config as post-cfg

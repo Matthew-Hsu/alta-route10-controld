@@ -64,6 +64,24 @@ repo, so its updates reach you without anyone maintaining a snapshot.
 Prose means markdown, commit messages, PR bodies, and shell comments. Anything
 written for a person to read is held to the same standard wherever it lives.
 
+Printed messages are the exception, and they are excluded as a class rather
+than one at a time. They share a deliberate shape, the finding on the left of a
+dash and its consequence on the right, held to one terminal line:
+
+    drift "No managed block in ${FW_USER} — redirects will not survive a firewall reload"
+
+A period fragments a readout meant to be scanned, and a colon reads like a list
+header, so the dash is doing work there that it is not doing in a paragraph.
+Leave all of them, not only the few a test pins. The dash above survives this
+file's own rule because the line is quoted, not written.
+
+Do not decide whose voice a line is in by reading git blame. Every file here is
+written with an AI assistant and edited afterwards, so a name on a commit
+records who reviewed a line, not who phrased it. There is no sample in this
+repository whose em dashes are somebody's style, and treating one as such is
+how a cleanup talks itself into leaving the pattern in place. For prose the
+baseline is none.
+
 **A comment or string that code reads is an interface, not prose. Never reword
 one.** They are listed by what they say rather than where they sit, because
 line numbers drift and a stale pointer aims attention at the wrong line:
@@ -78,8 +96,8 @@ line numbers drift and a stale pointer aims attention at the wrong line:
 - every `# shellcheck` directive, including the trailing prose ones. The prose
   after the directive is editable; the directive is not
 - every shebang, the four inside `setup.sh`'s heredocs included
-- user-facing message strings a test anchors on by text, such as
-  `uninstall.sh`'s "carries no redirect to port". These are UI, not commentary
+- every user-facing message string, not only the ones a test anchors on by
+  text such as `uninstall.sh`'s "carries no redirect to port". These are UI
 
 Every one of those is guarded, so the suite catches a breakage whether or not
 anyone read this section. Each guard was confirmed by mutating the thing it

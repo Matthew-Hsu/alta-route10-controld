@@ -1864,6 +1864,89 @@ SETUP_UP="$(sed -n "/cat > \/cfg\/controld-update.sh << 'UPDATESCRIPT'/,/^UPDATE
 assert_contains "post-cfg.sh adopts the old spelling too"        "$SETUP_PC" 'CURLD_VERSION'
 assert_contains "the weekly updater adopts the old spelling too" "$SETUP_UP" 'CURLD_VERSION'
 
+# Drift count from an audit run's summary; 0 when it reports none. Lets a test
+# assert an item's severity from what audit.sh did, not from how it is written.
+audit_drift_count() {
+    _adc="$(printf '%s\n' "$1" | sed -n 's/.*[^0-9]\([0-9][0-9]*\) drift item(s).*/\1/p' | head -1)"
+    printf '%s' "${_adc:-0}"
+}
+
+describe "audit.sh — a wiped crontab must not pass as healthy"
+
+# The neighbouring check inspects only the jobs that are present, so an empty
+# crontab walks its loop zero times and prints OK. That is precisely what a
+# firmware update leaves behind when it resets /etc, and it is the worst state
+# to miss: the watchdog reconciles the protocol, restores the redirects and
+# drives the fallback chain, so losing it switches off every other self-heal
+# while the install still reads as healthy.
+#
+# An outcome test on audit.sh's real output, and it runs everywhere: the check
+# is gated on CTRLD_VERSION, which is an environment value, so neither this nor
+# the crontab stub needs a real install or a write to /cfg.
+CJ_BIN="$TMPDIR/cronbin"; mkdir -p "$CJ_BIN"
+for _cs in uci iptables ip nslookup logread pidof netstat; do
+    printf '#!/bin/sh\nexit 1\n' > "$CJ_BIN/$_cs"; chmod +x "$CJ_BIN/$_cs"
+done
+# A healthy firewall.user throughout: the sibling check is gated on
+# CTRLD_VERSION too, so leaving it to the default would make the gate-off /
+# gate-on comparison below differ by two items instead of one.
+CJ_FW="$TMPDIR/cj-fw.user"
+printf '# controld-dns-redirect BEGIN\n# controld-dns-redirect END\n' > "$CJ_FW"
+
+# Crontab empty, install recorded: both jobs must be named as never running.
+printf '#!/bin/sh\nexit 0\n' > "$CJ_BIN/crontab"; chmod +x "$CJ_BIN/crontab"
+CJ_GONE="$(PATH="$CJ_BIN:$PATH" FW_USER="$CJ_FW" CTRLD_VERSION=1.5.7 sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+assert_contains "an empty crontab is reported, not passed over" \
+    "$CJ_GONE" "no cron job, so never run"
+assert_contains "the watchdog is named"       "$CJ_GONE" "never run:.*watchdog\.sh"
+assert_contains "and so is the updater"       "$CJ_GONE" "controld-update\.sh"
+# Severity is the whole point. Reported as a review note it would print and
+# still exit 0, which is the failure this check exists to end — and asserting
+# only the message text does not catch that, as reverting it proved.
+
+# Only the watchdog missing — the updater alone must not mask it.
+cat > "$CJ_BIN/crontab" <<'CJSTUB1'
+#!/bin/sh
+echo "0 3 * * 1 /cfg/controld-update.sh"
+CJSTUB1
+chmod +x "$CJ_BIN/crontab"
+CJ_HALF="$(PATH="$CJ_BIN:$PATH" FW_USER="$CJ_FW" CTRLD_VERSION=1.5.7 sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+assert_contains "one job present does not excuse the other" \
+    "$CJ_HALF" "never run:.*watchdog\.sh"
+
+# Both present: silent.
+cat > "$CJ_BIN/crontab" <<'CJSTUB2'
+#!/bin/sh
+echo "*/5 * * * * /cfg/watchdog.sh"
+echo "0 3 * * 1 /cfg/controld-update.sh"
+CJSTUB2
+chmod +x "$CJ_BIN/crontab"
+CJ_OK="$(PATH="$CJ_BIN:$PATH" FW_USER="$CJ_FW" CTRLD_VERSION=1.5.7 sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+assert_not_contains "a complete crontab says nothing" "$CJ_OK" "no cron job"
+assert_contains "and confirms both are there" "$CJ_OK" "Both cron jobs are in the crontab"
+
+# No install recorded: silent either way, so a bare checkout is not accused.
+# Only assertable where nothing supplies the gate: audit.sh reads
+# /cfg/controld.env through load_env, and on a real install that file sets
+# CTRLD_VERSION, so exporting nothing here proves nothing there.
+printf '#!/bin/sh\nexit 0\n' > "$CJ_BIN/crontab"; chmod +x "$CJ_BIN/crontab"
+if [ -f /cfg/controld.env ] && grep -q '^CTRLD_VERSION=' /cfg/controld.env 2>/dev/null; then
+    skip "bare checkout (this router's controld.env supplies CTRLD_VERSION)"
+    skip "cron severity by drift count (needs the gate-off run above)"
+else
+    CJ_NONE="$(PATH="$CJ_BIN:$PATH" FW_USER="$CJ_FW" sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+    assert_not_contains "no recorded install means no cron complaint" \
+        "$CJ_NONE" "no cron job"
+    # Severity from what audit did, not from how the line is written: as a
+    # review note the count would not move and the exit code would not carry
+    # it. Measured against the same empty crontab with the gate off, which is
+    # the only pair that differs by this check alone — comparing against a
+    # populated crontab instead just trades this drift item for the
+    # neighbouring "points at missing script(s)" one.
+    assert_eq "and with one recorded it is drift, not a review note" \
+        "$(( $(audit_drift_count "$CJ_NONE") + 1 ))" "$(audit_drift_count "$CJ_GONE")"
+fi
+
 describe "audit.sh — a boot hook that never runs must fail the audit"
 
 # Reported as `review` once, so audit.sh exited 0 while boot persistence was

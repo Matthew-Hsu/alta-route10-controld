@@ -1,5 +1,5 @@
 #!/bin/sh
-# reconfigure.sh — change DNS settings without re-running full setup
+# reconfigure.sh: change DNS settings without re-running full setup
 #
 # Usage: reconfigure.sh [OPTIONS]
 #   --help          Show help
@@ -15,7 +15,7 @@ set -e
 LIB_DIR="$(dirname "$0")"
 # `.` is a POSIX special built-in: when it fails, a non-interactive shell exits
 # on the spot, so a `|| fallback` after it is unreachable under the router's
-# ash (and dash) — bash is the outlier that runs it. With stderr discarded on
+# ash (and dash), and bash is the outlier that runs it. With stderr discarded on
 # top, running any of these from a directory without lib.sh beside it produced
 # no output at all and exit 2, and the /cfg fallback below never ran. Test for
 # whether the file is there instead, the way setup.sh already does.
@@ -99,9 +99,9 @@ fi
 
 # DNS_TYPE only reflects reality when the code that last changed it ran to
 # completion (reconcile_dns_type's comment in lib.sh has the full mechanism).
-# Every guard below that decides "is this already the current protocol" —
-# --protocol's no-op check, --benchmark's "already fastest" check — reads
-# straight from DNS_TYPE, and there is no cron tick to wait out here: this
+# Every guard below that decides "is this already the current protocol",
+# meaning --protocol's no-op check and --benchmark's "already fastest" check,
+# reads straight from DNS_TYPE, and there is no cron tick to wait out here: this
 # runs once and exits. do_upgrade_check reconciles the same divergence on
 # its own 5-minute cycle, but a user re-running this tool seconds after a
 # bad reboot needs it fixed now, not on the next healthy watchdog pass.
@@ -115,14 +115,14 @@ apply_and_restart() {
     local msg="$1"
     write_ctrld_config /cfg/ctrld.toml "$RESOLVER_ID" "$BOOTSTRAP_IP" "$DNS_TYPE"
 
-    # Carry split-DNS config across the rewrite: whole tables, in TOML order —
+    # Carry split-DNS config across the rewrite: whole tables, in TOML order,
     # the extra upstreams and networks first, then the policy that references
     # them. (Copying just the header lines, as this used to, left ctrld with
     # empty [upstream.N] tables and a policy pointing at nothing.)
     if carry_policy_blocks /cfg/ctrld.toml /cfg/ctrld.toml.bak; then
         print_info "Split DNS policy config preserved"
         # Preserved upstreams still carry the old protocol. Leaving them there
-        # means a policy keeps using a transport the user just moved off —
+        # means a policy keeps using a transport the user just moved off, and
         # failing for exactly the devices the policy targets.
         retarget_upstreams /cfg/ctrld.toml "$DNS_TYPE"
         print_info "Policy upstreams moved to $(proto_label "$DNS_TYPE")"
@@ -157,7 +157,7 @@ do_show() {
     printf "  %-20s %s\n" "ctrld version:" "${CTRLD_VERSION}"
     # pidof prints the PID itself, so the old one-liner put that on stdout
     # inside the substitution and then appended "yes (PID above)" as a second
-    # line — printf's %s took both, and the readout wrapped mid-field:
+    # line: printf's %s took both, and the readout wrapped mid-field:
     #   ctrld running:       6249
     #   yes (PID above)
     # Capture first, print once, the same shape status.sh already uses (and
@@ -264,8 +264,8 @@ do_resolver() {
     apply_and_restart "Resolver changed to ${RESOLVER_ID}"
 
     # The fallback has to move too. It answers whenever ctrld is down, so
-    # leaving it on the old ID means a rotated-away profile — a leaked one,
-    # say — still resolves for the whole LAN at the next ctrld restart.
+    # leaving it on the old ID means a rotated-away profile, a leaked one say,
+    # still resolves for the whole LAN at the next ctrld restart.
     if set_fallback_resolver "$RESOLVER_ID" "$BOOTSTRAP_IP"; then
         /etc/init.d/https-dns-proxy restart >/dev/null 2>&1 || true
         print_ok "https-dns-proxy fallback moved to the new resolver"
@@ -289,7 +289,7 @@ do_benchmark() {
         label=$(proto_label "$proto")
 
         # This used to kill production ctrld before each of the three
-        # protocols, while the port-53 redirects still pointed at it — so the
+        # protocols, while the port-53 redirects still pointed at it, so the
         # whole LAN had no DNS for the length of the run, and a failure between
         # the kill and the restart below left it that way until the watchdog's
         # next cycle. bench_protocol uses a loopback listener on its own port
@@ -407,7 +407,7 @@ do_policy() {
 EOF
 
                 # Creates the policy table, or the macs list inside an
-                # existing one, or inserts into it — and fails loudly rather
+                # existing one, or inserts into it, and fails loudly rather
                 # than reporting a rule it did not write.
                 if ! policy_add_rule /cfg/ctrld.toml mac "$mac" "$next_idx"; then
                     mv /cfg/ctrld.toml.polbak /cfg/ctrld.toml
@@ -538,7 +538,7 @@ do_force_dns() {
             printf "  Enable forced DNS hijacking? [Y/n]: "
             read -r confirm
         fi
-        # [Y/n] — default Yes
+        # [Y/n], defaulting to Yes
         case "$confirm" in
             n|N|no|NO)
                 print_info "No changes made."

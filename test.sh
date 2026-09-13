@@ -2081,6 +2081,64 @@ assert_true "a CRLF policy header is still found" \
     policy_add_rule "$PA_CR" mac "aa:bb:cc:dd:ee:aa" 2
 assert_eq "and the rule is written" "1" "$(policy_rule_count "$PA_CR" mac)"
 
+describe "setup.sh's policy wizard — an index is allocated, never assumed"
+
+# The wizard allocated NETWORK_IDX from the config and left UPSTREAM_IDX at a
+# literal 1, so it wrote [upstream.1] whatever the file already held.
+#
+# carry_policy_blocks runs a few steps earlier and brings an existing
+# [upstream.1] across. README.md offers keeping extra upstreams as a supported
+# thing to do, and re-running setup.sh is the documented upgrade path, so a
+# config arriving here with upstream.1 taken is not a contrived shape. The
+# wizard then appended a second [upstream.1]. Two tables of one name is not
+# valid TOML: ctrld would refuse the config and not start, at the end of an
+# install, with the redirects already pointing at its port.
+#
+# Both assignments are pure file reads, so the step extracts and runs against
+# a sandbox rather than being grepped for.
+SPI_DIR="$TMPDIR/setup-idx"
+mkdir -p "$SPI_DIR"
+sed -n '/^POLICY_UPSTREAMS=""$/,/^NETWORK_IDX=/p' "$SCRIPT_DIR/setup.sh" \
+    | sed "s|/cfg/|${SPI_DIR}/|g" > "$SPI_DIR/idx.sh"
+assert_true "the allocation step extracts and parses" sh -n "$SPI_DIR/idx.sh"
+
+# A fresh install: upstream.0 and network.0 exist, so the first free pair is 1/1.
+write_ctrld_config "$SPI_DIR/ctrld.toml" abc123 76.76.2.22 doh3
+assert_eq "a fresh install allocates the first free slots" "1 1" \
+    "$( . "$SPI_DIR/idx.sh" >/dev/null 2>&1; printf '%s %s' "$UPSTREAM_IDX" "$NETWORK_IDX" )"
+
+# A re-install that carried an extra upstream across. The upstream slot the
+# wizard used to take is occupied.
+cat >> "$SPI_DIR/ctrld.toml" << 'SPIEOF'
+
+[upstream.1]
+    endpoint = "https://dns.controld.com/kids5678"
+    name = "ControlD-Kids"
+    type = "doh3"
+SPIEOF
+assert_eq "an occupied upstream slot is skipped" "2 1" \
+    "$( . "$SPI_DIR/idx.sh" >/dev/null 2>&1; printf '%s %s' "$UPSTREAM_IDX" "$NETWORK_IDX" )"
+
+# And with a carried network block too, which the network side already handled.
+cat >> "$SPI_DIR/ctrld.toml" << 'SPINEOF'
+
+[network.1]
+    cidrs = ["192.168.10.0/24"]
+    name = "Kids"
+SPINEOF
+assert_eq "an occupied network slot is skipped as well" "2 2" \
+    "$( . "$SPI_DIR/idx.sh" >/dev/null 2>&1; printf '%s %s' "$UPSTREAM_IDX" "$NETWORK_IDX" )"
+
+# The outcome that matters: writing an upstream at the allocated index leaves
+# exactly one table of that name, so ctrld still has a config it can parse.
+SPI_UP="$( . "$SPI_DIR/idx.sh" >/dev/null 2>&1; printf '%s' "$UPSTREAM_IDX" )"
+printf '\n[upstream.%s]\n    name = "ControlD-Guest"\n    type = "doh3"\n' \
+    "$SPI_UP" >> "$SPI_DIR/ctrld.toml"
+assert_eq "no upstream table is written twice" "0" \
+    "$(grep -oE '^\[upstream\.[0-9]+\]' "$SPI_DIR/ctrld.toml" | sort | uniq -d | grep -c .)"
+assert_eq "and the wizard's upstream is really there" "3" \
+    "$(list_upstreams "$SPI_DIR/ctrld.toml" | wc -l | tr -d ' ')"
+
 describe "CURLD_VERSION — an install inherited from the original project"
 
 # The original project misspelled the key in its first commit (f6c81a6); this

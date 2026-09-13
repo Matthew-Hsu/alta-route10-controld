@@ -605,9 +605,21 @@ POLICY_UPSTREAMS=""
 POLICY_NETWORKS=""
 POLICY_MACS=""
 POLICY_CONF=""
-UPSTREAM_IDX=1
-# Allocate from the config that was just written rather than assuming an index:
-# a fixed one silently overwrites a network block when the layout changes.
+# Both indices are allocated from the config that was just written, rather than
+# assumed: a fixed one overwrites whatever already holds that slot.
+#
+# The network index was allocated this way and the upstream index was not, so
+# UPSTREAM_IDX started at 1 whatever the file held. carry_policy_blocks runs
+# just above and brings an existing [upstream.1] across, and README.md offers
+# that as a supported thing to have ("extra upstreams are preserved"), while a
+# re-install is the documented upgrade path. Reaching the wizard from there
+# appended a second [upstream.1]. Two tables with one name is not valid TOML,
+# so ctrld would not parse the config and would not start, at the end of an
+# install, with the redirects already pointing at it.
+#
+# Only the interactive path gets here, since a --resolver install never opens
+# the wizard.
+UPSTREAM_IDX="$(next_toml_index /cfg/ctrld.toml upstream)"
 NETWORK_IDX="$(next_toml_index /cfg/ctrld.toml network)"
 
 if [ "$DO_SPLIT" = "y" ] || [ "$DO_SPLIT" = "Y" ]; then

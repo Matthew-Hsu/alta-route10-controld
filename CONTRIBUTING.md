@@ -67,9 +67,21 @@ Rules that matter more than the format:
 sh test.sh                        # unit tests, GNU awk
 AWK="busybox awk" sh test.sh      # the router runs BusyBox
 find . -name "*.sh" -exec shellcheck -s sh -S warning -e SC2154,SC3043,SC2034 {} +
+find . -name "*.sh" -exec shellcheck -s sh -S info -i SC2086 {} +
 ```
 
-CI runs exactly these.
+CI runs exactly these, and one more thing you cannot: a `betterleaks` secrets
+scan over the tree. It needs a binary downloaded at job time, so it is not in
+the list above. Nothing in a normal change trips it; it is there to stop a
+resolver ID or a key reaching the history.
+
+The second shellcheck pass is not a duplicate of the first. `-S warning` never
+reports SC2086, so the five `# shellcheck disable=SC2086` directives guarding
+deliberate word splitting, in `log_lines` and `prune_stale_redirects` in
+`lib.sh`, in the rule sweep in `uninstall.sh`, and twice in `test.sh`, are
+invisible to it, and deleting one leaves that pass green.
+AGENTS.md counts those directives as interfaces. This is what enforces it, so
+running only the first three commands means a clean local run and a red CI.
 
 ## Testing on hardware
 

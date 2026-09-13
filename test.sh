@@ -36,10 +36,18 @@ assert_eq() {
     fi
 }
 
+# The haystack reaches grep through printf, never echo.
+#
+# dash's echo expands backslash escapes and BusyBox ash's does not, so a
+# haystack carrying a literal "\033" arrives at grep as an escape character in
+# CI and as six characters on the router. An assertion over any text with a
+# backslash in it therefore tested something different in each place, which is
+# the one failure mode this suite exists to rule out. printf '%s\n' passes the
+# string through unchanged in every shell.
 assert_contains() {
     TOTAL=$((TOTAL + 1))
     local desc="$1" haystack="$2" needle="$3"
-    if echo "$haystack" | grep -q "$needle"; then
+    if printf '%s\n' "$haystack" | grep -q "$needle"; then
         PASS=$((PASS + 1))
         printf "    ${GREEN}PASS${RESET}  %s\n" "$desc"
     else
@@ -51,7 +59,7 @@ assert_contains() {
 assert_not_contains() {
     TOTAL=$((TOTAL + 1))
     local desc="$1" haystack="$2" needle="$3"
-    if echo "$haystack" | grep -q "$needle"; then
+    if printf '%s\n' "$haystack" | grep -q "$needle"; then
         FAIL=$((FAIL + 1))
         printf "    ${RED}FAIL${RESET}  %s\n  string should not contain: '%s'\n" "$desc" "$needle"
     else
@@ -63,7 +71,7 @@ assert_not_contains() {
 assert_match() {
     TOTAL=$((TOTAL + 1))
     local desc="$1" actual="$2" pattern="$3"
-    if echo "$actual" | grep -qE "$pattern"; then
+    if printf '%s\n' "$actual" | grep -qE "$pattern"; then
         PASS=$((PASS + 1))
         printf "    ${GREEN}PASS${RESET}  %s\n" "$desc"
     else

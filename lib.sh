@@ -1355,14 +1355,43 @@ write_env_file() {
         # Only well-formed assignments are carried. The file is sourced, so a
         # malformed line like `FOO=bar baz` runs `baz` on every load; carrying
         # such a line forward would make that permanent, where previously the
-        # next rewrite dropped it. A value is kept when it is fully
-        # double-quoted or contains nothing that the shell would act on.
+        # next rewrite dropped it.
+        #
+        # A value is kept when it carries no $, no backtick and no backslash,
+        # and is then either fully double-quoted or made only of characters the
+        # shell does not act on.
+        #
+        # The quoting test alone was not enough, and read as though it were:
+        # double quotes stop word splitting and globbing, and do nothing at all
+        # to $(...), `...` or ${...}. So NOTE="$(cmd)" passed the filter, was
+        # written back, and ran cmd on every load_env after that, which is
+        # every status.sh, audit.sh, reconfigure.sh, uninstall.sh,
+        # benchmark.sh, post-cfg.sh and watchdog cycle.
+        #
+        # Backslash is rejected before either test, for two reasons that the
+        # character class below cannot cover.
+        #
+        # It is the one class member whose meaning differs between the awks.
+        # BusyBox awk reads the \/ in that class as also admitting a literal
+        # backslash and GNU awk does not, so NOTE=trailing\ was dropped in CI
+        # and kept on the router. Kept, it is a line continuation: it swallows
+        # the DNS_PORT line below it, load_env then defaults the port to 5354
+        # while ctrld.toml still says 5355, and that is the very divergence the
+        # installer reads the port back to prevent.
+        #
+        # And a quoted value ending in one, NOTE="ends\", passes /^"[^"]*"$/
+        # because a backslash is not a quote. Sourcing that file is a syntax
+        # error, and load_env sources with `.`, a special builtin, so the shell
+        # exits on the spot: every script here dies at exit 2 printing nothing,
+        # which is the silent failure CONTRIBUTING.md warns is
+        # indistinguishable from success.
         _wef_keep="$($AWK -v managed=" $WEF_MANAGED " '
             /^[A-Za-z_][A-Za-z0-9_]*=/ {
                 eq = index($0, "=")
                 k = substr($0, 1, eq - 1)
                 if (index(managed, " " k " ") != 0) next
                 v = substr($0, eq + 1)
+                if (index(v, "$") || index(v, "`") || index(v, "\\")) next
                 if (v ~ /^"[^"]*"$/ || v ~ /^[A-Za-z0-9_.:\/@%+-]*$/) print
             }
         ' "$_wef_path")"

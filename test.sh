@@ -2346,6 +2346,49 @@ write_env_file "$WEF" 2>/dev/null
 assert_false "a value with an unquoted space is not carried" grep -q '^EVIL=' "$WEF"
 assert_false "a value with a command separator is not carried" grep -q '^ALSO_EVIL=' "$WEF"
 assert_file_contains "a quoted multi-word value still is" "$WEF" '^LAN_IFACES_EXCLUDE="br-lan_40"$'
+# Double quotes were treated as proof a value was inert. They are not: they
+# stop word splitting and globbing and leave $(...), `...` and ${...} alone,
+# and this file is sourced. A quoted substitution therefore survived the
+# rewrite and ran on every load_env afterwards, which is the one outcome the
+# filter above exists to prevent. The three forms are asserted separately
+# because they are three different pieces of shell syntax, not one.
+printf 'SUBST="$(touch %s/wef-pwned)"\n' "$TMPDIR" >> "$WEF"
+printf 'BACKTICK="`touch %s/wef-pwned2`"\n' "$TMPDIR" >> "$WEF"
+printf 'BRACE="${HOME}"\n' >> "$WEF"
+write_env_file "$WEF" 2>/dev/null
+assert_false "a quoted command substitution is not carried" grep -q '^SUBST=' "$WEF"
+assert_false "a quoted backtick is not carried"             grep -q '^BACKTICK=' "$WEF"
+assert_false "a quoted parameter expansion is not carried"  grep -q '^BRACE=' "$WEF"
+# The whole point of carrying unmanaged keys forward is the documented
+# overrides, so prove the tighter filter still keeps every one of them.
+assert_file_contains "a moved DNS port still survives the tighter filter" "$WEF" '^DNS_PORT=5355$'
+assert_file_contains "an excluded VLAN still survives"      "$WEF" '^LAN_IFACES_EXCLUDE="br-lan_40"$'
+assert_file_contains "an unknown key still survives"        "$WEF" '^POLICY_UPSTREAMS=2$'
+# Sourcing what was written must not run anything. If a substitution had been
+# carried, this is where it would fire.
+# shellcheck source=/dev/null
+( . "$WEF" ) >/dev/null 2>&1 || true
+assert_false "and sourcing the result executes nothing" test -e "$TMPDIR/wef-pwned"
+assert_false "nor by way of a backtick" test -e "$TMPDIR/wef-pwned2"
+
+# Backslash, which the character class below the quoting test cannot handle and
+# which the two awks disagree about. BusyBox awk reads the \/ in that class as
+# also admitting a literal backslash and GNU awk does not, so the first of these
+# was dropped in CI and kept on the router: a value ending in a backslash is a
+# line continuation, so it swallows the DNS_PORT line under it and load_env then
+# reports no port at all. The second passes the quoting test in both awks, since
+# a backslash is not a quote, and makes the file a syntax error: load_env sources
+# with `.`, a special builtin, so every script dies at exit 2 printing nothing.
+printf 'TRAILING=ends-with\\\n' >> "$WEF"
+printf 'QUOTED="also ends with\\"\n' >> "$WEF"
+write_env_file "$WEF" 2>/dev/null
+assert_false "an unquoted value ending in a backslash is not carried" grep -q '^TRAILING=' "$WEF"
+assert_false "a quoted value ending in a backslash is not carried"   grep -q '^QUOTED=' "$WEF"
+# The outcome both of those protect: the file still sources cleanly, and the key
+# under them still arrives. A continuation would swallow it and report empty.
+assert_true "the rewritten file still sources without error" sh -c '. "$1" >/dev/null 2>&1' _ "$WEF"
+assert_eq "and the port under them is still readable" "5355" \
+    "$(sh -c '. "$1" >/dev/null 2>&1; printf "%s" "${DNS_PORT:-}"' _ "$WEF")"
 unset DNS_PORT LAN_IFACES_EXCLUDE POLICY_UPSTREAMS
 
 describe "stop_ctrld() — kills every instance, not one packed argument"

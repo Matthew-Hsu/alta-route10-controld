@@ -1,5 +1,18 @@
 # Troubleshooting
 
+> **First, check which port your install uses.** Every command below says 5354,
+> which is the default and almost certainly yours. It is not guaranteed:
+> `setup.sh` moves to the next free port when something already holds 5354, and
+> records the choice.
+>
+> ```sh
+> grep DNS_PORT /cfg/controld.env      # nothing printed means 5354
+> ```
+>
+> If it prints something else, substitute that number everywhere 5354 appears
+> on this page. On a moved install the commands below return nothing at all,
+> which reads exactly like ctrld being dead when it is running normally.
+
 ## DNS not working after setup
 
 **Symptom:** Devices can't resolve hostnames, internet appears down.

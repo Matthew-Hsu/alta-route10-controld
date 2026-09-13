@@ -3012,6 +3012,81 @@ RECONF_DO_RESOLVER="$(code_only "$SCRIPT_DIR/reconfigure.sh" \
 assert_contains "reconfigure.sh rotates the fallback with the resolver" \
     "$RECONF_DO_RESOLVER" "set_fallback_resolver"
 
+describe "reset_fallback_resolver() — an uninstall must clear every instance"
+
+# uninstall.sh reset instances 0, 1 and 2 as three copied blocks. The Route 10
+# ships three, so it worked there, and it assumed exactly what
+# set_fallback_resolver reads from uci rather than assuming, for the reason
+# stated in its own comment. On a router with a fourth instance that one kept
+# pointing at the user's ControlD profile after an uninstall run to stop being
+# routed through it.
+RFR_SAVED_PATH="$PATH"
+PATH="$TMPDIR/ucibin:$PATH"          # the same stateful fake uci
+UCI_STORE="$TMPDIR/rfr.store"; export UCI_STORE
+: > "$UCI_STORE"
+
+# Four instances, one more than the hardcoded three, each on ControlD.
+for _rfr_n in 0 1 2 3; do
+    uci set "https-dns-proxy.@https-dns-proxy[${_rfr_n}]=https-dns-proxy"
+done
+set_fallback_resolver leaked99 76.76.2.22 >/dev/null 2>&1 || true
+assert_eq "the fourth instance was on ControlD to begin with" \
+    "https://dns.controld.com/leaked99" \
+    "$(uci -q get 'https-dns-proxy.@https-dns-proxy[3].resolver_url')"
+
+reset_fallback_resolver "https://dns.quad9.net/dns-query" "9.9.9.9" >/dev/null 2>&1 || true
+
+for _rfr_n in 0 1 2 3; do
+    assert_eq "instance ${_rfr_n} no longer resolves through ControlD" \
+        "https://dns.quad9.net/dns-query" \
+        "$(uci -q get "https-dns-proxy.@https-dns-proxy[${_rfr_n}].resolver_url")"
+    assert_eq "instance ${_rfr_n}'s bootstrap moved with it" "9.9.9.9" \
+        "$(uci -q get "https-dns-proxy.@https-dns-proxy[${_rfr_n}].bootstrap_dns")"
+done
+# The whole point: no ControlD URL is left anywhere after the reset.
+assert_eq "no ControlD resolver survives the uninstall" "0" \
+    "$(grep -c 'dns.controld.com' "$UCI_STORE" || true)"
+# Instances that do not exist are not created, the same as set_fallback_resolver.
+assert_eq "no instance is invented" "" \
+    "$(uci -q get 'https-dns-proxy.@https-dns-proxy[4].resolver_url')"
+
+# Every write was `|| true`, so the only failure it could report was "no
+# instance at all": a uci that accepted the query and refused every set still
+# returned 0, and uninstall.sh printed "https-dns-proxy restarted (Quad9)" over
+# a run that changed nothing. set_fallback_resolver, its stated counterpart,
+# does not swallow. The point of this function is that a retired ControlD
+# profile stops answering, so claiming that when it might still answer is the
+# one thing it must not do.
+RFR_FAILDIR="$TMPDIR/ucifail"
+mkdir -p "$RFR_FAILDIR"
+# The real calls are `uci -q get ...` and `uci set ...`, so this has to look at
+# every argument rather than $1: a stub keyed on $1 fails the query too, the
+# loop is never entered, and the assertion then passes because no instance was
+# found rather than because a failed write was reported.
+printf '#!/bin/sh\nfor a in "$@"; do case "$a" in get) exit 0 ;; set) exit 1 ;; esac; done\nexit 1\n' > "$RFR_FAILDIR/uci"
+chmod +x "$RFR_FAILDIR/uci"
+RFR_FAIL_PATH="$PATH"
+PATH="$RFR_FAILDIR:$PATH"
+assert_false "a reset whose writes all failed does not report success" \
+    reset_fallback_resolver https://dns.quad9.net/dns-query 9.9.9.9
+PATH="$RFR_FAIL_PATH"
+
+: > "$UCI_STORE"
+# assert_false, for the reason given on its twin above: sh -c starts a shell
+# that has never sourced lib.sh, so the function is undefined there, the shell
+# returns 127, and `!` turned that into a pass whatever the function did.
+assert_false "reports failure when there is nothing to reset" \
+    reset_fallback_resolver https://dns.quad9.net/dns-query 9.9.9.9
+
+PATH="$RFR_SAVED_PATH"
+unset UCI_STORE
+
+# And the uninstaller must go through it rather than naming instances again.
+assert_true "uninstall.sh resets the fallback through the loop" \
+    code_grep "$SCRIPT_DIR/uninstall.sh" 'reset_fallback_resolver "https://dns.quad9.net/dns-query"'
+assert_false "uninstall.sh names no instance by index" \
+    code_grep "$SCRIPT_DIR/uninstall.sh" -E 'https-dns-proxy\[[0-9]\]'
+
 describe "audit.sh — reports without touching anything"
 
 # The whole value of an audit is that running it cannot itself cause drift.

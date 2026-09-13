@@ -341,23 +341,19 @@ fi
 
 print_step "Restoring default DNS services..."
 
-# Reset https-dns-proxy to a public resolver (not ControlD)
-if uci get https-dns-proxy.@https-dns-proxy[0] >/dev/null 2>&1; then
-    uci set https-dns-proxy.@https-dns-proxy[0].resolver_url="https://dns.quad9.net/dns-query" 2>/dev/null || true
-    uci set https-dns-proxy.@https-dns-proxy[0].bootstrap_dns="9.9.9.9" 2>/dev/null || true
+# Reset every https-dns-proxy instance to a public resolver (not ControlD).
+#
+# Three copied blocks for instances 0, 1 and 2 used to stand here. The Route 10
+# ships three, so it worked, and it assumed the very thing
+# set_fallback_resolver reads from uci rather than assuming: on a router with a
+# fourth instance, that one kept pointing at the user's ControlD profile after
+# an uninstall run to stop being routed through it.
+if reset_fallback_resolver "https://dns.quad9.net/dns-query" "9.9.9.9"; then
+    /etc/init.d/https-dns-proxy restart 2>/dev/null || true
+    print_ok "https-dns-proxy restarted (Quad9)"
+else
+    print_warn "No https-dns-proxy instances found — check 'uci show https-dns-proxy'"
 fi
-if uci get https-dns-proxy.@https-dns-proxy[1] >/dev/null 2>&1; then
-    uci set https-dns-proxy.@https-dns-proxy[1].resolver_url="https://dns.quad9.net/dns-query" 2>/dev/null || true
-    uci set https-dns-proxy.@https-dns-proxy[1].bootstrap_dns="9.9.9.9" 2>/dev/null || true
-fi
-if uci get https-dns-proxy.@https-dns-proxy[2] >/dev/null 2>&1; then
-    uci set https-dns-proxy.@https-dns-proxy[2].resolver_url="https://dns.quad9.net/dns-query" 2>/dev/null || true
-    uci set https-dns-proxy.@https-dns-proxy[2].bootstrap_dns="9.9.9.9" 2>/dev/null || true
-fi
-uci commit https-dns-proxy 2>/dev/null || true
-
-/etc/init.d/https-dns-proxy restart 2>/dev/null || true
-print_ok "https-dns-proxy restarted (Quad9)"
 
 # /cfg/controld-backup is left by the backup.sh that shipped with earlier
 # versions. That script is gone (it copied /cfg into /cfg, so it could not

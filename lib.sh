@@ -1468,6 +1468,40 @@ set_fallback_resolver() {
     return 0
 }
 
+# Point every https-dns-proxy instance back at a public resolver.
+#
+# The counterpart to set_fallback_resolver, and it loops for the same reason:
+# uninstall.sh wrote instances 0, 1 and 2 as three copied blocks, so a router
+# carrying a fourth kept resolving through the user's ControlD profile after an
+# uninstall run to stop exactly that. The Route 10 ships three, which is why it
+# was never seen, and set_fallback_resolver's own comment already says the
+# count is read rather than assumed.
+#
+# Bounded the same way, so a uci that always succeeds cannot spin here.
+# Returns non-zero when there was no instance to reset.
+# Usage: reset_fallback_resolver <resolver-url> <bootstrap-ip>
+reset_fallback_resolver() {
+    _rfr_url="$1"
+    _rfr_boot="$2"
+    _rfr_i=0
+    _rfr_done=0
+    while [ "$_rfr_i" -lt 16 ] && uci -q get "https-dns-proxy.@https-dns-proxy[${_rfr_i}]" >/dev/null 2>&1; do
+        # Tracked rather than swallowed. With both writes `|| true` the only
+        # failure this could report was "no instance at all", so a uci that
+        # answered the query and refused every set still returned 0 and the
+        # caller announced a restart over a run that changed nothing. The
+        # whole point here is that a retired ControlD profile stops answering.
+        if uci set "https-dns-proxy.@https-dns-proxy[${_rfr_i}].resolver_url=${_rfr_url}" 2>/dev/null \
+           && uci set "https-dns-proxy.@https-dns-proxy[${_rfr_i}].bootstrap_dns=${_rfr_boot}" 2>/dev/null; then
+            _rfr_done=$((_rfr_done + 1))
+        fi
+        _rfr_i=$((_rfr_i + 1))
+    done
+    [ "$_rfr_done" -gt 0 ] || return 1
+    uci commit https-dns-proxy 2>/dev/null || true
+    return 0
+}
+
 # ── Forced DNS ──
 
 # Write FORCED_DNS=<0|1> to /cfg/controld.env, in place or appended if absent.

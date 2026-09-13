@@ -294,7 +294,11 @@ do_benchmark() {
     local bench_queries=10
     local fastest="" fastest_ms=999999
 
-    for proto in doq doh3 doh; do
+    # Same set as benchmark.sh, and for the same reason: the protocol the
+    # router is running has to be one of the rows, or "switch to X" is advice
+    # against a number that was never measured. DoQ was already here and is
+    # equally blockable on port 853, so DoT is not a new kind of candidate.
+    for proto in doq doh3 doh dot; do
         local label
         label=$(proto_label "$proto")
 

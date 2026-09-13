@@ -241,6 +241,12 @@ if [ -z "$DNS_TYPE" ]; then
             # a shell variable awk could not see, so every lookup asked for all
             # five domains as one hostname and failed: all three protocols
             # reported FAILED (0/10) and setup fell through to DoH3 every time.
+            # Three, not the four benchmark.sh measures. This runs before
+            # anything is installed, so there is no running protocol for a
+            # recommendation to misreport, and the menu above offers exactly
+            # these three by number. Benchmarking a fourth here would hand
+            # someone who picked "pick one for me" a protocol that was not in
+            # the list they just read.
             for BPROTO in doq doh3 doh; do
                 BLABEL=$(proto_label "$BPROTO")
                 if ! bench_protocol "$BPROTO" "$RESOLVER_ID" "$BOOTSTRAP_IP" "$BENCH_QUERIES"; then

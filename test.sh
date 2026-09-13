@@ -1649,6 +1649,80 @@ done
 assert_eq "every query gets exactly one hostname" "1" "$BD_WORST"
 assert_eq "twelve queries yield twelve names" "12" "$(printf '%s' "$BD_ALL" | wc -w | tr -d ' ')"
 
+describe "the benchmark must measure every protocol that can be running"
+
+# benchmark.sh names the running protocol at the top, measures a set, and
+# recommends the fastest row. If the running protocol is not one of the rows,
+# "switch to X" is advice against a number that was never taken, and it reads
+# exactly like advice against one that was.
+#
+# This asserted the set by reading PROTOCOLS and the two `for` lines out of the
+# sources, which an independent review defeated in one edit: point the loop at
+# a literal list, leave the declaration alone, and every assertion still passed
+# while neither script measured DoT. A declaration is not behaviour.
+#
+# bench_protocol is the only part that needs a ctrld binary and a network, so
+# stubbing just that runs the real loop against a sandbox, the way the watchdog
+# is already exercised. What is asserted is which protocols were probed.
+BM_DIR="$TMPDIR/benchset"
+mkdir -p "$BM_DIR"
+cp "$SCRIPT_DIR/benchmark.sh" "$BM_DIR/benchmark.sh"
+BENCH_LOG="$BM_DIR/probed.log"; export BENCH_LOG
+cat > "$BM_DIR/lib.sh" << BMLIBEOF
+. "$SCRIPT_DIR/lib.sh"
+load_env() { RESOLVER_ID=abc123; BOOTSTRAP_IP=76.76.2.22; DNS_TYPE=doh3; CTRLD_VERSION=1.5.7; return 0; }
+running_protocol() { printf 'doh3'; }
+bench_protocol() { echo "PROBED:\$1" >> "\$BENCH_LOG"; BENCH_AVG=10; BENCH_OK="\$4"; BENCH_FAIL=0; return 0; }
+BMLIBEOF
+
+: > "$BENCH_LOG"
+( cd "$BM_DIR" && sh ./benchmark.sh --queries 1 ) >/dev/null 2>&1 </dev/null || true
+BM_PROBED="$(cat "$BENCH_LOG" 2>/dev/null)"
+for _bp in doh3 doq doh dot; do
+    assert_contains "benchmark.sh actually probes ${_bp}" "$BM_PROBED" "PROBED:${_bp}$"
+done
+assert_eq "and probes nothing else" "4" "$(printf '%s\n' "$BM_PROBED" | grep -c 'PROBED:')"
+# Every protocol it probes must be one this project can actually run.
+printf '%s\n' "$BM_PROBED" | sed 's/^PROBED://' | while read -r _bp; do
+    [ -n "$_bp" ] || continue
+    valid_proto "$_bp" || printf 'INVALID:%s\n' "$_bp" >> "$BENCH_LOG.bad"
+done
+assert_false "benchmark.sh probes nothing this project would refuse to run" \
+    test -e "$BENCH_LOG.bad"
+
+# reconfigure.sh --benchmark applies its winner, so measuring fewer would let
+# it move someone off DoT without ever having timed DoT. Its loop is a function,
+# so it extracts and runs against the same stubs. DNS_TYPE is the winner here,
+# which returns before anything is applied.
+RB_SRC="$(code_only "$SCRIPT_DIR/reconfigure.sh" | sed -n '/^do_benchmark() {/,/^}$/p')"
+assert_true "reconfigure.sh's benchmark extracts" test -n "$RB_SRC"
+: > "$BENCH_LOG"
+(
+    . "$SCRIPT_DIR/lib.sh"
+    RESOLVER_ID=abc123; BOOTSTRAP_IP=76.76.2.22; DNS_TYPE=doh3; FORCE=0
+    # The running protocol wins, so do_benchmark reports "already fastest" and
+    # returns before the confirm prompt. Otherwise it blocks on read, and the
+    # suite hangs rather than failing, which is worse than either outcome.
+    bench_protocol() {
+        echo "PROBED:$1" >> "$BENCH_LOG"
+        case "$1" in doh3) BENCH_AVG=5 ;; *) BENCH_AVG=10 ;; esac
+        BENCH_OK=1; BENCH_FAIL=0; return 0
+    }
+    eval "$RB_SRC"
+    do_benchmark
+) >/dev/null 2>&1 </dev/null || true
+RB_PROBED="$(cat "$BENCH_LOG" 2>/dev/null)"
+for _bp in doh3 doq doh dot; do
+    assert_contains "reconfigure.sh --benchmark actually probes ${_bp}" "$RB_PROBED" "PROBED:${_bp}$"
+done
+
+# setup.sh's inline benchmark is deliberately narrower, and nothing is
+# installed when it runs, so there is no running protocol for it to misreport.
+# This one pins a decision rather than behaviour: it is here so the difference
+# stays deliberate, and it is not evidence that the installer measures anything.
+SSET="$(code_only "$SCRIPT_DIR/setup.sh" | sed -n 's/^[[:space:]]*for BPROTO in \(.*\); do$/\1/p' | head -1)"
+assert_eq "the installer's menu still benchmarks only what it lists" "doq doh3 doh" "$SSET"
+
 describe "bench_stop() — never the production resolver"
 
 # reconfigure.sh's benchmark ran `kill $(pidof ctrld)` before each of three

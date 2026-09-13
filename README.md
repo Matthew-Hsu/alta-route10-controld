@@ -398,7 +398,7 @@ enable that third path.
 | `setup.sh` | Interactive installer with guided protocol selection and inline benchmark | `--help` `--version` `--protocol <type>` `--resolver <id>` |
 | `status.sh` | Health check: services, upstreams, policies, watchdog activity | `--help` |
 | `reconfigure.sh` | Change protocol, resolver, or policies without re-running setup | `--help` `--show` `--protocol` `--resolver` `--benchmark` `--policy` `--force-dns` `--repair` `--to <value>` `--force` |
-| `benchmark.sh` | Test DNS query latency across DoQ, DoH3, and DoH | `--help` `--queries N` |
+| `benchmark.sh` | Test DNS query latency across DoQ, DoH3, DoH and DoT | `--help` `--queries N` |
 | `audit.sh` | Read-only drift check: installed versions, duplicates, stale references, leftovers, packets actually intercepted | `--help` `--raw` |
 | `uninstall.sh` | Removes everything, restores default DNS | `--help` `--force` |
 | `test.sh` | Test suite: unit tests anywhere, integration tests on-router | none |
@@ -639,10 +639,13 @@ sh benchmark.sh              # default: 15 queries per protocol
 sh benchmark.sh --queries 30 # more queries for accuracy
 ```
 
-Tests DoQ, DoH3, and DoH with real DNS lookups on a separate port (5360) so production DNS is not disrupted. Outputs a formatted table and recommends the fastest protocol.
+Tests every protocol that can be a primary (DoQ, DoH3, DoH and DoT) with real DNS lookups on a separate port (5360) so production DNS is not disrupted. Outputs a formatted table and recommends the fastest protocol.
 
-`reconfigure.sh --benchmark` and the installer's menu option 4 run the same
-code, so none of the three entry points interrupts DNS for the LAN.
+`reconfigure.sh --benchmark` runs the same code over the same four protocols.
+The installer's menu option 4 shares that code but measures only the three it
+offers by number, since nothing is installed yet and there is no running
+protocol to compare against. None of the three entry points interrupts DNS for
+the LAN.
 
 #### Fallback Safety
 
@@ -673,6 +676,7 @@ sh test.sh    # works locally and on-router
 - That `start_ctrld`'s timeout is seconds of wall clock, and that it makes no DNS query while the port is closed
 - That the recorded protocol is corrected when it disagrees with what `ctrld.toml` is actually running, on every healthy watchdog cycle and immediately in `reconfigure.sh`, and that `status.sh` reads the truth directly rather than the possibly-stale record
 - That `lib.sh` carries no function without a caller
+- That `benchmark.sh` and `reconfigure.sh --benchmark` really do probe every protocol that can be the running one, run against a stubbed prober, so neither recommends switching away from one it did not time
 - `--help` and `--version` flags on all scripts
 - Invalid input rejection
 

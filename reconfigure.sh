@@ -63,6 +63,7 @@ usage() {
     --to <value>    Non-interactive: set value directly
                     (e.g. --protocol --to doq, --resolver --to abc123)
     --force         Skip confirmation prompts
+    --version       Show version and exit (-v also works)
 
   ${BOLD}Examples:${RESET}
     reconfigure.sh                          # show menu
@@ -87,6 +88,7 @@ FORCE=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --help|-h)       usage ;;
+        --version|-v)    show_version; exit 0 ;;
         --show)          ACTION="show" ;;
         --protocol)      ACTION="protocol" ;;
         --resolver)      ACTION="resolver" ;;

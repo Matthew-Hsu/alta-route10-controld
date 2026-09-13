@@ -66,6 +66,7 @@ usage() {
   ${BOLD}Options:${RESET}
     --force   Skip confirmation prompt
     --help    Show this help message
+    --version Show version and exit (-v also works)
 
   ${BOLD}Description:${RESET}
     Completely removes ControlD from this router:
@@ -89,6 +90,10 @@ while [ $# -gt 0 ]; do
             ;;
         --help|-h)
             usage
+            ;;
+        --version|-v)
+            show_version
+            exit 0
             ;;
         *)
             die "Unknown option: $1  (try --help)"

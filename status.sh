@@ -19,6 +19,7 @@ Report ControlD DNS status on an Alta Labs Route 10 router.
 
 Options:
   --help      Show this help message and exit
+  --version   Show version and exit (-v also works)
 
 Sections displayed:
   config      Config files (/cfg/controld.env, ctrld binary, etc.)
@@ -38,6 +39,10 @@ for arg in "$@"; do
     case "$arg" in
         --help|-h)
             usage
+            exit 0
+            ;;
+        --version|-v)
+            show_version
             exit 0
             ;;
         *)

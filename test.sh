@@ -3019,12 +3019,29 @@ for script in setup.sh status.sh benchmark.sh uninstall.sh reconfigure.sh audit.
 done
 
 describe "--version flags"
-# shellcheck disable=SC2043  # only setup.sh supports --version; single-item loop is intentional
-for script in setup.sh; do
+
+# Every script, not just setup.sh. show_version lives in lib.sh and all six
+# source it, but only setup.sh had it wired to a flag, so the other five died
+# with "Unknown option: --version" and a non-zero exit. That is the first thing
+# someone reaches for when README's Verification Status asks them to say what
+# they are running in a bug report.
+#
+# The SC2043 directive that used to sit here existed only because the loop had
+# one item. Six items, no directive needed.
+#
+# The flag has to answer before the script needs an install: three of these
+# load_env and die without one, and a version that only prints on a working
+# router is no use when diagnosing a broken one. Running the suite off-device
+# is itself that check, since there is no /cfg here.
+for script in setup.sh status.sh benchmark.sh uninstall.sh reconfigure.sh audit.sh; do
     if [ -f "$SCRIPT_DIR/$script" ]; then
         VER_OUT=$(sh "$SCRIPT_DIR/$script" --version 2>&1 || true)
         assert_contains "$script --version shows the tools version" "$VER_OUT" "$VERSION"
         assert_contains "$script --version shows the pinned ctrld" "$VER_OUT" "$CTRLD_PIN"
+        assert_true "$script --version exits 0" sh "$SCRIPT_DIR/$script" --version
+        # -v is the short form everywhere or nowhere.
+        VER_SHORT=$(sh "$SCRIPT_DIR/$script" -v 2>&1 || true)
+        assert_contains "$script -v does the same" "$VER_SHORT" "$VERSION"
     else
         skip "$script not found"
     fi

@@ -63,7 +63,7 @@ show_help() {
     --resolver <id>     ControlD resolver ID from your dashboard
                         (skips interactive resolver prompt)
     --help              Show this help message and exit
-    --version           Show version and exit
+    --version           Show version and exit (-v also works)
 
   Non-interactive mode:
     Use --protocol and --resolver together to run without any prompts.

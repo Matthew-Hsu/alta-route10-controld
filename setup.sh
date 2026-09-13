@@ -46,6 +46,23 @@ else
     fi
 fi
 
+# ── The port this install already uses ──
+
+# setup.sh never calls load_env, on purpose: the installer asks for the
+# resolver ID and protocol rather than inheriting them. DNS_PORT was the one
+# key that had to be inherited and was not, so it stayed at lib.sh's 5354 for
+# the whole run.
+#
+# On a re-install over an install that had moved off 5354, write_ctrld_config
+# then regenerated ctrld.toml on 5354 while write_env_file faithfully carried
+# the old DNS_PORT forward, and the two files disagreed. The port-conflict step
+# only reconciles them when 5354 is still occupied, so if whatever held it had
+# gone away nothing noticed: post-cfg.sh health-checked the port controld.env
+# named, found nothing there, added no redirects, and the watchdog then read a
+# failing DNS check every five minutes and churned the protocol chain against a
+# problem that was never the protocol.
+DNS_PORT="$(installed_dns_port /cfg/controld.env)"
+
 # ── Usage ──
 
 show_help() {

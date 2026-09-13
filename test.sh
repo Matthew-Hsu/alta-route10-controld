@@ -1267,6 +1267,96 @@ for _cs in setup.sh status.sh uninstall.sh reconfigure.sh audit.sh; do
            | grep 'crontab' | grep -E '(watchdog|controld-update)' | grep -v '/cfg/')"
 done
 
+describe "installed_dns_port() — a re-install must not reset a moved port"
+
+# setup.sh never calls load_env, on purpose: it asks for the resolver ID and
+# protocol rather than inheriting them. DNS_PORT was the one key that had to be
+# inherited and was not, so it sat at lib.sh's 5354 for the whole run.
+#
+# The result on a re-install over a moved install: write_ctrld_config wrote
+# port 5354 into ctrld.toml while write_env_file carried DNS_PORT=5355 forward,
+# and the two files disagreed. The port-conflict step reconciles them only when
+# 5354 is still taken, so once whatever held it had gone, nothing did.
+IDP="$TMPDIR/idp.env"
+
+printf 'RESOLVER_ID=abc123\nDNS_PORT=5355\n' > "$IDP"
+assert_eq "a recorded port is adopted" "5355" "$(installed_dns_port "$IDP")"
+
+printf 'RESOLVER_ID=abc123\n' > "$IDP"
+assert_eq "an install with no recorded port gets the default" "5354" "$(installed_dns_port "$IDP")"
+assert_eq "a fresh install with no env file gets the default" "5354" \
+    "$(installed_dns_port "$TMPDIR/idp-nope.env")"
+
+# A value that cannot be a port must not reach ctrld.toml or an iptables rule,
+# where it fails later and further from the cause than it does here.
+for _idp_bad in 'DNS_PORT=' 'DNS_PORT=abc' 'DNS_PORT=0' 'DNS_PORT=99999' 'DNS_PORT=53 54' 'DNS_PORT="abc"' 'DNS_PORT="0"'; do
+    printf 'RESOLVER_ID=abc123\n%s\n' "$_idp_bad" > "$IDP"
+    assert_eq "a port of '${_idp_bad#DNS_PORT=}' falls back to the default" "5354" \
+        "$(installed_dns_port "$IDP")"
+done
+# The boundaries are valid, so they are adopted rather than rejected.
+printf 'DNS_PORT=1\n' > "$IDP"
+assert_eq "port 1 is a port" "1" "$(installed_dns_port "$IDP")"
+printf 'DNS_PORT=65535\n' > "$IDP"
+assert_eq "port 65535 is a port" "65535" "$(installed_dns_port "$IDP")"
+
+# A fully quoted value is a shape the rest of the project honours:
+# write_env_file's filter accepts it and carries it forward, and load_env
+# sources it. Rejecting it here fell back to 5354 and recreated the very
+# disagreement this function exists to prevent.
+printf 'DNS_PORT="5355"\n' > "$IDP"
+assert_eq "a quoted port is adopted, as load_env would" "5355" "$(installed_dns_port "$IDP")"
+# And the project really does honour it, so the two agree rather than both
+# being asserted against a literal.
+assert_eq "installed_dns_port and load_env agree on a quoted port" \
+    "$(installed_dns_port "$IDP")" \
+    "$(sh -c '. "$1" >/dev/null 2>&1; printf "%s" "${DNS_PORT:-}"' _ "$IDP")"
+
+# Leading zeros pass a numeric range check and are not a legal TOML integer, so
+# they must not reach ctrld.toml: ctrld would refuse the config it was handed.
+printf 'DNS_PORT=00005355\n' > "$IDP"
+assert_eq "a port with leading zeros falls back to the default" "5354" \
+    "$(installed_dns_port "$IDP")"
+
+# The outcome that matters: after a re-install the two files must name the same
+# port. write_env_file preserves the recorded one and write_ctrld_config takes
+# whatever DNS_PORT holds, so adopting it first is what keeps them in step.
+IDP_CFG="$TMPDIR/idp-cfg.env"
+IDP_TOML="$TMPDIR/idp-cfg.toml"
+cat > "$IDP_CFG" << 'IDPEOF'
+RESOLVER_ID=old123
+BOOTSTRAP_IP=76.76.2.22
+CTRLD_VERSION=1.5.7
+DNS_TYPE=doh3
+PREFERRED_PROTOCOL=doh3
+FORCED_DNS=0
+DNS_PORT=5355
+IDPEOF
+IDP_SAVED="$DNS_PORT"
+(
+    RESOLVER_ID=new456; BOOTSTRAP_IP=76.76.2.22; CTRLD_VERSION=1.5.7
+    DNS_TYPE=doh3; PREFERRED_PROTOCOL=doh3
+    DNS_PORT="$(installed_dns_port "$IDP_CFG")"
+    write_env_file "$IDP_CFG"
+    write_ctrld_config "$IDP_TOML" new456 76.76.2.22 doh3
+) >/dev/null 2>&1
+DNS_PORT="$IDP_SAVED"
+assert_eq "the config and the env file agree on the port after a re-install" \
+    "$(sed -n 's/^DNS_PORT=//p' "$IDP_CFG")" \
+    "$(sed -n 's/^[[:space:]]*port = //p' "$IDP_TOML")"
+assert_file_contains "and it is the moved port, not the default" "$IDP_TOML" 'port = 5355'
+
+# Ordering, the same way uninstall.sh's load_env is checked: a read below the
+# first write would be no better than none. The end-to-end path needs a router,
+# so this guards the one thing that can be checked here.
+SETUP_READS=$(code_lineno "$SCRIPT_DIR/setup.sh" '^DNS_PORT="\$(installed_dns_port')
+SETUP_WRITES=$(code_lineno "$SCRIPT_DIR/setup.sh" '^write_ctrld_config /cfg/ctrld.toml')
+SETUP_ORDER=no
+if [ -n "$SETUP_READS" ] && [ -n "$SETUP_WRITES" ] && [ "$SETUP_READS" -lt "$SETUP_WRITES" ]; then
+    SETUP_ORDER=yes
+fi
+assert_eq "setup reads the installed port before it writes the config" "yes" "$SETUP_ORDER"
+
 describe "preserved_forced_dns() — a re-install must not disable forced DNS"
 
 mkdir -p "$TMPDIR/bin"

@@ -753,6 +753,22 @@ They used to be one variable, which meant bumping the tools version silently rep
 
 If you prefer not to use the automated installer, see `config/ctrld.toml.example` and `config/post-cfg.sh.example`. Replace `<YOUR_RESOLVER_ID>` in both files, upload to `/cfg/`, and run `post-cfg.sh`.
 
+**This is not the same install, and the difference matters at the next reboot.**
+The example gets `ctrld` running and redirects DNS on every LAN bridge, which
+is the part you can see working. It writes no `/cfg/controld.env`, no
+`/cfg/rc.local`, no cron jobs and no `/etc/firewall.user` block, so nothing
+runs it again: the redirects are gone after a reboot or a firewall reload, and
+nothing puts them back. You also get no watchdog, so no protocol fallback and
+no teardown if `ctrld` dies, no weekly `ctrld` update, no forced DNS, and none
+of `status.sh`, `audit.sh` or `reconfigure.sh`.
+
+That combination has a history here. It is what the old `backup.sh` restored,
+and restoring from it "produced a router with no watchdog, no boot hook and no
+cron jobs" while looking healthy, which is why that script was removed. Use
+this path to read what the pieces do, or to pin an exact version with
+`git checkout`, and re-run `setup.sh` when you want an install that maintains
+itself.
+
 #### Firmware Updates
 
 **Automatic recovery:** Firmware updates typically preserve `/cfg/` (persistent ext4 partition). The boot persistence layer (`/cfg/rc.local`) automatically restores all services, cron jobs, and iptables rules on reboot. No manual intervention needed.

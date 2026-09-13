@@ -59,7 +59,9 @@ INSTALL_FILES="/cfg/ctrld /cfg/ctrld.toml /cfg/post-cfg.sh \
 # ── Help ──
 
 usage() {
-    printf "  ${BOLD}Usage:${RESET}  uninstall.sh [OPTIONS]
+    # The text is the argument and %b expands its escapes; as a format
+    # string a stray % in it would truncate the help. See reconfigure.sh.
+    printf '%b' "  ${BOLD}Usage:${RESET}  uninstall.sh [OPTIONS]
 
   ${BOLD}Options:${RESET}
     --force   Skip confirmation prompt

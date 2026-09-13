@@ -38,7 +38,9 @@ TMP_CONF="$BENCH_CONF"
 # ── Help ──
 
 usage() {
-    printf "  ${BOLD}Usage:${RESET}  benchmark.sh [OPTIONS]
+    # The text is the argument and %b expands its escapes; as a format
+    # string a stray % in it would truncate the help. See reconfigure.sh.
+    printf '%b' "  ${BOLD}Usage:${RESET}  benchmark.sh [OPTIONS]
 
   ${BOLD}Options:${RESET}
     --queries N   Number of queries per protocol (default: 15)

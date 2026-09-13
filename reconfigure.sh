@@ -33,9 +33,19 @@ fi
 
 # ── Help ──
 
+# The colour variables hold a literal "\033[1m", which only printf turns into
+# an escape sequence. A here-document expands the variable and prints the eight
+# characters as they are, so this help once rendered as "\033[1mUsage:\033[0m".
+#
+# The text is printf's ARGUMENT, not its format, and %b is what expands the
+# escape inside it. Passing help text as the format is the shape this replaced:
+# a single % anywhere in it, "100% non-interactive" say, truncates the help at
+# that point and exits 2, and no assertion here would see it, because the words
+# a test looks for come before the truncation. 25 lines of maintainer-edited
+# prose with two example commands in it is not a safe format string.
 usage() {
     print_banner
-    cat <<EOF
+    printf '%b' "
 
   ${BOLD}Usage:${RESET}  reconfigure.sh [ACTION] [OPTIONS]
 
@@ -64,7 +74,7 @@ usage() {
     reconfigure.sh --policy                 # manage split DNS rules
     reconfigure.sh --force-dns              # toggle forced DNS hijacking
     reconfigure.sh --repair                 # cover VLANs added since install
-EOF
+"
     exit 0
 }
 

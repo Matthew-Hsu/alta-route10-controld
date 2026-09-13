@@ -2626,6 +2626,22 @@ for script in setup.sh status.sh benchmark.sh uninstall.sh reconfigure.sh audit.
         HELP_OUT=$(sh "$SCRIPT_DIR/$script" --help 2>&1 || true)
         assert_contains "$script --help mentions usage" "$HELP_OUT" "Usage"
         assert_contains "$script --help mentions --help" "$HELP_OUT" "\-\-help"
+        # Both assertions above pass on a help that prints "\033[1mUsage:" as
+        # eight literal characters, because the word they look for is in that
+        # output too. reconfigure.sh shipped exactly that for as long as it had
+        # a --help: its usage text was a here-document, which expands the colour
+        # variables but leaves the escape sequence inside them uninterpreted.
+        # Assert on what reaches the terminal, not on a word being somewhere in
+        # it.
+        assert_not_contains "$script --help renders its colours" "$HELP_OUT" '\\033'
+        # The assertions above all look for something near the top of the help,
+        # so they pass on a help that stops halfway. That is a reachable state:
+        # when the text is printf's format string rather than its argument, a
+        # single % in it truncates the output there and exits 2. Check the exit
+        # status and the tail, not just that some words appeared.
+        assert_true "$script --help exits 0 and prints it all" sh "$SCRIPT_DIR/$script" --help
+        assert_not_contains "$script --help does not trip printf" "$HELP_OUT" \
+            'invalid directive\|invalid format\|not completely converted'
     else
         skip "$script not found"
     fi

@@ -71,8 +71,9 @@ Rules that matter more than the format:
 ## Before you push
 
 ```sh
-sh test.sh                        # unit tests, GNU awk
-AWK="busybox awk" sh test.sh      # the router runs BusyBox
+sh test.sh                              # unit tests, GNU awk
+AWK="busybox awk" sh test.sh            # the router's awk
+AWK="busybox awk" busybox sh test.sh    # the router's shell as well
 find . -name "*.sh" -exec shellcheck -s sh -S warning -e SC2154,SC3043,SC2034 {} +
 find . -name "*.sh" -exec shellcheck -s sh -S info -i SC2086 {} +
 ```
@@ -81,6 +82,13 @@ CI runs exactly these, and one more thing you cannot: a `betterleaks` secrets
 scan over the tree. It needs a binary downloaded at job time, so it is not in
 the list above. Nothing in a normal change trips it; it is there to stop a
 resolver ID or a key reaching the history.
+
+The third run is not a duplicate of the second. The first two use your
+`/bin/sh`, which on most development machines is dash or bash, and neither is
+what the router runs. dash's `echo` expands backslash escapes where BusyBox
+ash's does not, which is how an assertion in this suite came to test one thing
+in CI and another on the device. Varying the awk and never the shell left that
+invisible.
 
 The second shellcheck pass is not a duplicate of the first. `-S warning` never
 reports SC2086, so the five `# shellcheck disable=SC2086` directives guarding

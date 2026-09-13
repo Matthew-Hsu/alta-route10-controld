@@ -677,7 +677,7 @@ sh test.sh    # works locally and on-router
 - That the recorded protocol is corrected when it disagrees with what `ctrld.toml` is actually running, on every healthy watchdog cycle and immediately in `reconfigure.sh`, and that `status.sh` reads the truth directly rather than the possibly-stale record
 - That `lib.sh` carries no function without a caller
 - That `benchmark.sh` and `reconfigure.sh --benchmark` really do probe every protocol that can be the running one, run against a stubbed prober, so neither recommends switching away from one it did not time
-- `--help` and `--version` flags on all scripts
+- `--help` and `--version` flags on all scripts, including that each renders its colours rather than printing the escape sequences
 - Invalid input rejection
 
 **Integration tests** (run on-router only):
@@ -819,7 +819,7 @@ CI runs on every push/PR to `master` via **GitHub Actions** (`.github/workflows/
 
 1. **secrets-scan**: runs `betterleaks` over the tree so no credential or key gets committed
 2. **shellcheck**: lints all shell scripts
-3. **test suite**: runs `test.sh` under both GNU awk and BusyBox awk, since the router runs BusyBox and its awk differs in ways that have silently broken on-device behavior while CI was green (integration tests run only on-router)
+3. **test suite**: runs `test.sh` three times, under GNU awk, under BusyBox awk, and under BusyBox `ash` as well as BusyBox awk. The router runs BusyBox throughout, and both its awk and its shell differ from the runner's in ways that have silently broken on-device behavior while CI was green (integration tests run only on-router)
 
 ## Credits
 

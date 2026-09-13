@@ -441,7 +441,7 @@ All scripts source `lib.sh` which provides:
 - Cron entries matched by script path (`cron_has`, `cron_remove`) and rule hygiene (`prune_stale_redirects`)
 - Split-DNS writing (`policy_add_rule`) and preservation across a config rewrite (`carry_policy_blocks`)
 - Config reporting (`list_upstreams`, `policy_rule_count`, `policy_rules`, `format_policy_rules`): what `status.sh` and `reconfigure.sh --show` print, and the split-DNS rules `reconfigure.sh --policy` lists, each resolved to the upstream it routes to
-- Env file rewriting (`write_env_file`), which carries keys it does not manage rather than truncating them
+- Env file rewriting (`write_env_file`), which carries keys it does not manage rather than truncating them, and reading back the one key an installer must not lose (`installed_dns_port`)
 - Benchmarking (`bench_protocol`, `bench_stop`), shared by all three entry points and never run against production DNS
 - Version comparison (`version_gt`), so a re-install does not roll `ctrld` back to the pin
 

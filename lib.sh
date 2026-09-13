@@ -1316,6 +1316,41 @@ preserved_forced_dns() {
     printf '0'
 }
 
+# The DNS port an existing install recorded, or the default when there is none.
+#
+# setup.sh needs this and cannot use load_env: that would also adopt DNS_TYPE,
+# RESOLVER_ID and PREFERRED_PROTOCOL from the old install, and the installer
+# asks the user for those rather than inheriting them. So it reads the one key
+# it must not lose, the same way preserved_forced_dns reads the one key it must
+# not lose.
+#
+# Only a plain number is accepted, and only in the range a listener can bind.
+# A hand-edited or truncated value falls back to the default rather than being
+# written into ctrld.toml and iptables rules, where a port of "" or "99999"
+# fails later and further from the cause.
+# Usage: installed_dns_port [env-file]
+installed_dns_port() {
+    _idp_env="${1:-/cfg/controld.env}"
+    _idp_val=""
+    if [ -f "$_idp_env" ]; then
+        # The quotes are optional because write_env_file's own filter accepts a
+        # fully quoted value and carries it forward, and load_env sources it, so
+        # DNS_PORT="5355" is a shape the rest of the project honours. Rejecting
+        # it here fell back to 5354 and recreated the very ctrld.toml/env
+        # disagreement this function exists to prevent.
+        #
+        # Leading zeros are not accepted: 00005355 passed a numeric range check
+        # and would be written straight into ctrld.toml, where it is not a legal
+        # TOML integer, so ctrld would refuse the config it was given.
+        _idp_val="$(sed -n 's/^DNS_PORT="\{0,1\}\(0\|[1-9][0-9]*\)"\{0,1\}[[:space:]]*$/\1/p' "$_idp_env" | head -1)"
+    fi
+    if [ -n "$_idp_val" ] && [ "$_idp_val" -ge 1 ] 2>/dev/null && [ "$_idp_val" -le 65535 ]; then
+        printf '%s' "$_idp_val"
+        return 0
+    fi
+    printf '5354'
+}
+
 # ── Env file ──
 
 # Write the recovery config from the current settings.

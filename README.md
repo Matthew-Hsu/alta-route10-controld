@@ -396,14 +396,14 @@ enable that third path.
 | Script | Purpose | Key Flags |
 |---|---|---|
 | `setup.sh` | Interactive installer with guided protocol selection and inline benchmark | `--help` `--version` `--protocol <type>` `--resolver <id>` |
-| `status.sh` | Health check: services, upstreams, policies, watchdog activity | `--help` |
-| `reconfigure.sh` | Change protocol, resolver, or policies without re-running setup | `--help` `--show` `--protocol` `--resolver` `--benchmark` `--policy` `--force-dns` `--repair` `--to <value>` `--force` |
-| `benchmark.sh` | Test DNS query latency across DoQ, DoH3, DoH and DoT | `--help` `--queries N` |
-| `audit.sh` | Read-only drift check: installed versions, duplicates, stale references, leftovers, packets actually intercepted | `--help` `--raw` |
-| `uninstall.sh` | Removes everything, restores default DNS | `--help` `--force` |
+| `status.sh` | Health check: services, upstreams, policies, watchdog activity | `--help` `--version` |
+| `reconfigure.sh` | Change protocol, resolver, or policies without re-running setup | `--help` `--version` `--show` `--protocol` `--resolver` `--benchmark` `--policy` `--force-dns` `--repair` `--to <value>` `--force` |
+| `benchmark.sh` | Test DNS query latency across DoQ, DoH3, DoH and DoT | `--help` `--version` `--queries N` |
+| `audit.sh` | Read-only drift check: installed versions, duplicates, stale references, leftovers, packets actually intercepted | `--help` `--version` `--raw` |
+| `uninstall.sh` | Removes everything, restores default DNS | `--help` `--version` `--force` |
 | `test.sh` | Test suite: unit tests anywhere, integration tests on-router | none |
 
-Every script except `test.sh` supports `--help` with full usage documentation.
+Every script except `test.sh` supports `--help` with full usage documentation, and `--version` (or `-v`), which answers without needing an install.
 
 #### What Gets Installed
 

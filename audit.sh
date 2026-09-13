@@ -26,6 +26,7 @@ Read-only — reports findings, changes nothing.
 Options:
   --raw       Also dump crontab, firewall.user, uci and the nat table
   --help      Show this help message and exit
+  --version   Show version and exit (-v also works)
 
 Exit status:
   0   no drift found
@@ -48,6 +49,7 @@ for arg in "$@"; do
     case "$arg" in
         --raw)    RAW=1 ;;
         --help|-h) usage; exit 0 ;;
+        --version|-v) show_version; exit 0 ;;
         *) printf "Unknown option: %s\n" "$arg" >&2; usage >&2; exit 1 ;;
     esac
 done

@@ -42,3 +42,9 @@ jobs:
         run: |
           apt-get update -qq && apt-get install -y -qq busybox >/dev/null
           AWK="busybox awk" sh test.sh
+
+      - name: unit tests (BusyBox ash)
+        # The runs above use the container's /bin/sh, which is dash. The router
+        # runs BusyBox ash and the two disagree; see .github/workflows/ci.yml
+        # for the assertion that tested one thing here and another on-device.
+        run: AWK="busybox awk" busybox sh test.sh

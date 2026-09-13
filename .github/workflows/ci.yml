@@ -52,3 +52,13 @@ jobs:
         run: |
           sudo apt-get install -y -qq busybox
           AWK="busybox awk" sh test.sh
+
+      - name: unit tests (BusyBox ash)
+        # The two runs above both use the runner's /bin/sh, which is dash. The
+        # router's shell is BusyBox ash, and the two disagree: dash's echo
+        # expands backslash escapes and ash's does not, which is how an
+        # assertion in this suite came to test one thing here and another on
+        # the device. Varying the awk and never the shell left that invisible.
+        # BusyBox is already installed by the step above, so this costs one
+        # more run of a suite that takes well under a minute.
+        run: AWK="busybox awk" busybox sh test.sh

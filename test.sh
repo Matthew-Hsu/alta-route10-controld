@@ -1800,6 +1800,202 @@ printf '\n[upstream.1]\n    endpoint = "https://dns.controld.com/orphan99"\n    
   printf '%s' "$CARRIED_POLICY" > "$SP2/carried" ) >/dev/null 2>&1
 assert_eq "an orphan upstream is not reported as a policy" "0" "$(cat "$SP2/carried" 2>/dev/null)"
 
+describe "policy_rules() — the rules must be visible, not just counted"
+
+# The policy manager's "show current policies" grepped the policy table for
+# (networks|macs|rules). That matches the two list headers and no rule at all:
+# a rule reads {"network.1" = ["upstream.2"]}, and "network.1" is not
+# "networks". The one readout whose whole job is to list the rules printed two
+# bracket-opening lines on a config full of them, and there was nowhere else
+# to see them: status.sh and --show report counts.
+#
+# Asserted against the three shapes the writers produce. setup.sh's wizard
+# writes a macs-only table for route type 2 and a networks-only table for
+# type 1, and policy_add_rule creates whichever list is missing, so a policy
+# carrying only one kind is the common case, not an edge one.
+PR_BOTH="$TMPDIR/pr-both.toml"
+cat > "$PR_BOTH" << 'PRBOTHEOF'
+[upstream.0]
+    name = "ControlD"
+    type = "doh3"
+[upstream.1]
+    name = "ControlD-Kids"
+    type = "doh3"
+[upstream.2]
+    name = "ControlD-Guest"
+    type = "doh3"
+[listener.0.policy]
+    name = "Split DNS Policy"
+    networks = [
+    {"network.1" = ["upstream.2"]},
+    ]
+    macs = [
+    {"AA:BB:CC:DD:EE:FF" = ["upstream.1"]},
+    {"11:22:33:44:55:66" = ["upstream.2"]},
+    ]
+PRBOTHEOF
+
+PR_OUT="$(policy_rules "$PR_BOTH")"
+assert_contains "a MAC rule is listed with the upstream it routes to" "$PR_OUT" \
+    "mac	AA:BB:CC:DD:EE:FF	1"
+assert_contains "the second MAC rule is listed too" "$PR_OUT" \
+    "mac	11:22:33:44:55:66	2"
+assert_contains "a network rule is listed" "$PR_OUT" \
+    "network	network.1	2"
+assert_eq "three rules in, three rules out" "3" "$(printf '%s\n' "$PR_OUT" | grep -c .)"
+# The counts and the listing must agree, or one of them is lying.
+assert_eq "the MAC count matches what is listed" \
+    "$(policy_rule_count "$PR_BOTH" mac)" \
+    "$(printf '%s\n' "$PR_OUT" | grep -c '^mac	')"
+assert_eq "the network count matches what is listed" \
+    "$(policy_rule_count "$PR_BOTH" network)" \
+    "$(printf '%s\n' "$PR_OUT" | grep -c '^network	')"
+
+# macs only, the shape setup.sh writes for route type 2
+PR_MAC="$TMPDIR/pr-mac.toml"
+sed '/networks = \[/,/^    \]$/d' "$PR_BOTH" > "$PR_MAC"
+PR_MAC_OUT="$(policy_rules "$PR_MAC")"
+assert_contains "a macs-only policy still lists its rules" "$PR_MAC_OUT" \
+    "mac	AA:BB:CC:DD:EE:FF	1"
+assert_eq "and reports no network rules" "0" \
+    "$(printf '%s\n' "$PR_MAC_OUT" | grep -c '^network	')"
+
+# networks only, the shape setup.sh writes for route type 1
+PR_NET="$TMPDIR/pr-net.toml"
+sed '/macs = \[/,/^    \]$/d' "$PR_BOTH" > "$PR_NET"
+PR_NET_OUT="$(policy_rules "$PR_NET")"
+assert_contains "a networks-only policy still lists its rules" "$PR_NET_OUT" \
+    "network	network.1	2"
+assert_eq "and reports no MAC rules" "0" \
+    "$(printf '%s\n' "$PR_NET_OUT" | grep -c '^mac	')"
+
+# A policy table with no rules is not the same as no policy table, and the
+# caller prints a different line for each.
+PR_EMPTY="$TMPDIR/pr-empty.toml"
+printf '[listener.0.policy]\n    name = "Split DNS Policy"\n' > "$PR_EMPTY"
+assert_eq "a policy carrying no rules lists nothing" "" "$(policy_rules "$PR_EMPTY")"
+
+# Nothing outside [listener.0.policy] is a rule, however much it looks like one.
+PR_STRAY="$TMPDIR/pr-stray.toml"
+cat > "$PR_STRAY" << 'PRSTRAYEOF'
+[listener.1.policy]
+    macs = [
+    {"DE:AD:BE:EF:00:01" = ["upstream.9"]},
+    ]
+PRSTRAYEOF
+assert_eq "another listener's policy is not ours to report" "" "$(policy_rules "$PR_STRAY")"
+assert_eq "a missing file reports nothing and does not fail" "" "$(policy_rules "$TMPDIR/pr-nope.toml")"
+
+# TOML allows a list inline, and allows more than one entry per line. Neither
+# is a shape this project writes, but a hand-edited config or a future ctrld
+# rewrite can carry one, and the readout reported such a file as having no
+# rules at all while policy_rule_count reported them. The code this replaced
+# printed those lines verbatim, so that was a regression against it.
+PR_INLINE="$TMPDIR/pr-inline.toml"
+cat > "$PR_INLINE" << 'PRINLEOF'
+[listener.0.policy]
+    name = "Split DNS Policy"
+    networks = [{"network.1" = ["upstream.1"]}]
+    macs = [{"AA:BB:CC:DD:EE:FF" = ["upstream.2"]}, {"11:22:33:44:55:66" = ["upstream.3"]}]
+PRINLEOF
+PR_INLINE_OUT="$(policy_rules "$PR_INLINE")"
+assert_contains "an inline network list is read" "$PR_INLINE_OUT" "network	network.1	1"
+assert_contains "an inline mac list is read"     "$PR_INLINE_OUT" "mac	AA:BB:CC:DD:EE:FF	2"
+assert_contains "a second rule on the same line is not dropped" "$PR_INLINE_OUT" \
+    "mac	11:22:33:44:55:66	3"
+assert_eq "three rules inline, three rules out" "3" "$(printf '%s\n' "$PR_INLINE_OUT" | grep -c .)"
+# The listing and the count must agree here too, or one of them is lying.
+assert_eq "the inline mac count matches what is listed" \
+    "$(policy_rule_count "$PR_INLINE" mac)" \
+    "$(printf '%s\n' "$PR_INLINE_OUT" | grep -c '^mac	')"
+
+# ctrld supports a domain list too. Nothing here writes one, and the kind must
+# not be inherited from the list above it: a domain rule reported as a network
+# rule is worse than one not reported at all.
+PR_RULES="$TMPDIR/pr-rules.toml"
+cat > "$PR_RULES" << 'PRRULEOF'
+[listener.0.policy]
+    networks = [
+    {"network.1" = ["upstream.1"]},
+    ]
+    rules = [
+    {"*.example.com" = ["upstream.9"]},
+    ]
+PRRULEOF
+PR_RULES_OUT="$(policy_rules "$PR_RULES")"
+assert_contains "the network rule is still read" "$PR_RULES_OUT" "network	network.1	1"
+assert_not_contains "a domain rule is not reported as a network rule" "$PR_RULES_OUT" \
+    'example\.com'
+assert_eq "only the lists this project understands are reported" "1" \
+    "$(printf '%s\n' "$PR_RULES_OUT" | grep -c .)"
+
+# A rule may route to a list of upstreams. ctrld allows it and
+# carry_policy_blocks preserves a hand-written policy table, so the shape is
+# reachable. Requiring exactly one dropped the rule from the listing while
+# policy_rule_count still counted it, which is the same two-readouts-disagree
+# bug in quieter form.
+PR_MULTI="$TMPDIR/pr-multi.toml"
+cat > "$PR_MULTI" << 'PRMULTEOF'
+[listener.0.policy]
+    networks = [
+    {"network.1" = ["upstream.2", "upstream.3"]},
+    {"network.2" = ["upstream.1"]},
+    ]
+PRMULTEOF
+PR_MULTI_OUT="$(policy_rules "$PR_MULTI")"
+assert_contains "a rule routing to several upstreams is listed" "$PR_MULTI_OUT" \
+    "network	network.1	2"
+assert_contains "and the single-upstream rule beside it still is" "$PR_MULTI_OUT" \
+    "network	network.2	1"
+assert_eq "the count and the listing agree on a multi-upstream policy" \
+    "$(policy_rule_count "$PR_MULTI" network)" \
+    "$(printf '%s\n' "$PR_MULTI_OUT" | grep -c '^network	')"
+
+describe "format_policy_rules() — what the policy menu actually prints"
+
+# The defect 3885c8c fixed was in reconfigure.sh's menu, not in the helper
+# underneath it, and while the formatting lived inline there was no way to
+# assert on it: the whole display could be reverted to the grep it replaced
+# with every assertion still green. The rendering is a function so the lines a
+# person reads are the thing under test.
+FPR="$TMPDIR/fpr.toml"
+cat > "$FPR" << 'FPREOF'
+[upstream.0]
+    name = "ControlD"
+    type = "doh3"
+[upstream.1]
+    name = "ControlD-Kids"
+    type = "doh3"
+[listener.0.policy]
+    macs = [
+    {"AA:BB:CC:DD:EE:FF" = ["upstream.1"]},
+    ]
+FPREOF
+FPR_OUT="$(format_policy_rules "$FPR")"
+# The rule's key, the upstream it routes to, and the name of that upstream all
+# have to reach the terminal: "upstream.1" alone is not actionable.
+assert_contains "the rule's key is printed"        "$FPR_OUT" 'AA:BB:CC:DD:EE:FF'
+assert_contains "the upstream it routes to is printed" "$FPR_OUT" 'upstream\.1'
+assert_contains "resolved to that upstream's name"  "$FPR_OUT" '(ControlD-Kids)'
+assert_contains "and labelled with its kind"        "$FPR_OUT" 'mac'
+assert_eq "one rule in, one line out" "1" "$(printf '%s\n' "$FPR_OUT" | grep -c .)"
+
+# A policy table with no rules must be distinguishable from one with rules, so
+# the caller can say something different rather than printing a blank heading.
+FPR_EMPTY="$TMPDIR/fpr-empty.toml"
+printf '[listener.0.policy]\n    name = "Split DNS Policy"\n' > "$FPR_EMPTY"
+assert_false "an empty policy table reports nothing to print" \
+    format_policy_rules "$FPR_EMPTY"
+assert_eq "and prints nothing" "" "$(format_policy_rules "$FPR_EMPTY" 2>/dev/null)"
+
+# The menu must go through it. This one is a source check on purpose: the
+# branch is inside an interactive read loop over /cfg, so it cannot be run
+# here, and the grep it replaced is the thing that must not come back.
+assert_true "reconfigure.sh's policy menu renders through it" \
+    code_grep "$SCRIPT_DIR/reconfigure.sh" 'format_policy_rules /cfg/ctrld.toml'
+assert_false "and not through the grep that showed only list headers" \
+    code_grep "$SCRIPT_DIR/reconfigure.sh" -F "grep -E '(networks|macs|rules)'"
+
 describe "policy_add_rule() — a reported rule must actually be in the file"
 
 # The callers anchored an insert on the list header, so adding the first rule

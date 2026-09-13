@@ -368,9 +368,8 @@ do_policy() {
             1)
                 if [ -f /cfg/ctrld.toml ] && grep -q '\[listener.0.policy\]' /cfg/ctrld.toml; then
                     printf "\n  ${BOLD}Active Policy Rules:${RESET}\n"
-                    sed -n '/\[listener.0.policy\]/,$p' /cfg/ctrld.toml | grep -E '(networks|macs|rules)' | while read -r line; do
-                        printf "    %s\n" "$line"
-                    done
+                    format_policy_rules /cfg/ctrld.toml \
+                        || print_info "The policy table carries no rules yet."
                 else
                     print_info "No split DNS policies configured."
                 fi

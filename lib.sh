@@ -360,6 +360,30 @@ list_upstreams() {
     ' "$1"
 }
 
+# The split-DNS rules of a config, formatted for a person, one per line.
+#
+# Split out of reconfigure.sh's policy menu so the thing a user actually reads
+# can be asserted on. While it lived inline, the only coverage was of
+# policy_rules underneath it, and the whole display could be reverted to the
+# grep it replaced with every assertion still passing.
+#
+# The upstream index is resolved to the upstream's own name, because
+# "upstream.2" is not something anyone can act on. Prints nothing, and returns
+# non-zero, when the config carries no rules, so a caller can tell "no rules"
+# from "no policy table" and say something different for each.
+# Usage: format_policy_rules <config>
+format_policy_rules() {
+    _fpr_file="$1"
+    _fpr_rules="$(policy_rules "$_fpr_file")"
+    [ -n "$_fpr_rules" ] || return 1
+    printf '%s\n' "$_fpr_rules" | while IFS="$(printf '\t')" read -r _fpr_kind _fpr_key _fpr_up; do
+        _fpr_name="$(list_upstreams "$_fpr_file" | $AWK -F'\t' -v i="$_fpr_up" '$1 == i { print $2; exit }')"
+        printf "    %-8s %-19s -> upstream.%s%s\n" \
+            "$_fpr_kind" "$_fpr_key" "$_fpr_up" "${_fpr_name:+ (${_fpr_name})}"
+    done
+    return 0
+}
+
 # The protocol the main upstream (upstream.0) is actually configured for,
 # read from the file ctrld runs against, as opposed to DNS_TYPE in
 # controld.env, which only reflects reality when the code path that last
@@ -445,14 +469,74 @@ reconcile_dns_type() {
 policy_rule_count() {
     [ -f "$1" ] || { printf '0'; return 0; }
     case "$2" in
-        # grep -c prints 0 and exits 1 on no match; `|| true` keeps that under
+        # Occurrences, not matching lines. grep -c counts lines, and TOML allows
+        # more than one rule on one, so a policy written inline counted 1 where
+        # policy_rules listed 2 and the two readouts disagreed about the same
+        # file. Nothing this project writes puts two rules on a line; a
+        # hand-edited config does. BusyBox grep has -o, so this is the same on
+        # the router.
+        #
+        # grep prints nothing and exits 1 on no match; `|| true` keeps that under
         # set -e without the second zero an `|| echo 0` would append.
-        mac)     _prc_n="$(grep -cE '\{"([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}"[[:space:]]*=' "$1" || true)" ;;
-        network) _prc_n="$(grep -c '{"network\.' "$1" || true)" ;;
+        mac)     _prc_n="$(grep -oE '\{"([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}"[[:space:]]*=' "$1" 2>/dev/null | grep -c . || true)" ;;
+        network) _prc_n="$(grep -o '{"network\.' "$1" 2>/dev/null | grep -c . || true)" ;;
         *)       _prc_n=0 ;;
     esac
     [ -n "$_prc_n" ] || _prc_n=0
     printf '%s' "$_prc_n"
+}
+
+# Every split-DNS rule a config carries, one per line, as
+# "<mac|network>\t<key>\t<upstream-index>".
+#
+# The policy manager's "show current policies" ran
+# `grep -E '(networks|macs|rules)'` over the policy table, which matches the
+# two list headers and not one rule: a rule reads
+# {"network.1" = ["upstream.2"]}, and "network.1" is not "networks". So the one
+# readout whose whole job is to list the rules printed two bracket-opening
+# lines and nothing else, on a config full of them. policy_rule_count already
+# counts these correctly; nothing could show them.
+#
+# The kind comes from the list the rule sits in rather than the shape of its
+# key, because that is what ctrld matches on, and a table header resets it: a
+# rule is only ever inside [listener.0.policy].
+# Usage: policy_rules <config>
+policy_rules() {
+    [ -f "$1" ] || return 0
+    $AWK '
+        { sub(/\r$/, "") }
+        substr($0, 1, 1) == "[" { inpol = ($0 ~ /^\[listener\.0\.policy\][ \t]*$/); kind = ""; next }
+        !inpol { next }
+        # A list header sets the kind and does NOT consume the line: TOML allows
+        # the whole list inline, `macs = [{"AA:.." = ["upstream.1"]}]`, and
+        # skipping to the next line reported that config as carrying no rules
+        # at all while policy_rule_count reported one. An unrecognised list
+        # clears the kind rather than leaving the previous one in place, so a
+        # `rules = [` entry is not reported as whatever came before it.
+        /^[ \t]*macs[ \t]*=[ \t]*\[/     { kind = "mac" }
+        /^[ \t]*networks[ \t]*=[ \t]*\[/ { kind = "network" }
+        /^[ \t]*[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*\[/ {
+            if ($0 !~ /^[ \t]*(macs|networks)[ \t]*=/) kind = ""
+        }
+        # Every rule on the line, not just the first: a list may put more than
+        # one entry on one line, and taking only the first dropped the rest.
+        kind != "" {
+            rest = $0
+            # A rule may route to a list of upstreams, which ctrld allows and
+            # carry_policy_blocks preserves. Requiring exactly one dropped such
+            # a rule from the listing while policy_rule_count still counted it,
+            # so the two readouts disagreed about the same file: the quieter
+            # version of the bug this function was written to fix. The first
+            # index is reported, which is the one ctrld tries first.
+            while (match(rest, /\{"[^"]+"[ \t]*=[ \t]*\["upstream\.[0-9]+"([ \t]*,[ \t]*"upstream\.[0-9]+")*\][ \t]*\}/)) {
+                ent = substr(rest, RSTART, RLENGTH)
+                rest = substr(rest, RSTART + RLENGTH)
+                key = ent; sub(/^\{"/, "", key); sub(/".*$/, "", key)
+                up  = ent; sub(/^.*\["upstream\./, "", up); sub(/"[^"]*$/, "", up); sub(/".*$/, "", up)
+                printf "%s\t%s\t%s\n", kind, key, up
+            }
+        }
+    ' "$1"
 }
 
 # Carry the split-DNS tables of <source> into a freshly written <target>.

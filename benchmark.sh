@@ -1,6 +1,7 @@
 #!/bin/sh
 # DNS Protocol Benchmark for Alta Labs Route 10 + ControlD
-# Tests query latency for DoQ, DoH3, and DoH using a separate port (5360)
+# Tests query latency for every protocol that can be a primary, using a
+# separate port (5360)
 # so live DNS on port 5354 is not disrupted.
 #
 # Usage: benchmark.sh [--queries N] [--help]
@@ -31,7 +32,12 @@ fi
 # ── Defaults ──
 
 QUERIES=15
-PROTOCOLS="doq doh3 doh"
+# Every protocol valid_proto accepts, because any of them can be the running
+# one. The set used to be the three the fallback chain and the install menu
+# offer, which left DoT measured nowhere: a DoT install saw "Current proto:
+# DoT (TLS)", three rows that did not include it, and then a recommendation to
+# switch, drawn from a comparison DoT was never in.
+PROTOCOLS="doq doh3 doh dot"
 TEST_PORT="$BENCH_PORT"
 TMP_CONF="$BENCH_CONF"
 
@@ -47,7 +53,7 @@ usage() {
     --help        Show this help message
 
   ${BOLD}Description:${RESET}
-    Benchmarks DNS query latency across DoQ, DoH3, and DoH protocols
+    Benchmarks DNS query latency across DoQ, DoH3, DoH and DoT
     using a temporary ctrld instance on port ${TEST_PORT}.
     Live DNS on port ${DNS_PORT} is not affected.
 

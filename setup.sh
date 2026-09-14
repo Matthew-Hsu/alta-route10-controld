@@ -25,17 +25,30 @@ LIB_DIR="$(dirname "$0")"
 if [ -f "${LIB_DIR}/lib.sh" ]; then
     # shellcheck source=lib.sh
     . "${LIB_DIR}/lib.sh"
-elif [ -f /cfg/lib.sh ]; then
-    # Running on a router where lib.sh was installed to /cfg/
-    # shellcheck source=/dev/null
-    . /cfg/lib.sh
 else
-    # Auto-download lib.sh from the repository (single-file wget scenario)
+    # Fetch a fresh lib.sh rather than reusing the one already installed.
+    #
+    # This tried /cfg/lib.sh before the network, which is the wrong order on
+    # the one path that matters. README calls re-running setup.sh the upgrade
+    # path; on it LIB_DIR is /tmp and /cfg/lib.sh always exists, so the
+    # installer sourced the old library and the install step further down found
+    # nothing to copy and left /cfg/lib.sh alone. An upgrade therefore replaced
+    # the five utility scripts and not the library all five source. A new
+    # audit.sh against a lib.sh with no dns_redirect_rules in it does not
+    # error: the check yields nothing and prints a pass it never ran.
     printf "  Downloading lib.sh from repository... "
     if wget -O "${LIB_DIR}/lib.sh" "${REPO_BASE}/lib.sh" >/dev/null 2>&1; then
         printf "OK\n"
         # shellcheck source=lib.sh
         . "${LIB_DIR}/lib.sh"
+    elif [ -f /cfg/lib.sh ]; then
+        # Offline, on a router that already has one. Keep going with what is
+        # installed rather than refusing to run, and drop the empty file wget
+        # left behind so the install step does not copy it over the good one.
+        rm -f "${LIB_DIR}/lib.sh"
+        printf "offline, using the installed /cfg/lib.sh\n"
+        # shellcheck source=/dev/null
+        . /cfg/lib.sh
     else
         rm -f "${LIB_DIR}/lib.sh"
         printf "FAILED\n"

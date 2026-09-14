@@ -3039,6 +3039,71 @@ RECONF_DO_RESOLVER="$(code_only "$SCRIPT_DIR/reconfigure.sh" \
 assert_contains "reconfigure.sh rotates the fallback with the resolver" \
     "$RECONF_DO_RESOLVER" "set_fallback_resolver"
 
+describe "setup.sh — a re-install must replace the installed lib.sh"
+
+# README calls re-running setup.sh the upgrade path. On it, LIB_DIR is /tmp and
+# /cfg/lib.sh always exists, and the preamble tried /cfg/lib.sh before the
+# network: the installer sourced the old library, and the install step found
+# nothing to copy and left /cfg/lib.sh alone. The five utility scripts are
+# re-downloaded unconditionally, so an upgrade replaced them and not the
+# library all five source — and a new audit.sh against a lib.sh with no
+# dns_redirect_rules in it prints a pass for a check that never ran, which is
+# the exact failure this suite exists to catch.
+#
+# The two real blocks are lifted out of setup.sh and run against a sandbox:
+# a fake wget, a fake LIB_DIR, and /cfg rewritten to a temp directory, since a
+# test cannot write to the real one. What is asserted is which lib.sh is in
+# place afterwards.
+UPG="$TMPDIR/upgrade"
+upg_frag() {
+    # $1 = sandbox cfg dir. Preamble, then the install step, with /cfg rebound.
+    {
+        printf 'REPO_BASE="https://example.invalid/master"\n'
+        code_only "$SCRIPT_DIR/setup.sh" | sed -n '/^LIB_DIR="\$(dirname "\$0")"/,/^fi$/p' | head -40
+        printf '\n'
+        code_only "$SCRIPT_DIR/setup.sh" \
+            | sed -n '/^if \[ -f "\${LIB_DIR}\/lib.sh" \] \&\& \[ "\${LIB_DIR}\/lib.sh" != "\/cfg\/lib.sh" \]/,/^fi$/p'
+        printf '\nprintf "SOURCED:%%s\\n" "$LIB_MARKER"\n'
+    } | sed "s#/cfg/#${1}/#g"
+}
+upg_run() {
+    # $1 = sandbox root, $2 = "online" or "offline"
+    rm -rf "$1"; mkdir -p "$1/bin" "$1/cfg" "$1/tmp"
+    if [ "$2" = "online" ]; then
+        cat > "$1/bin/wget" << 'UPGWGETEOF'
+#!/bin/sh
+_o=""; while [ $# -gt 0 ]; do case "$1" in -O) _o="$2"; shift 2 ;; *) shift ;; esac; done
+printf 'LIB_MARKER=fresh-from-master
+' > "$_o"; exit 0
+UPGWGETEOF
+    else
+        printf '#!/bin/sh\nexit 1\n' > "$1/bin/wget"
+    fi
+    chmod +x "$1/bin/wget"
+    printf 'LIB_MARKER=old-on-router\n' > "$1/cfg/lib.sh"
+    upg_frag "$1/cfg" > "$1/tmp/frag.sh"
+    ( PATH="$1/bin:$PATH"; sh "$1/tmp/frag.sh" 2>/dev/null )
+    printf 'INSTALLED:'; cat "$1/cfg/lib.sh"
+}
+
+# The upgrade path: a fresh library must reach /cfg, and the installer must run
+# against that one rather than the copy it is replacing.
+UPG_ON="$(upg_run "$UPG/on" online)"
+assert_contains "a re-install sources the freshly downloaded lib.sh" \
+    "$UPG_ON" "SOURCED:fresh-from-master"
+assert_contains "and installs it over the old one" \
+    "$UPG_ON" "INSTALLED:LIB_MARKER=fresh-from-master"
+assert_not_contains "so the old library is gone afterwards" \
+    "$UPG_ON" "INSTALLED:LIB_MARKER=old-on-router"
+
+# Offline on a router that already has one: keep going with what is installed
+# rather than refusing to run, and do not overwrite it with a failed download.
+UPG_OFF="$(upg_run "$UPG/off" offline)"
+assert_contains "an offline re-install falls back to the installed lib.sh" \
+    "$UPG_OFF" "SOURCED:old-on-router"
+assert_contains "and leaves it in place" \
+    "$UPG_OFF" "INSTALLED:LIB_MARKER=old-on-router"
+
 describe "prune_stale_redirects() — a rule for a port nothing listens on"
 
 # Found on a router, not here. The DNS port moved 5354 to 5355 and back, and

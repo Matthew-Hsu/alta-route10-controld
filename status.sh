@@ -114,7 +114,13 @@ print_header "iptables Redirect Rules"
 
 rules=$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c "$DNS_PORT")
 if [ "$rules" -gt 0 ]; then
-    print_ok "${rules} redirect rule(s) active (per-device visibility enabled)"
+    # Not "per-device visibility enabled". A rule that exists is not a rule
+    # that runs: it can sit below a firewall zone chain that redirects DNS
+    # first, and this line reported the feature working on a router where three
+    # of six bridges were being intercepted by https-dns-proxy's own rule. What
+    # is true here is only that the rules are present; the per-bridge check
+    # below is what says whether any of them get the traffic.
+    print_ok "${rules} redirect rule(s) present"
 else
     print_fail "No redirect rules (per-device visibility disabled)"
 fi
@@ -123,11 +129,20 @@ fi
 # resolve fine but never appear in the ControlD dashboard: their queries never
 # reach ctrld, so ControlD only ever sees the router itself.
 uncovered=""
+outranked=""
 for iface in $(lan_ifaces); do
     if iptables -t nat -C PREROUTING -i "$iface" -p udp --dport 53 \
             -j REDIRECT --to-port "$DNS_PORT" 2>/dev/null; then
         subnet="$(lan_cidr "$iface" 2>/dev/null || echo "no IPv4")"
-        print_ok "${iface} -> port ${DNS_PORT} (${subnet})"
+        if [ "$(redirect_outranked "$iface" "$DNS_PORT")" = "below" ]; then
+            # Present but never reached. The same visible symptom as no rule at
+            # all — devices resolve and never appear in ControlD — and the one
+            # this readout used to report as healthy.
+            outranked="${outranked} ${iface}"
+            print_fail "${iface} has a redirect, but a firewall zone takes DNS first (${subnet})"
+        else
+            print_ok "${iface} -> port ${DNS_PORT} (${subnet})"
+        fi
     else
         uncovered="${uncovered} ${iface}"
         print_fail "${iface} has NO redirect — its clients bypass ControlD"
@@ -136,7 +151,7 @@ done
 if [ -f "$DEGRADED_FLAG" ]; then
     print_warn "$(cat "$DEGRADED_FLAG" 2>/dev/null)"
     print_info "DNS still resolves via dnsmasq -> https-dns-proxy; fix ctrld to restore visibility"
-elif [ -n "$uncovered" ]; then
+elif [ -n "$uncovered" ] || [ -n "$outranked" ]; then
     print_info "Fix:  /cfg/reconfigure.sh --repair   (re-applies rules for all bridges)"
 fi
 

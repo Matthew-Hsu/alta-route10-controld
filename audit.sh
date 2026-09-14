@@ -296,8 +296,12 @@ for _if in $bridges; do
     done
 done
 
-# Rules can be present and still never match: wrong bridge, or a rule earlier
-# in the chain taking the traffic first. Counters are the only proof.
+# Rules can be present and still never match: wrong bridge, or a rule earlier in
+# the chain taking the traffic first. Counters were the only proof, and a
+# counter alone cannot tell an idle bridge from an intercepted one — so the
+# second case was reported as "idle VLAN, or clients bypassing" on a router
+# where https-dns-proxy's own zone redirect was taking 45,563 queries.
+# redirect_outranked answers it directly.
 print_header "Packets Actually Intercepted"
 counts="$(iptables -t nat -L PREROUTING -nv 2>/dev/null \
           | $AWK -v port="$DNS_PORT" '$0 ~ ("redir ports " port) { p[$6] += $1 } END { for (i in p) print i, p[i] }' \
@@ -305,14 +309,28 @@ counts="$(iptables -t nat -L PREROUTING -nv 2>/dev/null \
 if [ -z "$counts" ]; then
     drift "No redirect rules to count — nothing is being intercepted"
 else
-    printf '%s\n' "$counts" | while read -r _if _n; do
-        if [ "$_n" -gt 0 ] 2>/dev/null; then
+    # A here-document, not a pipe. `while read` on the right of a pipe runs in a
+    # subshell in ash, so drift() and review() would increment a counter that is
+    # thrown away when the loop ends: these findings never reached the summary
+    # at all. A router with four flat bridges reported "1 item(s) to review".
+    while read -r _if _n; do
+        [ -n "$_if" ] || continue
+        if [ "$(redirect_outranked "$_if" "$DNS_PORT")" = "below" ]; then
+            # The case the header comment above has always named and nothing
+            # could check. Drift, not review: those clients are resolving
+            # through dnsmasq right now and no device on that bridge appears in
+            # ControlD.
+            drift "${_if}: redirect sits below a firewall zone chain — its clients reach dnsmasq, not ctrld"
+            print_info "Fix:  sh /cfg/reconfigure.sh --repair"
+        elif [ "$_n" -gt 0 ] 2>/dev/null; then
             print_ok "${_if}: ${_n} packet(s) redirected"
         else
-            print_warn "${_if}: 0 packets — no DNS seen yet (idle VLAN, or clients bypassing)"
+            review "${_if}: 0 packets — nothing has queried through this bridge yet"
         fi
-    done
-    printf "         Counters are cumulative since boot. A VLAN with active\n"
+    done <<PKTEOF
+$counts
+PKTEOF
+    printf "         Counters are cumulative since boot. A bridge with active\n"
     printf "         devices and 0 packets is the one worth investigating.\n"
 fi
 

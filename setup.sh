@@ -225,8 +225,11 @@ if [ -z "$DNS_TYPE" ]; then
     printf "  ${BOLD}3) DoH — DNS-over-HTTPS/2  (HTTP/2 + TCP)${RESET}\n"
     printf "     ${DIM}Port 443 | Most compatible. No QUIC — slightly higher latency.${RESET}\n\n"
 
-    printf "  ${BOLD}4) Benchmark — test all three and pick the fastest for your network${RESET}  ${GREEN}[if unsure]${RESET}\n"
-    printf "     ${DIM}Runs 10 queries per protocol, ~30 seconds.${RESET}\n\n"
+    printf "  ${BOLD}4) DoT — DNS-over-TLS  (TCP + TLS)${RESET}  ${YELLOW}(may be blocked on some networks)${RESET}\n"
+    printf "     ${DIM}Port 853 | The oldest and most widely supported. No QUIC.${RESET}\n\n"
+
+    printf "  ${BOLD}5) Benchmark — test all four and pick the fastest for your network${RESET}  ${GREEN}[if unsure]${RESET}\n"
+    printf "     ${DIM}Runs 10 queries per protocol, ~40 seconds.${RESET}\n\n"
 
     printf "  ${DIM}Watchdog: if your protocol fails, it falls back to DoH3/DoH (port 443)${RESET}\n"
     printf "  ${DIM}and automatically returns to your preferred protocol once it recovers.${RESET}\n\n"
@@ -239,7 +242,8 @@ if [ -z "$DNS_TYPE" ]; then
         1) DNS_TYPE="doh3" ;;
         2) DNS_TYPE="doq"  ;;
         3) DNS_TYPE="doh"  ;;
-        4)
+        4) DNS_TYPE="dot"  ;;
+        5)
             # ── Inline benchmark ──
             print_step "Benchmarking DNS protocols..."
             printf "  ${DIM}Testing 10 queries per protocol against your ControlD endpoint...${RESET}\n\n"
@@ -269,15 +273,18 @@ if [ -z "$DNS_TYPE" ]; then
             # Shared with benchmark.sh and reconfigure.sh. The copy that lived
             # here picked its query domain with an awk program that referenced
             # a shell variable awk could not see, so every lookup asked for all
-            # five domains as one hostname and failed: all three protocols
+            # five domains as one hostname and failed: every protocol
             # reported FAILED (0/10) and setup fell through to DoH3 every time.
-            # Three, not the four benchmark.sh measures. This runs before
-            # anything is installed, so there is no running protocol for a
-            # recommendation to misreport, and the menu above offers exactly
-            # these three by number. Benchmarking a fourth here would hand
-            # someone who picked "pick one for me" a protocol that was not in
-            # the list they just read.
-            for BPROTO in doq doh3 doh; do
+            #
+            # The same four benchmark.sh and reconfigure.sh measure, and the
+            # same four the menu above offers by number. Those two sets have to
+            # stay equal in both directions: benchmarking a protocol the menu
+            # does not list hands someone who asked it to choose something they
+            # were never shown, and listing one the benchmark skips means "pick
+            # the fastest" can never pick it. This measured three against a
+            # menu of three, which was consistent; adding DoT to one without
+            # the other would not be.
+            for BPROTO in doq doh3 doh dot; do
                 BLABEL=$(proto_label "$BPROTO")
                 if ! bench_protocol "$BPROTO" "$RESOLVER_ID" "$BOOTSTRAP_IP" "$BENCH_QUERIES"; then
                     printf "  %-18s ${RED}FAILED${RESET}  (%s/%s succeeded)\n" "$BLABEL" "$BENCH_OK" "$BENCH_QUERIES"

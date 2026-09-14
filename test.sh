@@ -351,6 +351,9 @@ cat > "$EI_BIN/iptables" << 'EIEOF'
 #!/bin/sh
 # -C is the "does this rule exist" probe: say no, so the add path runs.
 for _a in "$@"; do [ "$_a" = "-C" ] && exit 1; done
+# -S lists the chain. Empty here: a sandbox with no rules yet, so the
+# precedence check finds neither ours nor a zone jump and changes nothing.
+for _a in "$@"; do [ "$_a" = "-S" ] && exit 0; done
 printf '%s\n' "$*" >> "$EI_LOG"
 exit 0
 EIEOF
@@ -367,6 +370,68 @@ assert_not_contains "nothing is appended" "$EI_ADDS" '\-A PREROUTING'
 assert_contains "the VLAN bridge is covered on udp" "$EI_ADDS" \
     '-I PREROUTING 1 -i br-lan_10 -p udp --dport 53 -j REDIRECT --to-port 5354'
 unset EI_LOG
+
+describe "ensure_iptables() — an already-appended rule must be moved, not left"
+
+# The fix above only helps a fresh install. An install made before it has the
+# rules appended, and ensure_redirect_rule returns early on a rule that exists,
+# so --repair and the watchdog's five-minute cycle would both walk past an
+# outranked rule and report success. This is the migration path: the chain is
+# read, ours is found sitting below a zone jump, and it is deleted so the insert
+# puts it back at the head.
+#
+# The chain fixture is the shape taken off a real router: the fw3 zone jump for
+# the bridge, then our appended redirect far below it.
+MG_BIN="$TMPDIR/mgbin"; mkdir -p "$MG_BIN"
+MG_LOG="$TMPDIR/mg.log"; export MG_LOG
+MG_CHAIN="$TMPDIR/mg.chain"; export MG_CHAIN
+cat > "$MG_BIN/iptables" << 'MGEOF'
+#!/bin/sh
+for _a in "$@"; do [ "$_a" = "-C" ] && exit 1; done
+for _a in "$@"; do [ "$_a" = "-S" ] && { cat "$MG_CHAIN" 2>/dev/null; exit 0; } ; done
+printf '%s\n' "$*" >> "$MG_LOG"
+exit 0
+MGEOF
+chmod +x "$MG_BIN/iptables"
+
+# br-lan_10's redirect sits below its own zone jump; br-lan_20's sits above its
+# own, with only another bridge's jump ahead of it.
+cat > "$MG_CHAIN" << 'MGCEOF'
+-A PREROUTING -i br-lan_10 -m comment --comment "!fw3" -j zone_lan_prerouting
+-A PREROUTING -i br-lan_20 -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354
+-A PREROUTING -i br-lan_20 -m comment --comment "!fw3" -j zone_v20zone_prerouting
+-A PREROUTING -i br-lan_10 -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354
+MGCEOF
+
+assert_eq "a rule below its own zone jump is outranked" "below" \
+    "$(PATH="$MG_BIN:$PATH" redirect_outranked br-lan_10 5354)"
+
+# A jump for another bridge cannot take this bridge's traffic. Walking the
+# chain without filtering by interface would call this outranked and tear down
+# a rule that was working — br-lan_20 carried 13,941 packets on the router this
+# came from, through a zone that happens not to redirect DNS.
+assert_eq "a jump for another bridge does not outrank it" "ok" \
+    "$(PATH="$MG_BIN:$PATH" redirect_outranked br-lan_20 5354)"
+
+: > "$MG_LOG"
+( PATH="$MG_BIN:$PATH"; LAN_IFACES="br-lan_10"; ensure_iptables 5354 ) >/dev/null 2>&1
+MG_RAN="$(cat "$MG_LOG" 2>/dev/null)"
+assert_contains "the outranked rule is deleted first" "$MG_RAN" \
+    '-D PREROUTING -i br-lan_10 -p udp --dport 53'
+assert_contains "and re-inserted at the head" "$MG_RAN" \
+    '-I PREROUTING 1 -i br-lan_10 -p udp --dport 53 -j REDIRECT --to-port 5354'
+
+# Once ours is ahead of the jump there is nothing to migrate, or --repair and
+# the watchdog would tear down and rebuild working rules every five minutes.
+cat > "$MG_CHAIN" << 'MGCOKEOF'
+-A PREROUTING -i br-lan_10 -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354
+-A PREROUTING -i br-lan_10 -m comment --comment "!fw3" -j zone_lan_prerouting
+MGCOKEOF
+: > "$MG_LOG"
+( PATH="$MG_BIN:$PATH"; LAN_IFACES="br-lan_10"; ensure_iptables 5354 ) >/dev/null 2>&1
+assert_not_contains "a rule already at the head is never deleted" \
+    "$(cat "$MG_LOG" 2>/dev/null)" '\-D PREROUTING'
+unset MG_LOG MG_CHAIN
 
 describe "replace_block() / read_block() / remove_block()"
 BLOCK_FILE="$TMPDIR/firewall.user"

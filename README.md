@@ -285,8 +285,17 @@ install-and-reboot cycles:
   operations leave the router's `wireguard_watchdog` job alone
 - `audit.sh` reporting no drift before and after a reboot
 - A full `uninstall.sh` run: files, cron, redirect rules, the `/etc/firewall.user`
-  block and the forced-DNS flag all gone, the router's own cron jobs and the
+  block and the forced-DNS flag all gone, every `https-dns-proxy` instance moved
+  off ControlD and back to the stock resolver, the router's own cron jobs and the
   stock `force_dns_port` list untouched, and DNS still resolving afterwards
+- A DNS port other than 5354, end to end. 5354 was held by another process at
+  install time, so the installer moved to 5355 and recorded it. The port was
+  then freed and the installer re-run, which is where this used to come apart:
+  it kept 5355 in both `ctrld.toml` and `controld.env` rather than regenerating
+  the config on the default. Redirect coverage on all six bridges, `audit.sh`
+  reporting no drift, then a reboot, after which `post-cfg.sh` brought ctrld
+  back on 5355 with traffic counted on four bridges and `audit.sh` still clean.
+  Clearing the recorded port and re-installing returned it to 5354
 - Protocol reconciliation, end to end. `ctrld.toml` was retargeted behind
   `controld.env`'s back to reproduce the divergence, and from there:
   `status.sh`, `audit.sh` and `benchmark.sh` each reported the protocol the
@@ -306,7 +315,7 @@ correct, but no one has run them on a real device:
 | Area | What that means for you |
 |---|---|
 | **Split DNS / per-device policy** | Routing specific devices or subnets to a second ControlD profile. Config generation, rule insertion against every shape a policy table can take, and preservation across a re-install are all unit-tested, but no router has actually resolved through one. |
-| **A DNS port other than 5354** | `setup.sh` moves off 5354 if something already holds the port. The uninstaller reads the port from the install rather than assuming the default, but only a sandbox has taken that path. |
+| **An uninstall on more than three `https-dns-proxy` instances** | `uninstall.sh` loops on uci instead of naming instances 0, 1 and 2, so a fourth is no longer left pointing at your ControlD profile. A full uninstall is verified on the three a Route 10 ships, which is the case the loop replaced; no router here has carried a fourth for the loop itself to be proven on. |
 | **The watchdog lock under contention** | Two cycles overlapping. The fix that makes overlap unlikely also makes it hard to observe: every hardware run took and released the lock cleanly, but no two ever raced. |
 | **`benchmark.sh`'s daemon cleanup** | The benchmark starts throwaway `ctrld` instances on a spare port. That it leaves none behind is gated as a destructive test and skipped by default. |
 | **Keeping a `ctrld` newer than the pin** | A re-install must not roll a newer binary back to `CTRLD_PIN`. Unit-tested; no router has been ahead of the pin to try it on. |

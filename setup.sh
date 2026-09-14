@@ -22,7 +22,14 @@ REPO_BASE="https://raw.githubusercontent.com/Matthew-Hsu/alta-route10-controld/m
 # ── Source shared library ──
 
 LIB_DIR="$(dirname "$0")"
-if [ -f "${LIB_DIR}/lib.sh" ]; then
+# A lib.sh beside setup.sh is this project's own only when the rest of the
+# project is there too. On the documented path only setup.sh is downloaded, to
+# /tmp, and lib.sh lands next to it — so a second run in the same boot found
+# that leftover and used it, however old. /tmp is tmpfs and a reboot clears it,
+# which is the only reason this stayed small. uninstall.sh is never fetched by
+# the single-file path, so its presence is what separates a checkout from the
+# debris of an earlier download.
+if [ -f "${LIB_DIR}/lib.sh" ] && [ -f "${LIB_DIR}/uninstall.sh" ]; then
     # shellcheck source=lib.sh
     . "${LIB_DIR}/lib.sh"
 else
@@ -37,20 +44,32 @@ else
     # audit.sh against a lib.sh with no dns_redirect_rules in it does not
     # error: the check yields nothing and prints a pass it never ran.
     printf "  Downloading lib.sh from repository... "
-    if wget -O "${LIB_DIR}/lib.sh" "${REPO_BASE}/lib.sh" >/dev/null 2>&1; then
+    # To a temporary name, then moved. `wget -O` truncates its target before it
+    # knows whether the transfer will succeed, so downloading straight onto
+    # ${LIB_DIR}/lib.sh destroys a copy staged by hand — which is what the
+    # failure message below tells the reader to do.
+    if wget -O "${LIB_DIR}/lib.sh.new" "${REPO_BASE}/lib.sh" >/dev/null 2>&1; then
+        mv "${LIB_DIR}/lib.sh.new" "${LIB_DIR}/lib.sh"
         printf "OK\n"
+        # shellcheck source=lib.sh
+        . "${LIB_DIR}/lib.sh"
+    elif [ -f "${LIB_DIR}/lib.sh" ]; then
+        # Offline, with one staged by hand next to setup.sh. Prefer it over the
+        # installed copy: someone put it there deliberately, and on an upgrade
+        # it is the newer of the two.
+        rm -f "${LIB_DIR}/lib.sh.new"
+        printf "offline, using the lib.sh beside setup.sh\n"
         # shellcheck source=lib.sh
         . "${LIB_DIR}/lib.sh"
     elif [ -f /cfg/lib.sh ]; then
         # Offline, on a router that already has one. Keep going with what is
-        # installed rather than refusing to run, and drop the empty file wget
-        # left behind so the install step does not copy it over the good one.
-        rm -f "${LIB_DIR}/lib.sh"
+        # installed rather than refusing to run.
+        rm -f "${LIB_DIR}/lib.sh.new"
         printf "offline, using the installed /cfg/lib.sh\n"
         # shellcheck source=/dev/null
         . /cfg/lib.sh
     else
-        rm -f "${LIB_DIR}/lib.sh"
+        rm -f "${LIB_DIR}/lib.sh.new"
         printf "FAILED\n"
         echo "  [!!] Could not auto-download lib.sh." >&2
         echo "  [!!] Download it manually and re-run setup:" >&2

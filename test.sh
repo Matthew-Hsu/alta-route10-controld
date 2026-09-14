@@ -3529,9 +3529,19 @@ done
 # push stays filtered: a run per push to every feature branch would double
 # every PR's CI for nothing. Brackets escaped — an assertion needle is a regex,
 # and "[master]" unescaped matches any one of m, a, s, t, e or r.
-assert_contains "pushes are still limited to master" \
-    "$(sed -n '/^  push:/,/^  pull_request:/p' "$SCRIPT_DIR/.github/workflows/ci.yml")" \
-    'branches: \[master\]' 
+#
+# Guarded like the three above. This one was not, and the workflows are not
+# among the files the suite's preflight requires — correctly, since a router
+# has no use for CI config and nobody should have to copy it there. So on the
+# router the sed found no file, the needle matched nothing, and the assertion
+# failed for the absence of something it was never entitled to expect.
+if [ -f "$SCRIPT_DIR/.github/workflows/ci.yml" ]; then
+    assert_contains "pushes are still limited to master" \
+        "$(sed -n '/^  push:/,/^  pull_request:/p' "$SCRIPT_DIR/.github/workflows/ci.yml")" \
+        'branches: \[master\]'
+else
+    skip "push trigger (.github/workflows/ci.yml not found)"
+fi
 
 describe "the suite must refuse a partial checkout, not die inside one"
 

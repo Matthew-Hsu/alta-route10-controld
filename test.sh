@@ -3300,7 +3300,10 @@ upg_frag() {
     # $1 = sandbox cfg dir. Preamble, then the install step, with /cfg rebound.
     {
         printf 'REPO_BASE="https://example.invalid/master"\n'
-        code_only "$SCRIPT_DIR/setup.sh" | sed -n '/^LIB_DIR="\$(dirname "\$0")"/,/^fi$/p' | head -40
+        # No line cap: the range already stops at the first column-0 `fi`,
+        # which closes this block. A cap silently sliced it mid-if the moment
+        # the preamble grew.
+        code_only "$SCRIPT_DIR/setup.sh" | sed -n '/^LIB_DIR="\$(dirname "\$0")"/,/^fi$/p'
         printf '\n'
         code_only "$SCRIPT_DIR/setup.sh" \
             | sed -n '/^if \[ -f "\${LIB_DIR}\/lib.sh" \] \&\& \[ "\${LIB_DIR}\/lib.sh" != "\/cfg\/lib.sh" \]/,/^fi$/p'
@@ -3308,7 +3311,9 @@ upg_frag() {
     } | sed "s#/cfg/#${1}/#g"
 }
 upg_run() {
-    # $1 = sandbox root, $2 = "online" or "offline"
+    # $1 = sandbox root, $2 = "online" or "offline", $3 = what sits in LIB_DIR:
+    # "" nothing, "stale" a lone leftover lib.sh, "checkout" a lib.sh with the
+    # rest of the project beside it, "staged" one put there by hand.
     rm -rf "$1"; mkdir -p "$1/bin" "$1/cfg" "$1/tmp"
     if [ "$2" = "online" ]; then
         cat > "$1/bin/wget" << 'UPGWGETEOF'
@@ -3322,6 +3327,12 @@ UPGWGETEOF
     fi
     chmod +x "$1/bin/wget"
     printf 'LIB_MARKER=old-on-router\n' > "$1/cfg/lib.sh"
+    case "${3:-}" in
+        stale)    printf 'LIB_MARKER=stale-in-tmp\n'   > "$1/tmp/lib.sh" ;;
+        staged)   printf 'LIB_MARKER=staged-by-hand\n' > "$1/tmp/lib.sh" ;;
+        checkout) printf 'LIB_MARKER=from-checkout\n'  > "$1/tmp/lib.sh"
+                  printf '#\n' > "$1/tmp/uninstall.sh" ;;
+    esac
     upg_frag "$1/cfg" > "$1/tmp/frag.sh"
     ( PATH="$1/bin:$PATH"; sh "$1/tmp/frag.sh" 2>/dev/null )
     printf 'INSTALLED:'; cat "$1/cfg/lib.sh"
@@ -3344,6 +3355,36 @@ assert_contains "an offline re-install falls back to the installed lib.sh" \
     "$UPG_OFF" "SOURCED:old-on-router"
 assert_contains "and leaves it in place" \
     "$UPG_OFF" "INSTALLED:LIB_MARKER=old-on-router"
+
+# A lone lib.sh in LIB_DIR is debris, not a checkout. On the documented path
+# only setup.sh is downloaded, to /tmp, and lib.sh lands beside it — so a second
+# run in the same boot used that leftover however old it was. /tmp is tmpfs, so
+# only a reboot cleared it.
+UPG_STALE="$(upg_run "$UPG/stale" online stale)"
+assert_contains "a leftover lib.sh in /tmp is replaced, not reused" \
+    "$UPG_STALE" "SOURCED:fresh-from-master"
+assert_not_contains "the leftover is not what runs" "$UPG_STALE" "SOURCED:stale-in-tmp"
+
+# With the rest of the project beside it, it is a checkout and its lib.sh is
+# the one under test. Downloading master's over it would mean nobody could ever
+# test a local change to lib.sh through setup.sh.
+UPG_CO="$(upg_run "$UPG/checkout" online checkout)"
+assert_contains "a checkout's own lib.sh is used" "$UPG_CO" "SOURCED:from-checkout"
+assert_not_contains "and master's is not fetched over it" "$UPG_CO" "fresh-from-master"
+
+# Offline, a lib.sh staged by hand next to setup.sh wins over the installed
+# one — the failure message tells the reader to put it exactly there, and on an
+# upgrade it is the newer of the two.
+UPG_STAGED="$(upg_run "$UPG/staged" offline staged)"
+assert_contains "a hand-staged lib.sh is preferred when offline" \
+    "$UPG_STAGED" "SOURCED:staged-by-hand"
+assert_not_contains "not the installed copy" "$UPG_STAGED" "SOURCED:old-on-router"
+
+# And a failed download must not have destroyed it. wget -O truncates its
+# target before it knows whether the transfer will work, so downloading onto
+# the staged file would leave nothing to fall back to.
+assert_contains "the staged copy survives the failed download" \
+    "$UPG_STAGED" "INSTALLED:LIB_MARKER=staged-by-hand"
 
 describe "prune_stale_redirects() — a rule for a port nothing listens on"
 

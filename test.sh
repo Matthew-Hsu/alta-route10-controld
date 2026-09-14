@@ -3475,15 +3475,27 @@ if ! is_alta_router 2>/dev/null; then
     skip "self-healing test"
     skip "benchmark test"
 else
+    # The port this install actually uses, not the default. These three
+    # assertions hardcoded 5354, so on an install that moved off it — which
+    # setup.sh does by itself when 5354 is taken — every one of them failed
+    # against a router that was working correctly, and the suite reported a
+    # dead resolver on a healthy device. installed_dns_port reads what the
+    # install recorded and falls back to 5354, so the default case is
+    # unchanged.
+    IT_PORT="$(installed_dns_port /cfg/controld.env)"
+
     # Integration: DNS resolution
-    assert_true  "DNS resolves via ctrld"    check_dns "127.0.0.1#5354"
+    assert_true  "DNS resolves via ctrld on ${IT_PORT}" check_dns "127.0.0.1#${IT_PORT}"
     assert_true  "System DNS works"          check_dns
 
     # Integration: ctrld process
     assert_true  "ctrld process running"     pidof ctrld
 
-    # Integration: iptables
-    RULES=$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c 5354)
+    # Integration: iptables. Matched on the whole field, not a bare grep for
+    # the number: a loose match also counts a leftover rule pointing at a port
+    # this install no longer uses, which is the one case where a redirect
+    # existing proves nothing.
+    RULES=$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c "redir ports ${IT_PORT}$")
     assert_true "iptables rules active ($RULES)" [ "$RULES" -gt 0 ]
 
     # Integration: cron jobs (wrap pipeline in sh -c so assert_true runs the
@@ -3513,7 +3525,7 @@ else
         rm /cfg/ctrld.toml
         sh /cfg/post-cfg.sh >/dev/null 2>&1 || true
         assert_true "self-healing restored ctrld.toml" [ -f /cfg/ctrld.toml ]
-        assert_true "DNS still works after self-heal"   check_dns "127.0.0.1#5354"
+        assert_true "DNS still works after self-heal"   check_dns "127.0.0.1#${IT_PORT}"
         # Restore original in case self-heal used different proto
         printf "%s" "$BACKUP_TOML" > /cfg/ctrld.toml
     else

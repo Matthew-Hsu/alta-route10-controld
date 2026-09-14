@@ -3039,6 +3039,71 @@ RECONF_DO_RESOLVER="$(code_only "$SCRIPT_DIR/reconfigure.sh" \
 assert_contains "reconfigure.sh rotates the fallback with the resolver" \
     "$RECONF_DO_RESOLVER" "set_fallback_resolver"
 
+describe "prune_stale_redirects() — the deletion must actually reach iptables"
+
+# This function has never removed a rule. It set IFS to a newline so it could
+# walk the saved rules one per line, which is also the IFS the unquoted rule
+# spec below it splits on: the whole of "-i br-lan -p udp ... --to-ports 5354"
+# arrived at iptables as one argument and was rejected. The count it printed
+# was therefore 0 for every rule it had correctly identified as stale, and
+# `reconfigure.sh --repair` reported nothing to do while the rules stayed.
+#
+# A stateful fake iptables, because the behaviour is which rules survive, and
+# the suite's existing stub just exits 0.
+PSR_BIN="$TMPDIR/psrbin"
+mkdir -p "$PSR_BIN"
+IPT_STORE="$TMPDIR/psr.rules"; export IPT_STORE
+cat > "$PSR_BIN/iptables-save" << 'PSRSAVEEOF'
+#!/bin/sh
+cat "$IPT_STORE" 2>/dev/null
+PSRSAVEEOF
+cat > "$PSR_BIN/iptables" << 'PSRIPTEOF'
+#!/bin/sh
+if [ "$1" = "-t" ] && [ "$2" = "nat" ] && [ "$3" = "-D" ] && [ "$4" = "PREROUTING" ]; then
+    shift 4
+    # Real iptables parses argv, so a whole rule spec arriving as one argument
+    # is an error, not a rule. Rejoining $* without this check would hide
+    # exactly the word-splitting bug this test exists to catch.
+    for _a in "$@"; do
+        case "$_a" in *" "*) exit 1 ;; esac
+    done
+    _line="-A PREROUTING $*"
+    grep -qxF -- "$_line" "$IPT_STORE" || exit 1
+    grep -vxF -- "$_line" "$IPT_STORE" > "$IPT_STORE.new" && mv "$IPT_STORE.new" "$IPT_STORE"
+    exit 0
+fi
+exit 0
+PSRIPTEOF
+chmod +x "$PSR_BIN/iptables-save" "$PSR_BIN/iptables"
+
+PSR_SAVED_PATH="$PATH"
+PATH="$PSR_BIN:$PATH"
+PSR_SAVED_IFACES="${LAN_IFACES:-}"
+LAN_IFACES="br-lan br-lan_10"; export LAN_IFACES
+
+cat > "$IPT_STORE" << 'PSRRULEEOF'
+-A PREROUTING -i br-lan -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354
+-A PREROUTING -i br-lan_10 -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354
+-A PREROUTING -i br-lan_99 -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354
+PSRRULEEOF
+
+PSR_N="$(prune_stale_redirects 5354)"
+PSR_LEFT="$(cat "$IPT_STORE")"
+
+assert_eq "the rule for a bridge that is gone is counted as removed" "1" "$PSR_N"
+assert_not_contains "and it is gone from the table" "$PSR_LEFT" '-i br-lan_99 '
+
+# A prune that takes out a working rule is worse than the bug it fixes.
+assert_contains "the current bridge's rule survives" "$PSR_LEFT" '-i br-lan '
+assert_contains "the VLAN's rule survives" "$PSR_LEFT" '-i br-lan_10 '
+
+# Running it again must be a no-op rather than finding new things to delete.
+assert_eq "a second run removes nothing" "0" "$(prune_stale_redirects 5354)"
+
+PATH="$PSR_SAVED_PATH"
+if [ -n "$PSR_SAVED_IFACES" ]; then LAN_IFACES="$PSR_SAVED_IFACES"; else unset LAN_IFACES; fi
+unset IPT_STORE
+
 describe "reset_fallback_resolver() — an uninstall must clear every instance"
 
 # uninstall.sh reset instances 0, 1 and 2 as three copied blocks. The Route 10

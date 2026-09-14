@@ -1152,6 +1152,22 @@ dns_redirect_commands() {
 # rule mentioning the port", so a VLAN added after install gets covered on the
 # next call (boot, or the 5-minute watchdog) instead of silently bypassing ctrld.
 # Returns 0 if anything was added.
+# Is this bridge's port 53 redirect sitting below a firewall zone chain?
+#
+# PREROUTING is evaluated in order, and a zone chain can carry a redirect of its
+# own — https-dns-proxy's package rule is one — so a rule that exists is not the
+# same as a rule that runs. Walks the chain looking only at rules that apply to
+# this interface and reports whichever comes first: ours, or a jump into a zone.
+# Prints "ok", "below", or nothing when neither is present.
+# Usage: redirect_outranked br-lan_10 5354
+redirect_outranked() {
+    iptables -t nat -S PREROUTING 2>/dev/null | $AWK -v ifc="$1" -v port="$2" '
+        index($0, "-i " ifc " ") == 0 { next }
+        $0 ~ ("--dport 53 .*--to-ports " port "$") { print "ok"; exit }
+        index($0, "-j zone_") > 0                  { print "below"; exit }
+    '
+}
+
 ensure_iptables() {
     local port="${1:-$DNS_PORT}"
     local added=0
@@ -1167,6 +1183,15 @@ ensure_iptables() {
     # The 853 hijack already inserted for exactly this reason. Port 53 is the
     # path every client uses and had no such protection.
     for iface in $(lan_ifaces); do
+        # An install made before the rules were inserted has them appended, and
+        # ensure_redirect_rule returns early on a rule that exists — so --repair
+        # and the watchdog would both leave an outranked rule exactly where it
+        # is. Drop it first and let the insert below put it back at the head.
+        # Converges: once ours is ahead, this reads "ok" and nothing is touched.
+        if [ "$(redirect_outranked "$iface" "$port")" = "below" ]; then
+            del_redirect_rule "$iface" udp 53 "$port"
+            del_redirect_rule "$iface" tcp 53 "$port"
+        fi
         if ensure_redirect_rule insert "$iface" udp 53 "$port"; then added=$((added + 1)); fi
         if ensure_redirect_rule insert "$iface" tcp 53 "$port"; then added=$((added + 1)); fi
     done

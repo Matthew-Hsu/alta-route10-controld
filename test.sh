@@ -3184,17 +3184,40 @@ assert_contains "someone else's proxy redirect is left alone" "$PSR_LEFT" \
 # Running it again must be a no-op rather than finding new things to delete.
 assert_eq "a second run removes nothing" "0" "$(prune_stale_redirects 5354)"
 
-PATH="$PSR_SAVED_PATH"
-if [ -n "$PSR_SAVED_IFACES" ]; then LAN_IFACES="$PSR_SAVED_IFACES"; else unset LAN_IFACES; fi
-unset IPT_STORE
-
 # uninstall.sh must sweep every port too. It worked from DNS_PORT alone, so an
 # uninstall left every rule from a port the install had used earlier: pointing
 # at a closed port, with this project removed and nothing left to explain them.
-assert_true "uninstall sweeps every DNS redirect, not one port" \
-    code_grep "$SCRIPT_DIR/uninstall.sh" 'dns_redirect_rules | while read'
-assert_false "uninstall no longer sweeps by the recorded port alone" \
-    code_grep "$SCRIPT_DIR/uninstall.sh" -- '--to-ports \${DNS_PORT}'
+#
+# The sweep is lifted out and run against the same fake iptables, rather than
+# grepping uninstall.sh for the line that does it. A source assertion passes on
+# that exact line however broken the logic around it, and fails on a correct
+# rewrite that phrases it differently, which is neither of the things worth
+# knowing. What is asserted is which rules are left in the table.
+cat > "$IPT_STORE" << 'PSRUNEOF'
+-A PREROUTING -i br-lan -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354
+-A PREROUTING -i br-lan -p tcp -m tcp --dport 53 -j REDIRECT --to-ports 5354
+-A PREROUTING -i br-lan_10 -p udp -m udp --dport 53 -j REDIRECT --to-ports 5355
+-A PREROUTING -i br-lan -p tcp -m tcp --dport 853 -j REDIRECT --to-ports 5355
+-A PREROUTING -i br-lan -p tcp -m tcp --dport 80 -j REDIRECT --to-ports 3128
+PSRUNEOF
+PSR_SWEEP="$(code_only "$SCRIPT_DIR/uninstall.sh" \
+    | sed -n '/^dns_redirect_rules | while read -r _rule; do$/,/^done$/p')"
+assert_true "the uninstall sweep extracts" test -n "$PSR_SWEEP"
+( PATH="$PSR_BIN:$PATH"; eval "$PSR_SWEEP" ) >/dev/null 2>&1
+PSR_AFTER="$(cat "$IPT_STORE")"
+
+# Every rule this project could have written goes, whatever port it points at.
+assert_not_contains "uninstall removes the rules on the port in use" \
+    "$PSR_AFTER" '--to-ports 5354'
+assert_not_contains "and the ones from a port it used earlier" \
+    "$PSR_AFTER" '--to-ports 5355'
+# And nothing else is touched, with this project on its way out.
+assert_contains "but leaves a redirect that was never ours" \
+    "$PSR_AFTER" '--dport 80 -j REDIRECT --to-ports 3128$'
+
+PATH="$PSR_SAVED_PATH"
+if [ -n "$PSR_SAVED_IFACES" ]; then LAN_IFACES="$PSR_SAVED_IFACES"; else unset LAN_IFACES; fi
+unset IPT_STORE
 
 describe "audit.sh — a redirect pointing at a port nothing listens on"
 

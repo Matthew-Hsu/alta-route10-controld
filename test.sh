@@ -2533,8 +2533,12 @@ assert_eq "no instance is invented" "" \
 
 # With no instances configured it reports failure rather than silently passing
 : > "$UCI_STORE"
-assert_true "reports failure when there is nothing to update" \
-    sh -c "! set_fallback_resolver x 1.1.1.1 >/dev/null 2>&1"
+# assert_false, not `assert_true sh -c "! ..."`. sh -c starts a new shell that
+# has never sourced lib.sh, so the function is not defined there: the shell
+# reported 127, `!` turned that into 0, and the assertion passed whatever the
+# function did. assert_false runs it in this shell, where it exists.
+assert_false "reports failure when there is nothing to update" \
+    set_fallback_resolver x 1.1.1.1
 
 PATH="$FBR_SAVED_PATH"
 unset UCI_STORE

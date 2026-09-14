@@ -136,6 +136,57 @@ binary; the updater restores it automatically, but you can do it by hand:
 mv /cfg/ctrld.prev /cfg/ctrld && chmod +x /cfg/ctrld && sh /cfg/post-cfg.sh
 ```
 
+## LAN DNS dies after the port moved, but everything reports healthy
+
+**Symptom:** clients cannot resolve anything. `ping 1.1.1.1` works, so it is
+not the link. `status.sh` reports every bridge covered, `audit.sh` reports no
+drift, and ctrld is answering when you ask it directly:
+
+```sh
+nslookup google.com 127.0.0.1#5354   # fine
+```
+
+**Cause:** a redirect left over from a port this install no longer uses.
+`PREROUTING` is evaluated in order, so a rule sending port 53 to the old port
+sits above the working ones and takes the traffic first — into a port nothing
+is listening on. Moving the port and moving it back is enough to leave one.
+
+This was invisible to every check until recently, because each of them selected
+rules by the current port before counting, so a rule on the wrong port was
+never in the set being examined. Find it by counting packets rather than rules:
+
+```sh
+iptables -t nat -L PREROUTING -n -v --line-numbers | grep REDIRECT
+```
+
+A rule with a large packet count pointing at a port that is not the one in
+`/cfg/controld.env` is the culprit:
+
+```sh
+grep '^DNS_PORT=' /cfg/controld.env
+```
+
+**Fix:**
+
+```sh
+sh /cfg/reconfigure.sh --repair
+```
+
+`--repair` now removes a redirect pointing at a port this install does not use,
+not only one on a bridge that is gone, and `audit.sh` reports such a rule as
+drift. To take them out by hand instead, with `5355` being the port that moved:
+
+```sh
+iptables-save -t nat | grep '\-\-to-ports 5355' | while read -r r; do
+  # shellcheck disable=SC2086
+  iptables -t nat -D PREROUTING ${r#-A PREROUTING }
+done
+```
+
+Then re-run `sh /cfg/status.sh` and resolve from a client again. Queries from
+the router itself never traverse `PREROUTING`, so they kept working throughout
+and prove nothing here.
+
 ## Devices on a VLAN never appear in ControlD
 
 **Symptom:** The router itself (and anything on the default LAN) shows up in the

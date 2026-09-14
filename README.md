@@ -447,7 +447,7 @@ All scripts source `lib.sh` which provides:
 - Input validation (`valid_resolver`, `valid_mac`, `valid_cidr`, `valid_proto`)
 - Protocol utilities (`proto_label`, `next_proto`) and per-upstream protocol switching (`retarget_upstreams`, `resolver_from_endpoint`)
 - Degraded-mode handling (`remove_dns_redirects`) and config editing (`toml_blocks`, `next_toml_index`)
-- Cron entries matched by script path (`cron_has`, `cron_remove`) and rule hygiene (`prune_stale_redirects`)
+- Cron entries matched by script path (`cron_has`, `cron_remove`) and rule hygiene (`dns_redirect_rules`, `redirect_rule_port`, `redirect_rule_iface`, `prune_stale_redirects`): `--repair` removes a redirect on a bridge that is gone **and** one pointing at a port this install does not listen on, which `PREROUTING` would otherwise evaluate ahead of the working rules
 - Split-DNS writing (`policy_add_rule`) and preservation across a config rewrite (`carry_policy_blocks`)
 - Config reporting (`list_upstreams`, `policy_rule_count`, `policy_rules`, `format_policy_rules`): what `status.sh` and `reconfigure.sh --show` print, and the split-DNS rules `reconfigure.sh --policy` lists, each resolved to the upstream it routes to
 - Env file rewriting (`write_env_file`), which carries keys it does not manage rather than truncating them, and reading back the one key an installer must not lose (`installed_dns_port`)

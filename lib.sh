@@ -1186,26 +1186,62 @@ remove_dns_redirects() {
         > "$DEGRADED_FLAG" 2>/dev/null || true
 }
 
-# Delete redirect rules pointing at our port on interfaces that are not LAN
-# bridges any more: a VLAN removed from the router, or br-lan_2 left behind by
-# the era when the bridge list was hardcoded. Rules are otherwise only ever
-# added, so stale ones linger until a reboot. Prints the number removed.
+# Every DNS redirect rule this project could have written, as iptables-save
+# lines: a REDIRECT in PREROUTING, on one of our destination ports, whatever
+# port it sends traffic to. The port it sends to is deliberately not filtered,
+# because the rules that cause the most damage are the ones pointing somewhere
+# this install no longer listens.
+# Usage: dns_redirect_rules
+dns_redirect_rules() {
+    iptables-save -t nat 2>/dev/null | grep '^-A PREROUTING' \
+        | grep -- '-j REDIRECT' \
+        | grep -E -- '--dport (53|853) ' \
+        | grep -- '--to-ports '
+}
+
+# The destination port of one iptables-save rule line.
+# Usage: redirect_rule_port "<rule>"
+redirect_rule_port() {
+    printf '%s\n' "$1" | sed -n 's/.*--to-ports \([0-9][0-9]*\).*/\1/p'
+}
+
+# The interface of one iptables-save rule line.
+# Usage: redirect_rule_iface "<rule>"
+redirect_rule_iface() {
+    printf '%s\n' "$1" | sed -n 's/.* -i \([^ ]*\).*/\1/p'
+}
+
+# Delete DNS redirect rules that can no longer do anything useful: one on an
+# interface that is not a LAN bridge any more, and one pointing at a port this
+# install does not listen on.
+#
+# The second is why this exists at all. A VLAN removed from the router, or
+# br-lan_2 left behind by the era when the bridge list was hardcoded, leaves a
+# rule that simply never matches. A rule pointing at a port nothing listens on
+# is worse: iptables evaluates PREROUTING in order and these are prepended or
+# appended around each other, so a leftover from a previous port can sit above
+# the current rules and swallow every DNS query on the bridge. Found on a
+# router after the port moved 5354 to 5355 and back: 27,338 packets on one
+# bridge redirected to a closed 5355, with ctrld healthy on 5354, status.sh
+# reporting every bridge covered and audit.sh reporting no drift, because both
+# only ever counted rules already matching the current port.
+#
+# Only ports 53 and 853 on a LAN bridge are touched, which is the shape this
+# project writes and nothing else has reason to. Prints the number removed.
 # Usage: prune_stale_redirects [port]
 prune_stale_redirects() {
     _psr_port="${1:-$DNS_PORT}"
     _psr_keep=" $(lan_ifaces | tr '\n' ' ')"
-    _psr_rules="$(iptables-save -t nat 2>/dev/null | grep '^-A PREROUTING' \
-        | grep -- "--to-ports ${_psr_port}")"
     _psr_n=0
     # Read through a here-document, not `IFS=<newline>` around a for loop and
     # not a pipeline.
     #
-    # The IFS form could never delete anything. Inside that loop IFS was a
+    # The IFS form could never delete anything. Inside that loop IFS is a
     # newline, so the unquoted rule spec below split on newlines rather than
-    # spaces and the whole of "-i br-lan -p udp ... --to-ports 5354" reached
+    # spaces and the whole of "-i br-lan -p udp ... --to-ports 5355" reached
     # iptables as a single argument, which it rejects. The directive saying the
-    # spec must word-split was defeated by the IFS the loop itself needed, and
-    # the function reported 0 removed for every rule it correctly identified.
+    # spec must word-split was defeated by the IFS the loop needed, and the
+    # function has reported 0 removed for every rule it correctly identified.
     # `IFS= read` scopes that to the read alone, so the body splits normally.
     #
     # And a here-document rather than a pipe, because `while read` on the right
@@ -1213,15 +1249,21 @@ prune_stale_redirects() {
     # and lost on the way out.
     while IFS= read -r _psr_rule; do
         [ -n "$_psr_rule" ] || continue
-        _psr_if="$(printf '%s\n' "$_psr_rule" | sed -n 's/.* -i \([^ ]*\).*/\1/p')"
+        _psr_if="$(redirect_rule_iface "$_psr_rule")"
         [ -n "$_psr_if" ] || continue
-        case "$_psr_keep" in *" ${_psr_if} "*) continue ;; esac
+        _psr_to="$(redirect_rule_port "$_psr_rule")"
+        [ -n "$_psr_to" ] || continue
+        # Keep only a rule that is both on a current bridge and pointing at the
+        # port in use. Either alone is not enough.
+        if [ "$_psr_to" = "$_psr_port" ]; then
+            case "$_psr_keep" in *" ${_psr_if} "*) continue ;; esac
+        fi
         # shellcheck disable=SC2086  # the saved rule spec must word-split
         if iptables -t nat -D PREROUTING ${_psr_rule#-A PREROUTING } 2>/dev/null; then
             _psr_n=$((_psr_n + 1))
         fi
     done <<PSREOF
-$_psr_rules
+$(dns_redirect_rules)
 PSREOF
     printf '%s' "$_psr_n"
 }

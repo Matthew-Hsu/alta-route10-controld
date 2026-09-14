@@ -187,6 +187,26 @@ else
     print_info "Fix:  sh /cfg/reconfigure.sh --repair"
 fi
 
+# A redirect pointing at a port this install does not use swallows every query
+# on its bridge, because PREROUTING is evaluated in order and a leftover from a
+# previous port can sit above the current rules. Seen on a router after the
+# port moved and moved back: 27,338 packets on one bridge sent to a closed
+# port, while every check here passed. Both the coverage count below and
+# status.sh only ever counted rules already matching the current port, so
+# neither could see it. This is drift, not review: DNS is down for those
+# clients until someone removes the rule.
+wrongport="$(dns_redirect_rules \
+    | sed -n 's/.* -i \([^ ]*\) .*--to-ports \([0-9][0-9]*\).*/\1->\2/p' \
+    | grep -v -- "->${DNS_PORT}$" | sort -u | tr '\n' ' ')"
+wrongport="${wrongport% }"
+if [ -z "$wrongport" ]; then
+    print_ok "Every redirect points at the port in use (${DNS_PORT})"
+else
+    drift "Redirect(s) pointing at a port nothing listens on: ${wrongport}"
+    print_info "These sit above the working rules and take the traffic."
+    print_info "Fix:  sh /cfg/reconfigure.sh --repair"
+fi
+
 # A live rule with no firewall.user line vanishes at the next firewall reload.
 for _if in $rule_ifaces; do
     grep -q " -i ${_if} " "$FW_USER" 2>/dev/null \

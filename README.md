@@ -465,10 +465,17 @@ During setup, each protocol is presented with detailed information:
   1) DoH3 (HTTP/3)   : Port 443, UDP/QUIC. Stealthy, fast, widely compatible.
   2) DoQ  (QUIC)     : Port 853, UDP/QUIC. Dedicated DNS port, lower overhead.
   3) DoH  (HTTP/2)   : Port 443, TCP+TLS. Most compatible fallback.
-  4) Benchmark       : Test all protocols and auto-select the fastest.
+  4) Benchmark       : Test these three and auto-select the fastest.
 ```
 
 Option 4 runs a quick benchmark (10 queries per protocol) and automatically configures the winner.
+
+**DoT is not offered here**, and the benchmark at option 4 does not measure it. Option 4 has to pick from the list you just read, so measuring a fourth protocol would hand someone who chose "pick one for me" a protocol that was never on offer. DoT is on port 853, the same port DoQ uses and the same one some networks block, so it is not a transport this list is missing — and `benchmark.sh` and `reconfigure.sh --benchmark` do measure all four once you are installed:
+
+```sh
+sh /cfg/benchmark.sh                          # times DoQ, DoH3, DoH and DoT
+sh /cfg/reconfigure.sh --protocol --to dot    # switch to it
+```
 
 #### Quick Reconfigure
 

@@ -224,16 +224,22 @@ print_step "Removing iptables rules..."
 # an unrelated outage caused by uninstalling something else.
 remove_dns_redirects "$DNS_PORT"
 
-# Sweep any strays an older install left on bridges that no longer exist
-iptables-save -t nat 2>/dev/null \
-    | grep '^-A PREROUTING' \
-    | grep -- "--to-ports ${DNS_PORT}" \
-    | while read -r _rule; do
-        # shellcheck disable=SC2086  # the saved rule spec must word-split
-        iptables -t nat -D PREROUTING ${_rule#-A PREROUTING } 2>/dev/null || true
-    done
+# Sweep every DNS redirect this project could have written, whatever port it
+# points at, not only the one controld.env records.
+#
+# remove_dns_redirects above works from DNS_PORT, so an uninstall left behind
+# every rule from a port the install used earlier. Those are the dangerous
+# ones: they point at a port nothing listens on, they sit in PREROUTING above
+# nothing at all once we are gone, and the router keeps redirecting client DNS
+# into a black hole with this project removed and nothing left to explain it.
+# Observed after a port moved 5354 to 5355 and back, where the uninstall
+# reported a clean removal and 24 stale rules survived.
+dns_redirect_rules | while read -r _rule; do
+    # shellcheck disable=SC2086  # the saved rule spec must word-split
+    iptables -t nat -D PREROUTING ${_rule#-A PREROUTING } 2>/dev/null || true
+done
 
-_left="$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c "redir ports ${DNS_PORT}$" || true)"
+_left="$(dns_redirect_rules | grep -c . || true)"
 if [ "$_left" -eq 0 ]; then
     print_ok "ControlD redirect rules removed (other firewall rules untouched)"
 else

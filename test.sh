@@ -3039,17 +3039,19 @@ RECONF_DO_RESOLVER="$(code_only "$SCRIPT_DIR/reconfigure.sh" \
 assert_contains "reconfigure.sh rotates the fallback with the resolver" \
     "$RECONF_DO_RESOLVER" "set_fallback_resolver"
 
-describe "prune_stale_redirects() — the deletion must actually reach iptables"
+describe "prune_stale_redirects() — a rule for a port nothing listens on"
 
-# This function has never removed a rule. It set IFS to a newline so it could
-# walk the saved rules one per line, which is also the IFS the unquoted rule
-# spec below it splits on: the whole of "-i br-lan -p udp ... --to-ports 5354"
-# arrived at iptables as one argument and was rejected. The count it printed
-# was therefore 0 for every rule it had correctly identified as stale, and
-# `reconfigure.sh --repair` reported nothing to do while the rules stayed.
+# Found on a router, not here. The DNS port moved 5354 to 5355 and back, and
+# the 5355 rules were never removed: iptables evaluates PREROUTING in order, so
+# they sat above the working ones and took the traffic. 27,338 packets on one
+# bridge went to a closed port while ctrld was healthy on 5354, status.sh
+# reported every bridge covered and audit.sh reported no drift, because all
+# three only ever looked at rules already matching the current port.
 #
 # A stateful fake iptables, because the behaviour is which rules survive, and
-# the suite's existing stub just exits 0.
+# the suite's existing stub just exits 0. It rejects an argument containing a
+# space the way the real one does, which is what keeps the neighbouring
+# word-splitting fix honest.
 PSR_BIN="$TMPDIR/psrbin"
 mkdir -p "$PSR_BIN"
 IPT_STORE="$TMPDIR/psr.rules"; export IPT_STORE
@@ -3062,8 +3064,8 @@ cat > "$PSR_BIN/iptables" << 'PSRIPTEOF'
 if [ "$1" = "-t" ] && [ "$2" = "nat" ] && [ "$3" = "-D" ] && [ "$4" = "PREROUTING" ]; then
     shift 4
     # Real iptables parses argv, so a whole rule spec arriving as one argument
-    # is an error, not a rule. Rejoining $* without this check would hide
-    # exactly the word-splitting bug this test exists to catch.
+    # is an error, not a rule. Rejoining $* without this would hide exactly the
+    # word-splitting bug this test exists to catch.
     for _a in "$@"; do
         case "$_a" in *" "*) exit 1 ;; esac
     done
@@ -3083,19 +3085,36 @@ LAN_IFACES="br-lan br-lan_10"; export LAN_IFACES
 
 cat > "$IPT_STORE" << 'PSRRULEEOF'
 -A PREROUTING -i br-lan -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354
+-A PREROUTING -i br-lan -p tcp -m tcp --dport 53 -j REDIRECT --to-ports 5354
 -A PREROUTING -i br-lan_10 -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354
+-A PREROUTING -i br-lan -p udp -m udp --dport 53 -j REDIRECT --to-ports 5355
+-A PREROUTING -i br-lan_10 -p udp -m udp --dport 53 -j REDIRECT --to-ports 5355
+-A PREROUTING -i br-lan -p tcp -m tcp --dport 853 -j REDIRECT --to-ports 5355
 -A PREROUTING -i br-lan_99 -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354
+-A PREROUTING -i br-lan -p tcp -m tcp --dport 80 -j REDIRECT --to-ports 3128
 PSRRULEEOF
 
 PSR_N="$(prune_stale_redirects 5354)"
 PSR_LEFT="$(cat "$IPT_STORE")"
 
-assert_eq "the rule for a bridge that is gone is counted as removed" "1" "$PSR_N"
-assert_not_contains "and it is gone from the table" "$PSR_LEFT" '-i br-lan_99 '
+# The four that cannot work: three pointing at 5355, one on a bridge that is
+# gone. Removing them is the whole point.
+assert_eq "four unusable rules are removed" "4" "$PSR_N"
+assert_not_contains "no rule points at the old port any more" "$PSR_LEFT" '5355'
+assert_not_contains "the vanished bridge's rule is gone" "$PSR_LEFT" '-i br-lan_99 '
 
-# A prune that takes out a working rule is worse than the bug it fixes.
-assert_contains "the current bridge's rule survives" "$PSR_LEFT" '-i br-lan '
-assert_contains "the VLAN's rule survives" "$PSR_LEFT" '-i br-lan_10 '
+# And the three that do work are untouched. A prune that takes these out is
+# worse than the bug it fixes.
+assert_contains "the current udp rule survives" "$PSR_LEFT" \
+    '-i br-lan -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354$'
+assert_contains "the current tcp rule survives" "$PSR_LEFT" \
+    '-i br-lan -p tcp -m tcp --dport 53 -j REDIRECT --to-ports 5354$'
+assert_contains "the VLAN's current rule survives" "$PSR_LEFT" \
+    '-i br-lan_10 -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354$'
+
+# Nothing outside ports 53 and 853 is ours to touch, whatever it redirects to.
+assert_contains "someone else's proxy redirect is left alone" "$PSR_LEFT" \
+    '--dport 80 -j REDIRECT --to-ports 3128$'
 
 # Running it again must be a no-op rather than finding new things to delete.
 assert_eq "a second run removes nothing" "0" "$(prune_stale_redirects 5354)"
@@ -3103,6 +3122,67 @@ assert_eq "a second run removes nothing" "0" "$(prune_stale_redirects 5354)"
 PATH="$PSR_SAVED_PATH"
 if [ -n "$PSR_SAVED_IFACES" ]; then LAN_IFACES="$PSR_SAVED_IFACES"; else unset LAN_IFACES; fi
 unset IPT_STORE
+
+# uninstall.sh must sweep every port too. It worked from DNS_PORT alone, so an
+# uninstall left every rule from a port the install had used earlier: pointing
+# at a closed port, with this project removed and nothing left to explain them.
+assert_true "uninstall sweeps every DNS redirect, not one port" \
+    code_grep "$SCRIPT_DIR/uninstall.sh" 'dns_redirect_rules | while read'
+assert_false "uninstall no longer sweeps by the recorded port alone" \
+    code_grep "$SCRIPT_DIR/uninstall.sh" -- '--to-ports \${DNS_PORT}'
+
+describe "audit.sh — a redirect pointing at a port nothing listens on"
+
+# The drift this project could not see. audit.sh's coverage count and
+# status.sh's bridge check both selected rules by the current port first, so a
+# rule left over from a previous port was invisible to every check while it sat
+# above the working ones in PREROUTING and took all the traffic.
+#
+# An outcome test on audit.sh's real output, so it runs off-device like its
+# neighbours: a fake iptables-save supplies the table.
+APD_BIN="$TMPDIR/apdbin"; mkdir -p "$APD_BIN"
+for _as in uci iptables ip nslookup logread pidof netstat crontab; do
+    printf '#!/bin/sh\nexit 1\n' > "$APD_BIN/$_as"; chmod +x "$APD_BIN/$_as"
+done
+APD_TABLE="$TMPDIR/apd.rules"; export APD_TABLE
+cat > "$APD_BIN/iptables-save" << 'APDSAVEEOF'
+#!/bin/sh
+cat "$APD_TABLE" 2>/dev/null
+APDSAVEEOF
+chmod +x "$APD_BIN/iptables-save"
+
+# One rule on the port in use and one left behind on a port that moved.
+cat > "$APD_TABLE" << 'APDSTALEEOF'
+-A PREROUTING -i br-lan -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354
+-A PREROUTING -i br-lan -p udp -m udp --dport 53 -j REDIRECT --to-ports 5355
+APDSTALEEOF
+APD_OUT="$(PATH="$APD_BIN:$PATH" DNS_PORT=5354 CTRLD_VERSION=1.5.7 \
+    sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+assert_contains "the leftover rule is reported" \
+    "$APD_OUT" "port nothing listens on"
+assert_contains "and it is named by bridge and port" "$APD_OUT" "br-lan->5355"
+
+# Drift, not review: DNS is down for that bridge's clients until it is removed.
+cat > "$APD_TABLE" << 'APDOKEOF'
+-A PREROUTING -i br-lan -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354
+APDOKEOF
+APD_OK="$(PATH="$APD_BIN:$PATH" DNS_PORT=5354 CTRLD_VERSION=1.5.7 \
+    sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+assert_eq "the leftover rule adds exactly one drift item" \
+    "$(( $(audit_drift_count "$APD_OK") + 1 ))" "$(audit_drift_count "$APD_OUT")"
+assert_not_contains "a table with only current rules is clean" \
+    "$APD_OK" "port nothing listens on"
+
+# A redirect on some other port is not ours, whatever it points at.
+cat > "$APD_TABLE" << 'APDFOREIGNEOF'
+-A PREROUTING -i br-lan -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354
+-A PREROUTING -i br-lan -p tcp -m tcp --dport 80 -j REDIRECT --to-ports 3128
+APDFOREIGNEOF
+APD_FOREIGN="$(PATH="$APD_BIN:$PATH" DNS_PORT=5354 CTRLD_VERSION=1.5.7 \
+    sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+assert_not_contains "someone else's proxy redirect is not reported as ours" \
+    "$APD_FOREIGN" "port nothing listens on"
+unset APD_TABLE
 
 describe "reset_fallback_resolver() — an uninstall must clear every instance"
 

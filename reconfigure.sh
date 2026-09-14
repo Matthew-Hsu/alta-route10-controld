@@ -598,11 +598,15 @@ do_repair() {
         print_info "All LAN bridges already had a redirect rule"
     fi
 
+    # After ensure_iptables, so the working rules are in place before anything
+    # is taken out. A rule on a bridge that is gone is inert; one pointing at a
+    # port this install does not listen on is not, because PREROUTING is
+    # evaluated in order and it can sit above the rules just added.
     _pruned="$(prune_stale_redirects "$DNS_PORT")"
     if [ "${_pruned:-0}" -gt 0 ]; then
-        print_ok "Removed ${_pruned} stale rule(s) for bridges that no longer exist"
+        print_ok "Removed ${_pruned} rule(s) for a removed bridge or an unused port"
     else
-        print_info "No stale rules from removed bridges"
+        print_info "No stale rules from removed bridges or earlier ports"
     fi
 
     if ensure_firewall_user_rules "$DNS_PORT"; then

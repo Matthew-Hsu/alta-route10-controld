@@ -1197,21 +1197,32 @@ prune_stale_redirects() {
     _psr_rules="$(iptables-save -t nat 2>/dev/null | grep '^-A PREROUTING' \
         | grep -- "--to-ports ${_psr_port}")"
     _psr_n=0
-    if [ -n "$_psr_rules" ]; then
-        _psr_ifs="$IFS"
-        IFS='
-'
-        for _psr_rule in $_psr_rules; do
-            _psr_if="$(printf '%s\n' "$_psr_rule" | sed -n 's/.* -i \([^ ]*\).*/\1/p')"
-            [ -n "$_psr_if" ] || continue
-            case "$_psr_keep" in *" ${_psr_if} "*) continue ;; esac
-            # shellcheck disable=SC2086  # the saved rule spec must word-split
-            if iptables -t nat -D PREROUTING ${_psr_rule#-A PREROUTING } 2>/dev/null; then
-                _psr_n=$((_psr_n + 1))
-            fi
-        done
-        IFS="$_psr_ifs"
-    fi
+    # Read through a here-document, not `IFS=<newline>` around a for loop and
+    # not a pipeline.
+    #
+    # The IFS form could never delete anything. Inside that loop IFS was a
+    # newline, so the unquoted rule spec below split on newlines rather than
+    # spaces and the whole of "-i br-lan -p udp ... --to-ports 5354" reached
+    # iptables as a single argument, which it rejects. The directive saying the
+    # spec must word-split was defeated by the IFS the loop itself needed, and
+    # the function reported 0 removed for every rule it correctly identified.
+    # `IFS= read` scopes that to the read alone, so the body splits normally.
+    #
+    # And a here-document rather than a pipe, because `while read` on the right
+    # of a pipe runs in a subshell in ash: the count would be incremented there
+    # and lost on the way out.
+    while IFS= read -r _psr_rule; do
+        [ -n "$_psr_rule" ] || continue
+        _psr_if="$(printf '%s\n' "$_psr_rule" | sed -n 's/.* -i \([^ ]*\).*/\1/p')"
+        [ -n "$_psr_if" ] || continue
+        case "$_psr_keep" in *" ${_psr_if} "*) continue ;; esac
+        # shellcheck disable=SC2086  # the saved rule spec must word-split
+        if iptables -t nat -D PREROUTING ${_psr_rule#-A PREROUTING } 2>/dev/null; then
+            _psr_n=$((_psr_n + 1))
+        fi
+    done <<PSREOF
+$_psr_rules
+PSREOF
     printf '%s' "$_psr_n"
 }
 

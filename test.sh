@@ -1833,12 +1833,13 @@ for _bp in doh3 doq doh dot; do
     assert_contains "reconfigure.sh --benchmark actually probes ${_bp}" "$RB_PROBED" "PROBED:${_bp}$"
 done
 
-# setup.sh's inline benchmark is deliberately narrower, and nothing is
-# installed when it runs, so there is no running protocol for it to misreport.
-# This one pins a decision rather than behaviour: it is here so the difference
-# stays deliberate, and it is not evidence that the installer measures anything.
+# setup.sh's inline benchmark measures the same four, because its menu now
+# offers the same four. The two sets have to stay equal in both directions: a
+# protocol benchmarked but not listed is one the installer could hand someone
+# who never saw it, and a protocol listed but not benchmarked is one "pick the
+# fastest" can never pick.
 SSET="$(code_only "$SCRIPT_DIR/setup.sh" | sed -n 's/^[[:space:]]*for BPROTO in \(.*\); do$/\1/p' | head -1)"
-assert_eq "the installer's menu still benchmarks only what it lists" "doq doh3 doh" "$SSET"
+assert_eq "the installer benchmarks the same four as everything else" "doq doh3 doh dot" "$SSET"
 
 # And the README's copy of that menu has to list the same protocols. It said
 # option 4 tested "all protocols" while the installer tested three, which reads
@@ -1920,7 +1921,12 @@ SW_OUT="$( (
     RESOLVER_ID=abc123; BOOTSTRAP_IP=76.76.2.22
     BENCH_QUERIES=1; BENCH_FASTEST_MS=999999; BENCH_FASTEST=""
     bench_protocol() {
-        case "$1" in doq) BENCH_AVG=40 ;; doh3) BENCH_AVG=30 ;; *) BENCH_AVG=20 ;; esac
+        case "$1" in
+            doq)  BENCH_AVG=40 ;;
+            doh3) BENCH_AVG=30 ;;
+            doh)  BENCH_AVG=20 ;;
+            *)    BENCH_AVG=10 ;;
+        esac
         BENCH_OK=1; BENCH_FAIL=0; return 0
     }
     eval "$SW_SRC"
@@ -1928,7 +1934,7 @@ SW_OUT="$( (
 ) 2>&1 </dev/null || true )"
 assert_eq "the installer marks no row either" "0" \
     "$(printf '%s\n' "$SW_OUT" | grep -c -e '<--' || true)"
-assert_contains "and still picks the fastest it measured" "$SW_OUT" "WINNER:doh$"
+assert_contains "and picks DoT when DoT is the fastest it measured" "$SW_OUT" "WINNER:dot$"
 
 describe "bench_stop() — never the production resolver"
 

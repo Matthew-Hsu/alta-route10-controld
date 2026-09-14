@@ -465,17 +465,15 @@ During setup, each protocol is presented with detailed information:
   1) DoH3 (HTTP/3)   : Port 443, UDP/QUIC. Stealthy, fast, widely compatible.
   2) DoQ  (QUIC)     : Port 853, UDP/QUIC. Dedicated DNS port, lower overhead.
   3) DoH  (HTTP/2)   : Port 443, TCP+TLS. Most compatible fallback.
-  4) Benchmark       : Test these three and auto-select the fastest.
+  4) DoT  (TLS)      : Port 853, TCP+TLS. Oldest, most widely supported.
+  5) Benchmark       : Test all four and auto-select the fastest.
 ```
 
-Option 4 runs a quick benchmark (10 queries per protocol) and automatically configures the winner.
+Option 5 runs a quick benchmark (10 queries per protocol, about 40 seconds) and automatically configures the winner.
 
-**DoT is not offered here**, and the benchmark at option 4 does not measure it. Option 4 has to pick from the list you just read, so measuring a fourth protocol would hand someone who chose "pick one for me" a protocol that was never on offer. DoT is on port 853, the same port DoQ uses and the same one some networks block, so it is not a transport this list is missing — and `benchmark.sh` and `reconfigure.sh --benchmark` do measure all four once you are installed:
+All four protocols the project supports are offered here, and option 5 measures all four — the same set `benchmark.sh` and `reconfigure.sh --benchmark` measure. The two have to match in both directions: a protocol the benchmark measures but the menu does not list is one the installer could select for someone who never saw it, and a protocol the menu lists but the benchmark skips is one "pick the fastest for me" could never pick.
 
-```sh
-sh /cfg/benchmark.sh                          # times DoQ, DoH3, DoH and DoT
-sh /cfg/reconfigure.sh --protocol --to dot    # switch to it
-```
+**The port is the tradeoff, not the encryption.** All four encrypt your DNS. DoH3 and DoH ride port 443 and blend with ordinary HTTPS, so they are almost never blocked. DoQ and DoT use port 853, a dedicated DNS port some ISPs and mobile networks block outright — which is why the automatic fallback chain only ever targets 443. If you are unsure, option 1 or option 5.
 
 #### Quick Reconfigure
 
@@ -658,11 +656,11 @@ sh benchmark.sh --queries 30 # more queries for accuracy
 
 Tests every protocol that can be a primary (DoQ, DoH3, DoH and DoT) with real DNS lookups on a separate port (5360) so production DNS is not disrupted. Outputs a formatted table and recommends the fastest protocol.
 
-`reconfigure.sh --benchmark` runs the same code over the same four protocols.
-The installer's menu option 4 shares that code but measures only the three it
-offers by number, since nothing is installed yet and there is no running
-protocol to compare against. None of the three entry points interrupts DNS for
-the LAN.
+`reconfigure.sh --benchmark` and the installer's menu option 5 run the same
+code over the same four protocols. The installer prints no "switch to X"
+recommendation, because nothing is installed yet and there is no running
+protocol to compare against — it simply selects the winner. None of the three
+entry points interrupts DNS for the LAN.
 
 #### Fallback Safety
 

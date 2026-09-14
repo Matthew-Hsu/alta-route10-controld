@@ -36,7 +36,8 @@ assert_eq() {
     fi
 }
 
-# The haystack reaches grep through printf, never echo.
+# The haystack reaches grep through printf, never echo, and the needle through
+# -e, never as a bare operand.
 #
 # dash's echo expands backslash escapes and BusyBox ash's does not, so a
 # haystack carrying a literal "\033" arrives at grep as an escape character in
@@ -44,10 +45,18 @@ assert_eq() {
 # backslash in it therefore tested something different in each place, which is
 # the one failure mode this suite exists to rule out. printf '%s\n' passes the
 # string through unchanged in every shell.
+#
+# And a needle is a pattern, not an option. Without -e, one beginning with a
+# dash is parsed by grep as a flag: `assert_contains` then fails for a reason
+# that has nothing to do with the haystack, and `assert_not_contains` passes
+# whatever the haystack holds, because grep exits non-zero either way. An
+# assertion over an iptables rule spec or a command line is the obvious case,
+# and it is the second time a helper in this file has been able to report a
+# pass it never earned.
 assert_contains() {
     TOTAL=$((TOTAL + 1))
     local desc="$1" haystack="$2" needle="$3"
-    if printf '%s\n' "$haystack" | grep -q "$needle"; then
+    if printf '%s\n' "$haystack" | grep -q -e "$needle"; then
         PASS=$((PASS + 1))
         printf "    ${GREEN}PASS${RESET}  %s\n" "$desc"
     else
@@ -59,7 +68,7 @@ assert_contains() {
 assert_not_contains() {
     TOTAL=$((TOTAL + 1))
     local desc="$1" haystack="$2" needle="$3"
-    if printf '%s\n' "$haystack" | grep -q "$needle"; then
+    if printf '%s\n' "$haystack" | grep -q -e "$needle"; then
         FAIL=$((FAIL + 1))
         printf "    ${RED}FAIL${RESET}  %s\n  string should not contain: '%s'\n" "$desc" "$needle"
     else
@@ -71,7 +80,7 @@ assert_not_contains() {
 assert_match() {
     TOTAL=$((TOTAL + 1))
     local desc="$1" actual="$2" pattern="$3"
-    if printf '%s\n' "$actual" | grep -qE "$pattern"; then
+    if printf '%s\n' "$actual" | grep -qE -e "$pattern"; then
         PASS=$((PASS + 1))
         printf "    ${GREEN}PASS${RESET}  %s\n" "$desc"
     else
@@ -83,7 +92,7 @@ assert_match() {
 assert_file_contains() {
     TOTAL=$((TOTAL + 1))
     local desc="$1" file="$2" pattern="$3"
-    if [ -f "$file" ] && grep -q "$pattern" "$file"; then
+    if [ -f "$file" ] && grep -q -e "$pattern" "$file"; then
         PASS=$((PASS + 1))
         printf "    ${GREEN}PASS${RESET}  %s\n" "$desc"
     else
@@ -167,6 +176,24 @@ printf "  ${BOLD}═════════════════════
 # ══════════════════════════════════════════════════════════════════
 # UNIT TESTS: lib.sh functions
 # ══════════════════════════════════════════════════════════════════
+
+describe "the assertion helpers — a needle that begins with a dash"
+
+# grep takes the needle as a pattern via -e. Without it, a needle beginning
+# with a dash is parsed as a flag and grep exits non-zero whatever the haystack
+# holds: assert_contains failed for the wrong reason, and assert_not_contains
+# reported a pass for a needle that was plainly there. An iptables rule spec is
+# the obvious haystack, and this suite now asserts over several.
+#
+# Each probe runs in a command substitution, so its subshell's counters are
+# discarded and only its verdict is examined here.
+AH_HAY='-A PREROUTING -i br-lan_99 -p udp --dport 53 -j REDIRECT'
+assert_contains "assert_not_contains fails on a dash-led needle that is present" \
+    "$(assert_not_contains probe "$AH_HAY" '-i br-lan_99')" "FAIL"
+assert_contains "assert_contains passes on a dash-led needle that is present" \
+    "$(assert_contains probe "$AH_HAY" '-i br-lan_99')" "PASS"
+assert_contains "assert_contains fails on a dash-led needle that is absent" \
+    "$(assert_contains probe "$AH_HAY" '-i br-lan_7 ')" "FAIL"
 
 describe "get_endpoint() — endpoint URL generation"
 assert_eq "DoQ endpoint"    "abc123.dns.controld.com" "$(get_endpoint doq abc123)"

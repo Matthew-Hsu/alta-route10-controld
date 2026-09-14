@@ -319,11 +319,54 @@ describe "dns_redirect_commands() — firewall.user rules"
 cmds="$(SYSFS_NET="$FAKE_NET" dns_redirect_commands 5354 53)"
 assert_eq "one rule per bridge per protocol" "8" "$(printf '%s\n' "$cmds" | wc -l | tr -d ' ')"
 assert_contains "covers VLAN 10 on udp" "$cmds" \
-    "PREROUTING -i br-lan_10 -p udp --dport 53 -j REDIRECT --to-port 5354"
+    "PREROUTING 1 -i br-lan_10 -p udp --dport 53 -j REDIRECT --to-port 5354"
 assert_contains "covers VLAN 20 on tcp" "$cmds" \
-    "PREROUTING -i br-lan_20 -p tcp --dport 53 -j REDIRECT --to-port 5354"
+    "PREROUTING 1 -i br-lan_20 -p tcp --dport 53 -j REDIRECT --to-port 5354"
 both="$(SYSFS_NET="$FAKE_NET" dns_redirect_commands 5354 53 853)"
 assert_eq "port 853 doubles the rule count" "16" "$(printf '%s\n' "$both" | wc -l | tr -d ' ')"
+
+# Every line inserts at the head. firewall.user runs after fw3 has rebuilt its
+# chains, so an appended rule lands below the zone chains — and one of those
+# carries https-dns-proxy's own port-53 redirect, which then takes the traffic.
+# Appending here would undo on the next firewall reload whatever precedence the
+# live insertion established.
+assert_eq "every restored rule inserts at the head" "16" \
+    "$(printf '%s\n' "$both" | grep -c -e '-I PREROUTING 1')"
+assert_not_contains "none is appended below the zone chains" "$both" '\-A PREROUTING'
+
+describe "ensure_iptables() — port 53 must outrank the firewall zone chains"
+
+# An appended REDIRECT sits below the zone chains fw3 builds, and
+# https-dns-proxy's package redirect lives in one of them, taking port 53 to
+# dnsmasq before our rule is reached. Found on a router where one zone covered
+# three of six bridges: correct rules, healthy status.sh, clean audit.sh, and
+# 45,563 queries answered by the wrong resolver. Inserting the same rule at the
+# head took 42 packets within seconds.
+#
+# The 853 hijack already inserted, with a comment saying why. Port 53 — the
+# path every client actually uses — did not.
+EI_BIN="$TMPDIR/eibin"; mkdir -p "$EI_BIN"
+EI_LOG="$TMPDIR/ei.log"; export EI_LOG
+cat > "$EI_BIN/iptables" << 'EIEOF'
+#!/bin/sh
+# -C is the "does this rule exist" probe: say no, so the add path runs.
+for _a in "$@"; do [ "$_a" = "-C" ] && exit 1; done
+printf '%s\n' "$*" >> "$EI_LOG"
+exit 0
+EIEOF
+chmod +x "$EI_BIN/iptables"
+: > "$EI_LOG"
+( PATH="$EI_BIN:$PATH"; LAN_IFACES="br-lan br-lan_10"; ensure_iptables 5354 ) >/dev/null 2>&1
+EI_ADDS="$(cat "$EI_LOG" 2>/dev/null)"
+
+assert_eq "one rule added per bridge per protocol" "4" \
+    "$(printf '%s\n' "$EI_ADDS" | grep -c 'PREROUTING')"
+assert_eq "and every one of them inserts at the head" "4" \
+    "$(printf '%s\n' "$EI_ADDS" | grep -c -e '-I PREROUTING 1')"
+assert_not_contains "nothing is appended" "$EI_ADDS" '\-A PREROUTING'
+assert_contains "the VLAN bridge is covered on udp" "$EI_ADDS" \
+    '-I PREROUTING 1 -i br-lan_10 -p udp --dport 53 -j REDIRECT --to-port 5354'
+unset EI_LOG
 
 describe "replace_block() / read_block() / remove_block()"
 BLOCK_FILE="$TMPDIR/firewall.user"

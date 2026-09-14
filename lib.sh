@@ -1133,9 +1133,14 @@ dns_redirect_commands() {
     _drc_to="$1"; shift
     for _drc_if in $(lan_ifaces); do
         for _drc_dport in "$@"; do
-            printf 'iptables -t nat -A PREROUTING -i %s -p udp --dport %s -j REDIRECT --to-port %s\n' \
+            # -I ... 1, matching ensure_iptables. firewall.user runs after fw3
+            # has rebuilt its chains, so appending here would put every rule
+            # back below the zone chains on the next firewall reload and undo
+            # the precedence live insertion just established — including the
+            # 853 hijack, which was inserted live and appended here.
+            printf 'iptables -t nat -I PREROUTING 1 -i %s -p udp --dport %s -j REDIRECT --to-port %s\n' \
                 "$_drc_if" "$_drc_dport" "$_drc_to"
-            printf 'iptables -t nat -A PREROUTING -i %s -p tcp --dport %s -j REDIRECT --to-port %s\n' \
+            printf 'iptables -t nat -I PREROUTING 1 -i %s -p tcp --dport %s -j REDIRECT --to-port %s\n' \
                 "$_drc_if" "$_drc_dport" "$_drc_to"
         done
     done
@@ -1151,9 +1156,19 @@ ensure_iptables() {
     local port="${1:-$DNS_PORT}"
     local added=0
     local iface
+    # insert, not append. An appended rule sits below the firewall zone chains
+    # fw3 builds, and https-dns-proxy's own package redirect lives in one of
+    # them: it takes port 53 to dnsmasq before our rule is ever reached. On a
+    # router where one zone covered three of six bridges, those three showed
+    # correct rules, a healthy status.sh and a clean audit.sh while 45,563
+    # queries went to the wrong resolver — encrypted still, through the
+    # fallback, but with no per-device visibility, which is the whole point.
+    #
+    # The 853 hijack already inserted for exactly this reason. Port 53 is the
+    # path every client uses and had no such protection.
     for iface in $(lan_ifaces); do
-        if ensure_redirect_rule append "$iface" udp 53 "$port"; then added=$((added + 1)); fi
-        if ensure_redirect_rule append "$iface" tcp 53 "$port"; then added=$((added + 1)); fi
+        if ensure_redirect_rule insert "$iface" udp 53 "$port"; then added=$((added + 1)); fi
+        if ensure_redirect_rule insert "$iface" tcp 53 "$port"; then added=$((added + 1)); fi
     done
     if [ "$added" -gt 0 ]; then
         # Rules are back, so whatever tore them down is no longer true
@@ -1336,7 +1351,9 @@ ensure_firewall_user_rules() {
         sed -i -e '/controld-forced-dns-853/d' \
                -e '/ControlD per-device DNS redirect/d' \
                -e '/^iptables -t nat -A PREROUTING -i br-lan.*--dport 53 -j REDIRECT --to-port/d' \
-               -e '/^iptables -t nat -A PREROUTING -i br-lan.*--dport 853 -j REDIRECT --to-port/d' "$_efu_file"
+               -e '/^iptables -t nat -A PREROUTING -i br-lan.*--dport 853 -j REDIRECT --to-port/d' \
+               -e '/^iptables -t nat -I PREROUTING 1 -i br-lan.*--dport 53 -j REDIRECT --to-port/d' \
+               -e '/^iptables -t nat -I PREROUTING 1 -i br-lan.*--dport 853 -j REDIRECT --to-port/d' "$_efu_file"
     fi
     printf '%s\n' "$_efu_want" | replace_block "$_efu_file" "$FW_MARKER"
     logger -t controld "firewall.user DNS redirect rules updated ($(lan_ifaces | tr '\n' ' '))"

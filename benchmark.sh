@@ -150,16 +150,18 @@ for proto in $PROTOCOLS; do
     else
         results_found=$((results_found + 1))
 
-        # Highlight fastest so far
+        # No winner marked on the row. Rows print as each protocol finishes, so
+        # the most that can be known here is the best so far, and marking that
+        # "<-- fastest" labelled every row of a run whose times happened to
+        # improve: on a four-protocol table three rows claimed to be the
+        # fastest one. The winner is named once, under the table, where it is
+        # actually known.
         if [ "$BENCH_AVG" -lt "$fastest_ms" ]; then
             fastest_ms=$BENCH_AVG
             fastest_proto=$proto
-            printf "  %-14s ${GREEN}%-10s${RESET} %-12s %-10s  ${DIM}<-- fastest${RESET}\n" \
-                "$label" "${BENCH_AVG}ms" "${BENCH_OK}/${QUERIES}" "${BENCH_FAIL}"
-        else
-            printf "  %-14s ${BOLD}%-10s${RESET} %-12s %-10s\n" \
-                "$label" "${BENCH_AVG}ms" "${BENCH_OK}/${QUERIES}" "${BENCH_FAIL}"
         fi
+        printf "  %-14s ${BOLD}%-10s${RESET} %-12s %-10s\n" \
+            "$label" "${BENCH_AVG}ms" "${BENCH_OK}/${QUERIES}" "${BENCH_FAIL}"
     fi
 done
 

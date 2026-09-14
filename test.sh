@@ -1,7 +1,7 @@
 #!/bin/sh
 # test.sh: comprehensive test suite for Alta Route 10 + ControlD
 # Run locally: sh test.sh
-# Run on router: sh /cfg/test.sh
+# Run on router: sh /tmp/controld/test.sh   (a copy of the repo, not /cfg)
 
 set -e
 
@@ -158,6 +158,32 @@ skip() {
 # ── Setup ──
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# This suite reads the project's sources, not only the installed runtime: a
+# score of describe blocks extract from setup.sh, and one compares README.md's
+# protocol menu against the installer's own. An install puts lib.sh and five
+# utility scripts into /cfg and nothing else, so running from there read files
+# that were not there — and `set -e` turns a failed command substitution in an
+# assignment into an exit. The suite died at assertion 420 of ~700 with exit 2
+# and no summary at all, after 38 failures that were one missing file wearing
+# different hats. A long stream of PASS lines ending at a prompt reads like
+# success.
+#
+# Fail here instead, before a single assertion runs, and say what to do. This
+# is why CONTRIBUTING.md's on-router step is a copy of the repo.
+_ts_missing=""
+for _ts_need in lib.sh setup.sh status.sh benchmark.sh reconfigure.sh \
+                audit.sh uninstall.sh README.md; do
+    [ -f "$SCRIPT_DIR/$_ts_need" ] || _ts_missing="${_ts_missing} ${_ts_need}"
+done
+if [ -n "$_ts_missing" ]; then
+    echo "test.sh needs the project's sources beside it. Missing:${_ts_missing}" >&2
+    echo "An install does not put them all in /cfg. Run from a copy of the repo:" >&2
+    echo "  scp *.sh README.md route10:/tmp/controld/" >&2
+    echo "  ssh route10 'sh /tmp/controld/test.sh'" >&2
+    exit 1
+fi
+
 TMPDIR=$(mktemp -d 2>/dev/null || echo "/tmp/controld-test-$$")
 mkdir -p "$TMPDIR"
 
@@ -1687,8 +1713,8 @@ describe "lib.sh carries no dead code"
 # Usage comment: another script, a doc, or a test.
 # The file list is built from globs, using no external tool at all: BusyBox
 # grep has no --include, so `grep -r --include` failed on every real router
-# while passing in CI, and CONTRIBUTING.md documents `sh /cfg/test.sh` as an
-# on-router step. find would work but is one more implementation to depend on.
+# while passing in CI, and CONTRIBUTING.md documents running this suite on the
+# router, from a copy of the repo at /tmp/controld. find would work but is one more implementation to depend on.
 LIB_SCAN=""
 for _lp in "$SCRIPT_DIR"/*.sh "$SCRIPT_DIR"/*.md "$SCRIPT_DIR"/docs/*.md \
            "$SCRIPT_DIR"/config/*.example; do
@@ -3434,6 +3460,36 @@ PATH="$PSR_SAVED_PATH"
 if [ -n "$PSR_SAVED_IFACES" ]; then LAN_IFACES="$PSR_SAVED_IFACES"; else unset LAN_IFACES; fi
 unset IPT_STORE
 
+describe "the suite must refuse a partial checkout, not die inside one"
+
+# Run where setup.sh is absent — which is what /cfg is, since an install puts
+# lib.sh and five utility scripts there and nothing else — the suite used to
+# get 420 assertions in and then exit 2 from a failed command substitution
+# under set -e, printing no summary. 38 of the failures before it were the same
+# missing file. Someone reading a wall of PASS lines that stops at a prompt has
+# no reason to think anything went wrong.
+#
+# A partial tree is built and the real suite is run inside it. The preflight
+# makes this cheap: it exits before the first assertion.
+PF_DIR="$TMPDIR/partial"
+mkdir -p "$PF_DIR"
+for _pf in lib.sh test.sh status.sh benchmark.sh reconfigure.sh audit.sh uninstall.sh README.md; do
+    cp "$SCRIPT_DIR/$_pf" "$PF_DIR/$_pf"
+done
+# Everything but setup.sh, exactly as an install leaves it.
+PF_OUT="$( cd "$PF_DIR" && sh ./test.sh 2>&1 </dev/null )" && PF_RC=0 || PF_RC=$?
+
+assert_eq "a missing source is refused, not stumbled over" "1" "$PF_RC"
+assert_contains "it names the file that is missing" "$PF_OUT" "setup.sh"
+assert_contains "and says where the suite is meant to run" "$PF_OUT" "/tmp/controld"
+assert_not_contains "no assertion runs at all" "$PF_OUT" "PASS"
+assert_not_contains "so nothing fails for the wrong reason" "$PF_OUT" "FAIL"
+
+# No companion check that a complete tree still runs: the copy above is this
+# suite, so a nested full run re-enters this very block and recurses until it
+# is killed. The outer run is that check — it has every source beside it and is
+# executing these assertions right now.
+
 describe "the readouts must report interception, not rule presence"
 
 # status.sh printed "per-device visibility enabled" from a rule count, and
@@ -3847,8 +3903,8 @@ else
     # waits on `while ! ping -c1 "$BOOTSTRAP_IP"` with no attempt limit, so if
     # the bootstrap host does not answer ICMP this never returns; interrupting
     # it then skips the restore below and leaves the config as post-cfg
-    # regenerated it. CONTRIBUTING.md documents `sh /cfg/test.sh` as a routine
-    # step, and a routine step must not do any of that.
+    # regenerated it. CONTRIBUTING.md documents running this suite on the
+    # router as a routine step, and a routine step must not do any of that.
     if [ "${CONTROLD_TEST_DESTRUCTIVE:-0}" = "1" ]; then
         BACKUP_TOML=$(cat /cfg/ctrld.toml)
         rm /cfg/ctrld.toml

@@ -1840,6 +1840,19 @@ done
 SSET="$(code_only "$SCRIPT_DIR/setup.sh" | sed -n 's/^[[:space:]]*for BPROTO in \(.*\); do$/\1/p' | head -1)"
 assert_eq "the installer's menu still benchmarks only what it lists" "doq doh3 doh" "$SSET"
 
+# And the README's copy of that menu has to list the same protocols. It said
+# option 4 tested "all protocols" while the installer tested three, which reads
+# as a promise that a DoT install is one menu choice away. Compared as sets, so
+# neither the menu's order nor the README's wording is pinned.
+SMENU="$(code_only "$SCRIPT_DIR/setup.sh" \
+    | sed -n '/read -r PROTO_CHOICE/,/^[[:space:]]*esac/p' \
+    | sed -n 's/^[[:space:]]*[0-9])[[:space:]]*DNS_TYPE="\([a-z0-9]*\)".*/\1/p' \
+    | sort -u | tr '\n' ' ')"
+RMENU="$(sed -n '/^#### Guided Protocol Selection/,/^Option 4 runs/p' "$SCRIPT_DIR/README.md" \
+    | sed -n 's/^[[:space:]]*[0-9])[[:space:]]*\(Do[A-Za-z0-9]*\).*/\1/p' \
+    | tr 'A-Z' 'a-z' | sort -u | tr '\n' ' ')"
+assert_eq "the README's menu lists what the installer offers" "$SMENU" "$RMENU"
+
 describe "a benchmark table must name one winner, not one per row"
 
 # Rows print as each protocol finishes, so at the time a row is written the

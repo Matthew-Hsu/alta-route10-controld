@@ -1840,6 +1840,83 @@ done
 SSET="$(code_only "$SCRIPT_DIR/setup.sh" | sed -n 's/^[[:space:]]*for BPROTO in \(.*\); do$/\1/p' | head -1)"
 assert_eq "the installer's menu still benchmarks only what it lists" "doq doh3 doh" "$SSET"
 
+describe "a benchmark table must name one winner, not one per row"
+
+# Rows print as each protocol finishes, so at the time a row is written the
+# most that is known is the best so far. All three benchmarks marked that
+# "<-- fastest", which is correct only if every later protocol is slower: on a
+# run whose times improve, every row claimed to be the fastest one. A
+# four-protocol table could say it three times, and the reader has no way to
+# tell which claim was the surviving one.
+#
+# Times descend here in probe order, which is the case that produced it. The
+# real bench_protocol is the only part needing ctrld and a network, so stubbing
+# just that runs the real loop and asserts what a user would read.
+BW_DIR="$TMPDIR/benchwin"
+mkdir -p "$BW_DIR"
+cp "$SCRIPT_DIR/benchmark.sh" "$BW_DIR/benchmark.sh"
+cat > "$BW_DIR/lib.sh" << BWLIBEOF
+. "$SCRIPT_DIR/lib.sh"
+load_env() { RESOLVER_ID=abc123; BOOTSTRAP_IP=76.76.2.22; DNS_TYPE=doh3; CTRLD_VERSION=1.5.7; return 0; }
+running_protocol() { printf 'doh3'; }
+# Probe order is doq doh3 doh dot, so every protocol beats the one before it.
+bench_protocol() {
+    case "\$1" in doq) BENCH_AVG=40 ;; doh3) BENCH_AVG=30 ;; doh) BENCH_AVG=20 ;; *) BENCH_AVG=10 ;; esac
+    BENCH_OK="\$4"; BENCH_FAIL=0; return 0
+}
+BWLIBEOF
+
+BW_OUT="$( cd "$BW_DIR" && sh ./benchmark.sh --queries 1 2>&1 </dev/null || true )"
+
+assert_eq "no row of an improving run claims to be the fastest" "0" \
+    "$(printf '%s\n' "$BW_OUT" | grep -c -e '<--' || true)"
+assert_contains "the winner is named once, under the table" "$BW_OUT" \
+    "Recommended: DoT (TLS)"
+assert_contains "with the time that won" "$BW_OUT" "10ms avg"
+# Every measured protocol is still in the table, marker or not.
+for _bw in 40 30 20 10; do
+    assert_contains "the ${_bw}ms row is still printed" "$BW_OUT" "${_bw}ms"
+done
+
+# reconfigure.sh --benchmark has the same table. DNS_TYPE is the winner, so it
+# reports "already fastest" and returns before the confirm prompt: otherwise it
+# blocks on read and the suite hangs rather than failing, which is worse than
+# either outcome.
+RW_SRC="$(code_only "$SCRIPT_DIR/reconfigure.sh" | sed -n '/^do_benchmark() {/,/^}$/p')"
+RW_OUT="$( (
+    . "$SCRIPT_DIR/lib.sh"
+    RESOLVER_ID=abc123; BOOTSTRAP_IP=76.76.2.22; DNS_TYPE="dot"; FORCE=0
+    bench_protocol() {
+        case "$1" in doq) BENCH_AVG=40 ;; doh3) BENCH_AVG=30 ;; doh) BENCH_AVG=20 ;; *) BENCH_AVG=10 ;; esac
+        BENCH_OK=1; BENCH_FAIL=0; return 0
+    }
+    eval "$RW_SRC"
+    do_benchmark
+) 2>&1 </dev/null || true )"
+assert_eq "reconfigure.sh marks no row either" "0" \
+    "$(printf '%s\n' "$RW_OUT" | grep -c -e '<--' || true)"
+assert_contains "and still names the winner once" "$RW_OUT" "already fastest"
+
+# setup.sh's inline benchmark prints the same table, and it is the one a new
+# install sees. Its loop is inside a case arm, so it is extracted and run
+# against the same stubs rather than by running the installer.
+SW_SRC="$(code_only "$SCRIPT_DIR/setup.sh" | sed -n '/^[[:space:]]*for BPROTO in/,/^[[:space:]]*done$/p')"
+assert_true "the installer's benchmark loop extracts" test -n "$SW_SRC"
+SW_OUT="$( (
+    . "$SCRIPT_DIR/lib.sh"
+    RESOLVER_ID=abc123; BOOTSTRAP_IP=76.76.2.22
+    BENCH_QUERIES=1; BENCH_FASTEST_MS=999999; BENCH_FASTEST=""
+    bench_protocol() {
+        case "$1" in doq) BENCH_AVG=40 ;; doh3) BENCH_AVG=30 ;; *) BENCH_AVG=20 ;; esac
+        BENCH_OK=1; BENCH_FAIL=0; return 0
+    }
+    eval "$SW_SRC"
+    printf 'WINNER:%s\n' "$BENCH_FASTEST"
+) 2>&1 </dev/null || true )"
+assert_eq "the installer marks no row either" "0" \
+    "$(printf '%s\n' "$SW_OUT" | grep -c -e '<--' || true)"
+assert_contains "and still picks the fastest it measured" "$SW_OUT" "WINNER:doh$"
+
 describe "bench_stop() — never the production resolver"
 
 # reconfigure.sh's benchmark ran `kill $(pidof ctrld)` before each of three

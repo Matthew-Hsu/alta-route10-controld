@@ -283,13 +283,14 @@ if [ -z "$DNS_TYPE" ]; then
                     printf "  %-18s ${RED}FAILED${RESET}  (%s/%s succeeded)\n" "$BLABEL" "$BENCH_OK" "$BENCH_QUERIES"
                     continue
                 fi
+                # Named under the table, not on a row: a row is printed
+                # before the rest have been measured, so "<-- fastest" on the
+                # best so far claimed it for every row of an improving run.
                 if [ "$BENCH_AVG" -lt "$BENCH_FASTEST_MS" ]; then
                     BENCH_FASTEST_MS=$BENCH_AVG
                     BENCH_FASTEST=$BPROTO
-                    printf "  %-18s ${GREEN}%dms${RESET} avg   %d/%d ok   ${DIM}<-- fastest${RESET}\n" "$BLABEL" "$BENCH_AVG" "$BENCH_OK" "$BENCH_QUERIES"
-                else
-                    printf "  %-18s ${BOLD}%dms${RESET} avg   %d/%d ok\n" "$BLABEL" "$BENCH_AVG" "$BENCH_OK" "$BENCH_QUERIES"
                 fi
+                printf "  %-18s ${BOLD}%dms${RESET} avg   %d/%d ok\n" "$BLABEL" "$BENCH_AVG" "$BENCH_OK" "$BENCH_QUERIES"
             done
 
             rm -f "$BENCH_CONF"

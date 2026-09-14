@@ -315,14 +315,15 @@ do_benchmark() {
             continue
         fi
 
+        # The winner is named under the table, not on a row: a row prints
+        # before the remaining protocols have been measured, so marking the
+        # best so far "<-- fastest" claimed it for every row of an improving
+        # run.
         if [ "$BENCH_AVG" -lt "$fastest_ms" ]; then
             fastest_ms=$BENCH_AVG; fastest=$proto
-            printf "  %-18s ${GREEN}%dms${RESET} avg   %d/%d ok   ${DIM}<-- fastest${RESET}\n" \
-                "$label" "$BENCH_AVG" "$BENCH_OK" "$bench_queries"
-        else
-            printf "  %-18s %dms avg   %d/%d ok\n" \
-                "$label" "$BENCH_AVG" "$BENCH_OK" "$bench_queries"
         fi
+        printf "  %-18s ${BOLD}%dms${RESET} avg   %d/%d ok\n" \
+            "$label" "$BENCH_AVG" "$BENCH_OK" "$bench_queries"
     done
 
     rm -f "$BENCH_CONF"

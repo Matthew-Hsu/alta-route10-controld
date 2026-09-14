@@ -3460,6 +3460,38 @@ PATH="$PSR_SAVED_PATH"
 if [ -n "$PSR_SAVED_IFACES" ]; then LAN_IFACES="$PSR_SAVED_IFACES"; else unset LAN_IFACES; fi
 unset IPT_STORE
 
+describe "CI must run on every pull request, not only ones based on master"
+
+# With `branches: [master]` on the pull_request trigger, a PR based on another
+# branch got no checks at all — not pending, not failing, simply absent. Three
+# PRs in this project's 1.10.0 stack sat that way, and the absence reads like
+# CI has not started yet. Retargeting one to master afterwards does not fire it
+# either: that is a pull_request "edited" event, outside the default activity
+# types, so the checks only appear on the next push.
+#
+# There is no behavioural test for a CI config — the runner is not here. What
+# is asserted is the one line whose absence caused it, in every workflow.
+for _wf in .github/workflows/ci.yml .forgejo/workflows/ci.yml \
+           .forgejo/workflows/secrets-scan.yml; do
+    if [ ! -f "$SCRIPT_DIR/$_wf" ]; then
+        skip "$_wf not found"
+        continue
+    fi
+    # The pull_request trigger and whatever is indented under it, up to the
+    # next top-level key.
+    _wf_pr="$(sed -n '/^  pull_request:/,/^[a-z]/p' "$SCRIPT_DIR/$_wf" | sed '$d')"
+    assert_true "$_wf has a pull_request trigger" test -n "$_wf_pr"
+    assert_not_contains "$_wf does not filter pull requests by branch" \
+        "$_wf_pr" "branches:"
+done
+
+# push stays filtered: a run per push to every feature branch would double
+# every PR's CI for nothing. Brackets escaped — an assertion needle is a regex,
+# and "[master]" unescaped matches any one of m, a, s, t, e or r.
+assert_contains "pushes are still limited to master" \
+    "$(sed -n '/^  push:/,/^  pull_request:/p' "$SCRIPT_DIR/.github/workflows/ci.yml")" \
+    'branches: \[master\]' 
+
 describe "the suite must refuse a partial checkout, not die inside one"
 
 # Run where setup.sh is absent — which is what /cfg is, since an install puts

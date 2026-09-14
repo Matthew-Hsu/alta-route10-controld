@@ -846,7 +846,9 @@ what an install actually needs, so restoring from it produced a broken install.
 
 ## CI
 
-CI runs on every push/PR to `master` via **GitHub Actions** (`.github/workflows/ci.yml`), this fork's canonical home. The original `.forgejo/workflows/` definitions are kept in step for anyone running this on a Forgejo instance, but GitHub does not read them.
+CI runs on every push to `master` and on **every** pull request, whatever branch it targets, via **GitHub Actions** (`.github/workflows/ci.yml`), this fork's canonical home. The original `.forgejo/workflows/` definitions are kept in step for anyone running this on a Forgejo instance, but GitHub does not read them.
+
+The `pull_request` trigger deliberately carries no branch filter. Filtered to `master`, a PR based on another branch got no checks at all — not pending, not failing, simply absent — so a stack of PRs could be reviewed and merged without CI ever having run on it.
 
 1. **secrets-scan**: runs `betterleaks` over the tree so no credential or key gets committed
 2. **shellcheck**: lints all shell scripts

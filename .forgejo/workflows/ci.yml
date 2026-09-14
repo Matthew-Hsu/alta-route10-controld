@@ -3,11 +3,18 @@ name: ci
 # Full CI coverage: shellcheck + test suite. Secret scanning is covered by
 # secrets-scan.yml (betterleaks). Uses a git-capable base image (the dedicated
 # shellcheck image lacks git, so checkout fails) and installs shellcheck inline.
+#
+# pull_request carries no branches filter on purpose. With [master] on it, a PR
+# based on another branch was not merely unchecked — no check ever appeared, so
+# the page showed nothing pending and nothing failed. A stack reviewed that way
+# is reviewed without CI, and retargeting one to master afterwards does not fire
+# it either: that is a pull_request "edited" event, which is outside the default
+# activity types. Two PRs in a release stack were merged off the back of local
+# runs alone before this was noticed.
 on:
   push:
     branches: [master]
   pull_request:
-    branches: [master]
 
 jobs:
   shellcheck:

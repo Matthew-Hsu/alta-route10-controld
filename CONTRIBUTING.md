@@ -37,7 +37,14 @@ See [AGENTS.md](AGENTS.md) for operational notes aimed specifically at an AI
 agent picking up work in this repo.
 
 **Scopes** name the area, not the file: `dns`, `config`, `update`, `watchdog`,
-`cron`, `uninstall`, `setup`, `version`, `repair`.
+`cron`, `uninstall`, `setup`, `version`, `repair`, `test`, `bootstrap`,
+`readouts`.
+
+Three kinds of commit carry no scope, because there is no area narrower than
+the file they change: `ci` for the workflows, and `docs(<file>)` for a change
+confined to one markdown file, where the filename is more use to a reader than
+an area would be. `master` already carries `docs(readme)` and `fix(status)`, so
+this records what the project does rather than tightening it.
 
 Rules that matter more than the format:
 

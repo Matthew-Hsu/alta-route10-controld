@@ -2573,6 +2573,17 @@ audit_drift_count() {
     printf '%s' "${_adc:-0}"
 }
 
+# Review count, from either summary line: "No drift. N item(s) to review above."
+# or "N drift item(s), M to review." A finding printed from inside a pipeline
+# increments a counter in a subshell and never reaches either, which is how
+# four flat bridges came to be summarised as one review item.
+audit_review_count() {
+    _arc="$(printf '%s\n' "$1" \
+        | sed -n -e 's/.*[^0-9]\([0-9][0-9]*\) item(s) to review.*/\1/p' \
+                 -e 's/.*drift item(s), \([0-9][0-9]*\) to review.*/\1/p' | head -1)"
+    printf '%s' "${_arc:-0}"
+}
+
 describe "audit.sh — a wiped firewall.user block must not pass as healthy"
 
 # An empty firewall.user with an install recorded means the redirects exist in
@@ -3422,6 +3433,97 @@ assert_contains "but leaves a redirect that was never ours" \
 PATH="$PSR_SAVED_PATH"
 if [ -n "$PSR_SAVED_IFACES" ]; then LAN_IFACES="$PSR_SAVED_IFACES"; else unset LAN_IFACES; fi
 unset IPT_STORE
+
+describe "the readouts must report interception, not rule presence"
+
+# status.sh printed "per-device visibility enabled" from a rule count, and
+# audit.sh called a bridge with rules and no traffic "idle VLAN, or clients
+# bypassing". On the router this came from, three of six bridges had correct
+# rules sitting below a firewall zone chain carrying https-dns-proxy's own
+# port-53 redirect: 45,563 queries went to dnsmasq while both tools reported
+# healthy. A rule that exists is not a rule that runs.
+RI_BIN="$TMPDIR/ribin"; mkdir -p "$RI_BIN"
+for _rs in uci ip nslookup logread pidof netstat crontab; do
+    printf '#!/bin/sh\nexit 1\n' > "$RI_BIN/$_rs"; chmod +x "$RI_BIN/$_rs"
+done
+RI_CHAIN="$TMPDIR/ri.chain"; export RI_CHAIN
+RI_COUNTS="$TMPDIR/ri.counts"; export RI_COUNTS
+cat > "$RI_BIN/iptables" << 'RIEOF'
+#!/bin/sh
+_want=""
+for _a in "$@"; do
+    case "$_a" in -S) _want=S ;; -C) _want=C ;; -L) [ -z "$_want" ] && _want=L ;; esac
+done
+case "$_want" in
+    S) cat "$RI_CHAIN" 2>/dev/null; exit 0 ;;
+    C) exit 0 ;;
+    L) cat "$RI_COUNTS" 2>/dev/null; exit 0 ;;
+esac
+exit 1
+RIEOF
+chmod +x "$RI_BIN/iptables"
+
+# br-lan_10's redirect sits below its own zone jump; br-lan_20's is ahead of
+# its own and carrying traffic.
+cat > "$RI_CHAIN" << 'RICEOF'
+-A PREROUTING -i br-lan_10 -m comment --comment "!fw3" -j zone_lan_prerouting
+-A PREROUTING -i br-lan_20 -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354
+-A PREROUTING -i br-lan_20 -m comment --comment "!fw3" -j zone_v20zone_prerouting
+-A PREROUTING -i br-lan_10 -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354
+RICEOF
+cat > "$RI_COUNTS" << 'RIVEOF'
+    0     0 REDIRECT   udp  --  br-lan_10 *       0.0.0.0/0    0.0.0.0/0    udp dpt:53 redir ports 5354
+13941 1015K REDIRECT   udp  --  br-lan_20 *       0.0.0.0/0    0.0.0.0/0    udp dpt:53 redir ports 5354
+RIVEOF
+
+RI_OUT="$(PATH="$RI_BIN:$PATH" DNS_PORT=5354 CTRLD_VERSION=1.5.7 LAN_IFACES="br-lan_10 br-lan_20" \
+    sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+
+assert_contains "an outranked bridge is named" "$RI_OUT" \
+    "br-lan_10: redirect sits below a firewall zone chain"
+assert_contains "and says where its clients actually land" "$RI_OUT" "reach dnsmasq, not ctrld"
+assert_contains "the working bridge still reports its packets" "$RI_OUT" \
+    "br-lan_20: 13941 packet(s) redirected"
+
+# Drift, not review. Those clients are resolving through the wrong resolver now.
+cat > "$RI_CHAIN" << 'RICOKEOF'
+-A PREROUTING -i br-lan_10 -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354
+-A PREROUTING -i br-lan_10 -m comment --comment "!fw3" -j zone_lan_prerouting
+-A PREROUTING -i br-lan_20 -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354
+-A PREROUTING -i br-lan_20 -m comment --comment "!fw3" -j zone_v20zone_prerouting
+RICOKEOF
+RI_OK="$(PATH="$RI_BIN:$PATH" DNS_PORT=5354 CTRLD_VERSION=1.5.7 LAN_IFACES="br-lan_10 br-lan_20" \
+    sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+assert_eq "an outranked bridge adds exactly one drift item" \
+    "$(( $(audit_drift_count "$RI_OK") + 1 ))" "$(audit_drift_count "$RI_OUT")"
+assert_not_contains "a chain with our rules first is clean" "$RI_OK" \
+    "sits below a firewall zone chain"
+
+# The zero-packet finding used to be printed from inside a pipeline, so the
+# counter it incremented lived in a subshell and was discarded: a router with
+# four flat bridges reported "1 item(s) to review". It has to reach the summary.
+assert_contains "a flat bridge is still reported" "$RI_OK" \
+    "br-lan_10: 0 packets"
+assert_true "and now counts toward the summary" \
+    test "$(audit_review_count "$RI_OK")" -ge 1
+
+# status.sh made the same claim from the same evidence. Back to the outranked
+# chain — the clean one above was written for the drift comparison.
+cat > "$RI_CHAIN" << 'RICBADEOF'
+-A PREROUTING -i br-lan_10 -m comment --comment "!fw3" -j zone_lan_prerouting
+-A PREROUTING -i br-lan_20 -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354
+-A PREROUTING -i br-lan_20 -m comment --comment "!fw3" -j zone_v20zone_prerouting
+-A PREROUTING -i br-lan_10 -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354
+RICBADEOF
+RI_ST="$(PATH="$RI_BIN:$PATH" DNS_PORT=5354 CTRLD_VERSION=1.5.7 LAN_IFACES="br-lan_10 br-lan_20" \
+    sh "$SCRIPT_DIR/status.sh" 2>/dev/null || true)"
+assert_contains "status.sh flags the outranked bridge" "$RI_ST" \
+    "br-lan_10 has a redirect, but a firewall zone takes DNS first"
+assert_contains "the count says only that rules are present" "$RI_ST" \
+    "redirect rule(s) present"
+assert_not_contains "and no longer calls rule presence per-device visibility" \
+    "$RI_ST" "per-device visibility enabled"
+unset RI_CHAIN RI_COUNTS
 
 describe "audit.sh — a redirect pointing at a port nothing listens on"
 

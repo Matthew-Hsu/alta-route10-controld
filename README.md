@@ -46,8 +46,8 @@ individually in the ControlD dashboard, including devices on VLANs, not just
 the router as a whole. It survives reboots and firmware updates without
 help, and falls back to a still-encrypted resolver if something goes wrong.
 
-> Split DNS, non-default ports and a few other paths pass the test suite but
-> have not been run on a real router. See [Verification
+> A few paths pass the test suite but have not been run on a real router — a
+> real auto-update among them. See [Verification
 > Status](#verification-status) before relying on them. **DNS interception is
 > IPv4-only**, and that plus the project's other limits are in [Not
 > Supported](#not-supported).
@@ -271,8 +271,8 @@ doesn't support at all, see [Not Supported](#not-supported) near the top of
 this document.
 
 **Verified on hardware.** An Alta Labs Route 10 (BusyBox v1.33.1), six LAN
-bridges, forced DNS enabled, `ctrld` 1.5.7 over DoH3, across six
-install-and-reboot cycles:
+bridges, forced DNS enabled, `ctrld` 1.5.7 over DoH3, across repeated
+install-and-reboot cycles including a full pre-release sweep:
 
 - Install, and re-install over an existing install, each followed by a reboot
 - Redirect coverage on all six bridges, the port-853 DoT hijack, and
@@ -308,17 +308,53 @@ install-and-reboot cycles:
   `--protocol --to <preferred>` worked in a single step, where it used to
   no-op. A reboot afterwards came back with the two files in agreement and no
   spurious correction logged.
+- Redirect precedence. On a first install every redirect is created at the head
+  of `PREROUTING`, above all nine of this router's fw3 zone-chain jumps; on a
+  router whose rules had been appended *below* `zone_lan_prerouting`, the
+  upgrade migrated them in place. This matters because it was a live bug here:
+  `https-dns-proxy`'s own zone redirect was taking port 53 on three of six
+  bridges and had swallowed 52,061 queries while `status.sh` reported
+  per-device visibility working and `audit.sh` reported no drift. One bridge
+  went from 0 to 188 intercepted packets the moment the rule moved. Re-checked
+  after a reboot, which is the case `/etc/firewall.user` has to get right,
+  since it runs after fw3 has rebuilt its chains
+- The recovery path with `/cfg/lib.sh` absent. With the library moved aside and
+  a bridge's redirect deleted, `post-cfg.sh` recreated it at `PREROUTING` line
+  1 — thirty-one rules above that bridge's own zone chain — using the minimal
+  helper copy it carries for exactly this case
+- Self-healing, for real. `/cfg/ctrld.toml` deleted and rebuilt by
+  `post-cfg.sh` from `controld.env`, with DNS still resolving afterwards. These
+  are the suite's destructive integration tests; before this release they had
+  never executed anywhere, skipped off-router and hanging on-router
+- Two installs back to back with no reboot between them: 24 rules present, 24
+  expected, nothing duplicated, and the second run re-downloading `lib.sh`
+  rather than reusing the copy the first left in `/tmp`
+- Split DNS, end to end. A device rule keyed on a phone's MAC and a network
+  rule keyed on the guest subnet, added in turn against a config that already
+  carried a catch-all `[network.0]`, so both allocations had to skip an
+  existing table. Each add left the `[upstream.N]` and `[network.N]` indices
+  distinct and ctrld running — two tables of one name make ctrld refuse to
+  start, which is what this used to produce. The phone resolved through the
+  second ControlD profile and reported that resolver on ControlD's own status
+  page, while a machine on another VLAN went on reporting the main one.
+  Removing all policies restored a clean single-upstream config with no
+  orphaned upstreams
+- A redirect pointing at a port nothing listens on, on all three paths:
+  `audit.sh` reporting it as drift and `reconfigure.sh --repair` removing it,
+  including a deliberate outage and its repair; and `uninstall.sh` sweeping one
+  planted as `--dport 53 -j REDIRECT --to-ports 5399`, a port this install had
+  never recorded, while leaving a planted non-DNS rule
+  (`--dport 80 --to-ports 3128`) untouched
+- `benchmark.sh`'s daemon cleanup. After a run across all four protocols,
+  exactly one `ctrld` process remained
 
 **Not exercised on hardware.** These pass the test suite and are believed
 correct, but no one has run them on a real device:
 
 | Area | What that means for you |
 |---|---|
-| **Split DNS / per-device policy** | Routing specific devices or subnets to a second ControlD profile. Config generation, rule insertion against every shape a policy table can take, and preservation across a re-install are all unit-tested, but no router has actually resolved through one. |
 | **An uninstall on more than three `https-dns-proxy` instances** | `uninstall.sh` loops on uci instead of naming instances 0, 1 and 2, so a fourth is no longer left pointing at your ControlD profile. A full uninstall is verified on the three a Route 10 ships, which is the case the loop replaced; no router here has carried a fourth for the loop itself to be proven on. |
-| **Pruning a redirect that points at a port nothing listens on** | The rule that took a router's LAN DNS down was removed there by hand, and the delete loop that did it is in [troubleshooting](docs/troubleshooting.md). What has not been run on a device is the code that now does it for you: `reconfigure.sh --repair` removing such a rule, `audit.sh` reporting it as drift, and `uninstall.sh` sweeping every port rather than the recorded one. All three are unit-tested against a stateful fake `iptables`. |
 | **The watchdog lock under contention** | Two cycles overlapping. The fix that makes overlap unlikely also makes it hard to observe: every hardware run took and released the lock cleanly, but no two ever raced. |
-| **`benchmark.sh`'s daemon cleanup** | The benchmark starts throwaway `ctrld` instances on a spare port. That it leaves none behind is gated as a destructive test and skipped by default. |
 | **Keeping a `ctrld` newer than the pin** | A re-install must not roll a newer binary back to `CTRLD_PIN`. Unit-tested; no router has been ahead of the pin to try it on. |
 | **A real auto-update** | `controld-update.sh`'s version comparison, checksum verification and rollback are unit-tested. No router has taken an actual upgrade through it. |
 | **Reconciliation on the paths that only run while DNS is failing** | The divergence and every repair for it are now verified on hardware, but two paths there are not, because both need DNS to actually fail on the device: the fallback loop seeding its chain from the reconciled protocol rather than the recorded one, and a reboot landing between a retarget and the record of its result, the interruption that produces the divergence in the first place. |

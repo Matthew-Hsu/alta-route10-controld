@@ -3232,6 +3232,16 @@ for _pcg in set_fallback_resolver ensure_firewall_user_rules ensure_forced_dns; 
 done
 unset _pcg _pcg_bare
 
+# dnsmasq reads leasetime from the per-interface "config dhcp" sections and from
+# "config host", in dhcp_add() and dhcp_host_add(). It never reads it from the
+# "config dnsmasq" section, so setting it there wrote a key nothing consumes.
+# The router's real lease time comes from dhcp.lan*.leasetime and is not ours.
+#
+# Inherited from the original project and carried through this fork, where it
+# read as a DHCP setting the installer had quietly taken over. It never was one.
+assert_false "post-cfg.sh does not write leasetime on the dnsmasq section" \
+    grep -q 'dnsmasq\[0\]\.leasetime' "$PCG_FILE"
+
 describe "next_toml_index() — index allocation"
 IDX_CONF="$TMPDIR/idx.toml"
 cat > "$IDX_CONF" << 'IDXEOF'

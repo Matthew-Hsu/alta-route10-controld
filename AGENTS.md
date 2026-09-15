@@ -103,7 +103,7 @@ Every one of those is guarded, so the suite catches a breakage whether or not
 anyone read this section. Each guard was confirmed by mutating the thing it
 protects and watching it fail. The shebangs and the `shellcheck disable`
 directives needed guards built for them: removing a generated script's shebang
-passed all 501 assertions, and deleting a directive left shellcheck green,
+passed the entire suite, and deleting a directive left shellcheck green,
 because the main lint runs at `-S warning` and SC2086 is info-level. CI now
 makes a second, narrow pass for that one code.
 

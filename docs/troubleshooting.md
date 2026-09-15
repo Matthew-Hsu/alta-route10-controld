@@ -193,20 +193,47 @@ and prove nothing here.
 ControlD dashboard, but phones, laptops, and other clients on a VLAN never do.
 Their DNS works. It just isn't going through ctrld.
 
-**Cause:** DNS is intercepted per bridge interface. Alta names the default LAN
-bridge `br-lan` and every VLAN `br-lan_<vlan-id>` (`br-lan_10`, `br-lan_20`, …).
-Installs from before VLAN discovery existed only ever redirected `br-lan` and
-`br-lan_2`, so every other VLAN resolved around ctrld.
+There are two causes, and they look identical from a client. Check for the
+second even when the first does not apply: a bridge can have a redirect and
+still be bypassed.
 
-**Check** which bridges are covered:
+**Cause 1 — the bridge has no redirect.** DNS is intercepted per bridge
+interface. Alta names the default LAN bridge `br-lan` and every VLAN
+`br-lan_<vlan-id>` (`br-lan_10`, `br-lan_20`, …). Installs from before VLAN
+discovery existed only ever redirected `br-lan` and `br-lan_2`, so every other
+VLAN resolved around ctrld.
+
+**Cause 2 — the redirect exists but something takes port 53 first.**
+`PREROUTING` is evaluated in order, and a firewall zone chain can carry a DNS
+redirect of its own — `https-dns-proxy`'s, if it is configured to hijack DNS. A
+redirect *appended* to `PREROUTING` sits below that zone jump and never sees
+the packet. The bridge is covered, the rule is right, and it is dead.
+
+This is the more confusing of the two, because every count agrees with you. It
+was found here on a router where three of six bridges were affected and the
+zone chain had taken 52,061 queries.
+
+**Check.** `status.sh` and `audit.sh` now name cause 2 directly:
 
 ```sh
-sh /cfg/status.sh          # lists each bridge and whether it has a redirect
-iptables -t nat -L PREROUTING -n --line-numbers | grep 5354
+sh /cfg/status.sh          # "has a redirect, but a firewall zone takes DNS first"
+sh /cfg/audit.sh           # "redirect sits below a firewall zone chain"
 ```
 
-If `iptables-save -t nat` shows `-i br-lan` and `-i br-lan_2` rules but nothing
-for your VLAN bridges, that is the problem.
+If your tooling predates those messages, look at the chain yourself. Position
+is what matters, so keep the line numbers and do not filter out the zone jumps:
+
+```sh
+iptables -t nat -L PREROUTING -n -v --line-numbers | grep -E 'redir ports|zone_'
+```
+
+Every redirect must appear **above** the first `zone_*_prerouting` line. A
+redirect below one is cause 2. A bridge with no redirect line at all, or
+`iptables-save -t nat` showing `-i br-lan` and `-i br-lan_2` but nothing for
+your VLAN bridges, is cause 1.
+
+The packet counters settle it either way: a bridge with active devices and `0`
+packets on its redirect is not intercepting anything, whatever the rule says.
 
 **Fix:**
 
@@ -217,6 +244,12 @@ sh /cfg/reconfigure.sh --repair
 This re-applies the redirect to every LAN bridge that exists right now, updates
 `/etc/firewall.user` so the rules survive a firewall reload, and re-applies the
 port-853 (DoT) hijack if forced DNS is on. It is safe to run repeatedly.
+
+The same command fixes cause 2: rules are inserted at the head of `PREROUTING`,
+and one found below a zone chain is deleted and re-inserted above it. Because
+`/etc/firewall.user` is rewritten to insert rather than append, the correction
+survives a firewall reload and a reboot — which is the part that matters, since
+`firewall.user` runs after fw3 has rebuilt its zone chains.
 
 If `/cfg/reconfigure.sh` predates this fix, update the tooling first. Re-running
 `setup.sh` reinstalls `/cfg/lib.sh` and the helper scripts:

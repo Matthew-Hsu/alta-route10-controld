@@ -626,7 +626,13 @@ if ! wait_for 30 1 uci get 'https-dns-proxy.@https-dns-proxy[0]'; then
 fi
 
 # Set https-dns-proxy to ControlD as fallback
-set_fallback_resolver "$RESOLVER_ID" "$BOOTSTRAP_IP" || true
+# Guarded like ensure_firewall_user_rules and ensure_forced_dns below. The
+# lib.sh-absent block defines a minimal helper set and this is not in it, so on
+# a router recovering without lib.sh the bare call printed
+# "set_fallback_resolver: not found" into the boot log. The "|| true" meant it
+# did no harm, but it reads as a failure in precisely the log someone is
+# combing through to find out what went wrong.
+command -v set_fallback_resolver >/dev/null 2>&1 && { set_fallback_resolver "$RESOLVER_ID" "$BOOTSTRAP_IP" || true; }
 # stderr dropped: on a router that has not started the service since boot,
 # restart prints "ubus call service signal ... Not found" before starting it
 # normally. Step 5 verifies DNS for real, so the noise buys nothing.

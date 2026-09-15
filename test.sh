@@ -3207,6 +3207,31 @@ assert_true "the lib.sh-absent block carries wait_for too" [ -n "$WF_FN" ]
 assert_false "and that copy is bounded as well" sh -c "${WF_FN}
 wait_for 3 0 false"
 
+describe "post-cfg.sh must not call a helper its fallback block lacks"
+
+# The lib.sh-absent block defines a deliberately minimal helper set. Anything
+# post-cfg.sh calls that is not in it has to be guarded with command -v, or a
+# router recovering without lib.sh prints "<name>: not found" into its boot log
+# — harmless, because every such call carries "|| true", but it reads as a
+# failure in exactly the log someone is combing through to find out what broke.
+#
+# Observed on the router during the 1.10.0 sweep: set_fallback_resolver was
+# called bare while its two neighbours were guarded. Checked for all three by
+# name rather than for the one that was wrong, so a fourth cannot slip in.
+PCG_FILE="$TMPDIR/post-cfg-guards.sh"
+sed -n "/cat > \/cfg\/post-cfg.sh << 'BOOTSCRIPT'/,/^BOOTSCRIPT$/p" "$SCRIPT_DIR/setup.sh" > "$PCG_FILE"
+assert_true "the boot script extracts" [ -s "$PCG_FILE" ]
+
+for _pcg in set_fallback_resolver ensure_firewall_user_rules ensure_forced_dns; do
+    # Comment lines are excluded: they name these helpers when explaining why
+    # the guard is there, and a comment cannot invoke anything.
+    _pcg_bare="$(grep -F "$_pcg" "$PCG_FILE" \
+        | grep -v 'command -v' \
+        | grep -v '^[[:space:]]*#' || true)"
+    assert_eq "post-cfg.sh guards ${_pcg}" "" "$_pcg_bare"
+done
+unset _pcg _pcg_bare
+
 describe "next_toml_index() — index allocation"
 IDX_CONF="$TMPDIR/idx.toml"
 cat > "$IDX_CONF" << 'IDXEOF'

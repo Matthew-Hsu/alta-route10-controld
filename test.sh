@@ -3162,6 +3162,51 @@ assert_eq "no empty [upstream.N] tables" "0" \
 assert_eq "policy allocates past the preserved blocks" "4" \
     "$(next_toml_index "$SPLIT_NEW" network)"
 
+describe "wait_for() — a boot-time wait must be bounded"
+
+# post-cfg.sh runs from rc.local at every boot and waited on two conditions with
+# a bare "while ! cmd; do sleep N; done" and no limit: the https-dns-proxy uci
+# section appearing, and an ICMP reply from the bootstrap host. Either can fail
+# to arrive on an ordinary router, and the self-heal then spins forever with no
+# timeout, no fallback and nothing logged — the router boots and DNS is simply
+# never configured.
+#
+# That this assertion returns at all is the proof: an unbounded wait_for would
+# hang the suite here rather than fail it.
+assert_false "gives up once the tries are spent"      wait_for 3 0 false
+assert_true  "returns as soon as the command succeeds" wait_for 3 0 true
+
+WF_TRIES="$TMPDIR/wf.tries"
+wf_always_fails() { printf 'x' >> "$WF_TRIES"; return 1; }
+: > "$WF_TRIES"
+# "|| true": this returns 1 by design, and the suite runs under set -e (line 6),
+# where a bare failing command at top level ends the run — silently, mid-file,
+# which is exactly what it did when this test was first written.
+wait_for 4 0 wf_always_fails || true
+assert_eq "tries exactly as many times as asked" "4" "$(wc -c < "$WF_TRIES" | tr -d ' ')"
+
+wf_third_time_lucky() {
+    printf 'x' >> "$WF_TRIES"
+    [ "$(wc -c < "$WF_TRIES" | tr -d ' ')" -ge 3 ]
+}
+: > "$WF_TRIES"
+assert_true "succeeds on a later try"     wait_for 5 0 wf_third_time_lucky
+assert_eq   "and stops trying once it has" "3" "$(wc -c < "$WF_TRIES" | tr -d ' ')"
+
+# The generated boot script, checked two ways: no bare unbounded wait survives,
+# and the lib.sh-absent block carries its own bounded copy. Without that copy a
+# router missing lib.sh would call an undefined wait_for — "not found" returns
+# non-zero, so the wait would read as failed on the first try instead of waiting.
+WF_PC="$TMPDIR/wait-for-post-cfg.sh"
+sed -n "/cat > \/cfg\/post-cfg.sh << 'BOOTSCRIPT'/,/^BOOTSCRIPT$/p" "$SCRIPT_DIR/setup.sh" > "$WF_PC"
+assert_false "no unbounded 'while ! ...; do sleep' remains in post-cfg.sh" \
+    grep -qE 'while ! .*do sleep' "$WF_PC"
+
+WF_FN="$(sed -n '/^    wait_for() {/,/^    }$/p' "$WF_PC")"
+assert_true "the lib.sh-absent block carries wait_for too" [ -n "$WF_FN" ]
+assert_false "and that copy is bounded as well" sh -c "${WF_FN}
+wait_for 3 0 false"
+
 describe "next_toml_index() — index allocation"
 IDX_CONF="$TMPDIR/idx.toml"
 cat > "$IDX_CONF" << 'IDXEOF'

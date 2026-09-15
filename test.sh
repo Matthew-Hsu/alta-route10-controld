@@ -187,6 +187,12 @@ fi
 TMPDIR=$(mktemp -d 2>/dev/null || echo "/tmp/controld-test-$$")
 mkdir -p "$TMPDIR"
 
+# The real PATH, captured before any test puts a stub in front of it. The
+# integration block runs the router's own scripts as child processes, and they
+# must resolve the system's binaries, not this suite's fakes. See the guard
+# just above "Router integration tests".
+TS_REAL_PATH="$PATH"
+
 # Source the library
 . "$SCRIPT_DIR/lib.sh"
 
@@ -3931,6 +3937,30 @@ assert_eq "doh3 -> doh -> doh3 (cycle)" "doh3" "$_b"
 # ══════════════════════════════════════════════════════════════════
 # INTEGRATION TESTS: only run on actual router
 # ══════════════════════════════════════════════════════════════════
+
+# $TMPDIR/bin holds stubs — a logger that writes nothing, a uci that always
+# exits 1 — and three separate tests prepend it to PATH for the remainder of
+# the file rather than scoping it to a subshell as every other fake does.
+#
+# The integration block below executes the router's real scripts as children:
+# post-cfg.sh and benchmark.sh. They inherit that PATH. post-cfg.sh waits on
+#
+#     while ! uci get https-dns-proxy.@https-dns-proxy[0] >/dev/null 2>&1; do sleep 1; done
+#
+# so a uci stubbed to exit 1 makes that condition true forever: the destructive
+# run hung on a real router with no output at all, because the logger stub had
+# swallowed every message that would have said where it was.
+#
+# Restore the real PATH before running anything of the router's, and assert a
+# child process actually resolves the system uci — asserting on what a child
+# sees, not on the shape of the PATH string.
+describe "the router's own scripts must not inherit the suite's stubs"
+PATH="$TS_REAL_PATH"
+TS_PROBE="$TMPDIR/probe-path.sh"
+printf '#!/bin/sh\ncommand -v uci || echo no-uci-on-this-host\n' > "$TS_PROBE"
+chmod +x "$TS_PROBE"
+assert_not_contains "a child process resolves the real uci, not the stub" \
+    "$(sh "$TS_PROBE")" "$TMPDIR"
 
 describe "Router integration tests"
 if ! is_alta_router 2>/dev/null; then

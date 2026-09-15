@@ -509,6 +509,21 @@ TOMLINNER
             nslookup google.com >/dev/null 2>&1
         fi
     }
+    # Same contract as lib.sh's. Without a copy here, a router missing lib.sh
+    # would call an undefined wait_for, which in sh is a "not found" that
+    # returns non-zero — the wait would read as failed on the first try rather
+    # than waiting at all.
+    wait_for() {
+        _wf_tries="$1"; _wf_sleep="$2"
+        shift 2
+        _wf_n=0
+        while ! "$@" >/dev/null 2>&1; do
+            _wf_n=$((_wf_n + 1))
+            [ "$_wf_n" -ge "$_wf_tries" ] && return 1
+            sleep "$_wf_sleep"
+        done
+        return 0
+    }
     stop_ctrld() {
         for _kp in $(pidof ctrld 2>/dev/null); do kill "$_kp" 2>/dev/null || true; done
         sleep 1
@@ -603,8 +618,12 @@ if [ ! -f /cfg/ctrld.toml ]; then
     logger -t post-cfg 'ctrld.toml generated'
 fi
 
-# Wait for https-dns-proxy to initialize (kept as fallback)
-while ! uci get https-dns-proxy.@https-dns-proxy[0] >/dev/null 2>&1; do sleep 1; done
+# Wait for https-dns-proxy to initialize (kept as fallback). Bounded: this had
+# no limit, so a router whose https-dns-proxy never registered its uci section
+# sat here forever at every boot and never configured DNS at all.
+if ! wait_for 30 1 uci get 'https-dns-proxy.@https-dns-proxy[0]'; then
+    logger -t post-cfg 'https-dns-proxy uci section absent after 30s — continuing without the fallback resolver'
+fi
 
 # Set https-dns-proxy to ControlD as fallback
 set_fallback_resolver "$RESOLVER_ID" "$BOOTSTRAP_IP" || true
@@ -623,8 +642,13 @@ uci set dhcp.@dnsmasq[0].leasetime='24h'
 uci commit dhcp
 /etc/init.d/dnsmasq restart
 
-# Wait for network connectivity
-while ! ping -c1 "${BOOTSTRAP_IP}" >/dev/null 2>&1; do sleep 2; done
+# Wait for network connectivity. Bounded: this had no limit either, so an
+# upstream that filters ICMP — not an exotic condition — stalled the boot here
+# indefinitely. Carrying on is safe: ctrld's health check below decides whether
+# the redirects go in, and its else branch already falls back to https-dns-proxy.
+if ! wait_for 30 2 ping -c1 "${BOOTSTRAP_IP}"; then
+    logger -t post-cfg "no ICMP reply from ${BOOTSTRAP_IP} after 60s — starting ctrld anyway"
+fi
 
 # Kill any orphaned ctrld from previous boot
 stop_ctrld

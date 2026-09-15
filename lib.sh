@@ -302,6 +302,34 @@ toml_blocks() {
     ' "$1"
 }
 
+# Retry a command until it succeeds, or give up after a bounded number of tries.
+#
+# post-cfg.sh runs from rc.local at every boot and waited on two conditions with
+# a bare "while ! cmd; do sleep N; done" and no limit at all: the https-dns-proxy
+# uci section appearing, and an ICMP reply from the bootstrap host. Either can
+# fail to arrive on a perfectly ordinary router — a service that did not come up,
+# an upstream that filters ICMP — and the boot self-heal would then spin forever
+# with no timeout, no fallback, and nothing in the log to say where it stopped.
+# The router comes up and DNS is simply never configured.
+#
+# A caller that cares about the outcome checks the return value; the two in
+# post-cfg.sh log and carry on, because the code after each wait already copes
+# with the condition being unmet and the watchdog retries in five minutes.
+#
+# Usage: wait_for <tries> <sleep-seconds> <command> [args...]
+# Returns 0 as soon as the command succeeds, 1 once the tries are spent.
+wait_for() {
+    _wf_tries="$1"; _wf_sleep="$2"
+    shift 2
+    _wf_n=0
+    while ! "$@" >/dev/null 2>&1; do
+        _wf_n=$((_wf_n + 1))
+        [ "$_wf_n" -ge "$_wf_tries" ] && return 1
+        sleep "$_wf_sleep"
+    done
+    return 0
+}
+
 # Lowest unused index in a [<table>.N] family, so split-DNS policies allocate
 # without overwriting an existing block. Counting blocks (the old approach) only
 # works while indices are contiguous, and they are not once a policy is removed

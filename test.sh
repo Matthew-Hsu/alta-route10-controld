@@ -2598,6 +2598,51 @@ SETUP_UP="$(sed -n "/cat > \/cfg\/controld-update.sh << 'UPDATESCRIPT'/,/^UPDATE
 assert_contains "post-cfg.sh adopts the old spelling too"        "$SETUP_PC" 'CURLD_VERSION'
 assert_contains "the weekly updater adopts the old spelling too" "$SETUP_UP" 'CURLD_VERSION'
 
+describe "the lib.sh-absent fallbacks must insert redirects at the head"
+
+# post-cfg.sh and watchdog.sh each carry a minimal copy of these helpers for the
+# case where /cfg/lib.sh is gone. Both copies appended, so a router recovering
+# without lib.sh would put its redirects below the fw3 zone chains and land back
+# in the bug the library path was fixed for — on the disaster-recovery path,
+# where lib.sh being missing is most plausible and least likely to be noticed.
+#
+# Nothing executed either copy: the watchdog harness above substitutes its own
+# lib.sh, so it exercises the library, and post-cfg.sh is never run off-router.
+# Extract each function and run it against a recording iptables, so the
+# assertion is about the command the script issues, not how the source reads.
+FB_BIN="$TMPDIR/fb-bin"
+mkdir -p "$FB_BIN"
+cat > "$FB_BIN/iptables" << 'FBEOF'
+#!/bin/sh
+# -C must fail, or the helper short-circuits and never reaches the add.
+for _a in "$@"; do [ "$_a" = "-C" ] && exit 1; done
+printf '%s\n' "$*" >> "$FB_LOG"
+exit 0
+FBEOF
+chmod +x "$FB_BIN/iptables"
+
+SETUP_WD="$(sed -n "/^cat > \/cfg\/watchdog.sh << 'WATCHDOG'/,/^WATCHDOG$/p" "$SCRIPT_DIR/setup.sh")"
+for _fb in post-cfg watchdog; do
+    case "$_fb" in
+        post-cfg) _fb_src="$SETUP_PC" ;;
+        *)        _fb_src="$SETUP_WD" ;;
+    esac
+    _fb_fn="$(printf '%s\n' "$_fb_src" | sed -n '/ensure_redirect_rule() {/,/^    }$/p')"
+    assert_true "${_fb}.sh carries an extractable fallback helper" [ -n "$_fb_fn" ]
+
+    FB_LOG="$TMPDIR/fb-${_fb}.log"
+    : > "$FB_LOG"
+    ( PATH="$FB_BIN:$PATH"; export FB_LOG
+      eval "$_fb_fn"
+      ensure_redirect_rule br-lan udp 53 5354 ) >/dev/null 2>&1
+
+    assert_file_contains "${_fb}.sh inserts the redirect at the head" \
+        "$FB_LOG" '\-I PREROUTING 1'
+    assert_false "${_fb}.sh never appends below the zone chains" \
+        grep -q -e '-A PREROUTING' "$FB_LOG"
+done
+unset _fb _fb_src _fb_fn
+
 # Drift count from an audit run's summary; 0 when it reports none. Lets a test
 # assert an item's severity from what audit.sh did, not from how it is written.
 audit_drift_count() {

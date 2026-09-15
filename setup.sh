@@ -546,7 +546,12 @@ TOMLINNER
         _rif="$1"; _rproto="$2"; _rdport="$3"; _rto="$4"
         iptables -t nat -C PREROUTING -i "$_rif" -p "$_rproto" --dport "$_rdport" \
             -j REDIRECT --to-port "$_rto" 2>/dev/null && return 1
-        iptables -t nat -A PREROUTING -i "$_rif" -p "$_rproto" --dport "$_rdport" \
+        # At the head, matching lib.sh. PREROUTING is evaluated in order and a
+        # firewall zone chain can carry a DNS redirect of its own, so a rule
+        # appended below one never sees the packet: that is the bug fixed for
+        # the library path, and this copy is what runs when /cfg/lib.sh is
+        # gone — the recovery case, where it is most likely to be missing.
+        iptables -t nat -I PREROUTING 1 -i "$_rif" -p "$_rproto" --dport "$_rdport" \
             -j REDIRECT --to-port "$_rto" 2>/dev/null
     }
     ensure_iptables() {
@@ -898,7 +903,12 @@ else
         _rif="$1"; _rproto="$2"; _rdport="$3"; _rto="$4"
         iptables -t nat -C PREROUTING -i "$_rif" -p "$_rproto" --dport "$_rdport" \
             -j REDIRECT --to-port "$_rto" 2>/dev/null && return 1
-        iptables -t nat -A PREROUTING -i "$_rif" -p "$_rproto" --dport "$_rdport" \
+        # At the head, matching lib.sh. PREROUTING is evaluated in order and a
+        # firewall zone chain can carry a DNS redirect of its own, so a rule
+        # appended below one never sees the packet: that is the bug fixed for
+        # the library path, and this copy is what runs when /cfg/lib.sh is
+        # gone — the recovery case, where it is most likely to be missing.
+        iptables -t nat -I PREROUTING 1 -i "$_rif" -p "$_rproto" --dport "$_rdport" \
             -j REDIRECT --to-port "$_rto" 2>/dev/null
     }
     ensure_iptables() {

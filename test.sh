@@ -3259,30 +3259,63 @@ assert_true "the lib.sh-absent block carries wait_for too" [ -n "$WF_FN" ]
 assert_false "and that copy is bounded as well" sh -c "${WF_FN}
 wait_for 3 0 false"
 
-describe "post-cfg.sh must not call a helper its fallback block lacks"
+describe "neither generated script may call a helper its fallback block lacks"
 
-# The lib.sh-absent block defines a deliberately minimal helper set. Anything
-# post-cfg.sh calls that is not in it has to be guarded with command -v, or a
-# router recovering without lib.sh prints "<name>: not found" into its boot log
-# — harmless, because every such call carries "|| true", but it reads as a
-# failure in exactly the log someone is combing through to find out what broke.
+# The lib.sh-absent block in each generated script defines a deliberately
+# minimal helper set. Anything the script calls that is not in it has to be
+# guarded with command -v, or a router recovering without lib.sh prints
+# "<name>: not found" into its boot log. Harmless, because every such call
+# carries "|| true", but it reads as a failure in exactly the log someone is
+# combing through to find out what broke.
 #
 # Observed on the router during the 1.10.0 sweep: set_fallback_resolver was
-# called bare while its two neighbours were guarded. Checked for all three by
-# name rather than for the one that was wrong, so a fourth cannot slip in.
+# called bare while its two neighbours were guarded. That was checked by naming
+# the three helpers post-cfg.sh called at the time, which does not keep a fourth
+# out, and watchdog.sh was never checked at all though it carries its own
+# fallback block and calls more of the library than post-cfg.sh does.
+#
+# Derive the list instead. Every function lib.sh defines that a script's own
+# fallback block does not, and that the script goes on to call, must be reached
+# through a command -v. That covers a call added later without anyone adding an
+# assertion for it. Comment lines are excluded throughout: they name these
+# helpers when explaining why the guard is there, and a comment cannot invoke
+# anything.
+PCG_LIB_FNS="$(sed -n 's/^\([a-z_][a-z0-9_]*\)() {.*/\1/p' "$SCRIPT_DIR/lib.sh")"
 PCG_FILE="$TMPDIR/post-cfg-guards.sh"
 sed -n "/cat > \/cfg\/post-cfg.sh << 'BOOTSCRIPT'/,/^BOOTSCRIPT$/p" "$SCRIPT_DIR/setup.sh" > "$PCG_FILE"
 assert_true "the boot script extracts" [ -s "$PCG_FILE" ]
 
-for _pcg in set_fallback_resolver ensure_firewall_user_rules ensure_forced_dns; do
-    # Comment lines are excluded: they name these helpers when explaining why
-    # the guard is there, and a comment cannot invoke anything.
-    _pcg_bare="$(grep -F "$_pcg" "$PCG_FILE" \
-        | grep -v 'command -v' \
-        | grep -v '^[[:space:]]*#' || true)"
-    assert_eq "post-cfg.sh guards ${_pcg}" "" "$_pcg_bare"
+for _pcg_pair in "post-cfg:BOOTSCRIPT" "watchdog:WATCHDOG"; do
+    _pcg_name="${_pcg_pair%%:*}"
+    _pcg_mark="${_pcg_pair##*:}"
+    _pcg_src="$(sed -n "/cat > \/cfg\/${_pcg_name}.sh << '${_pcg_mark}'/,/^${_pcg_mark}$/p" \
+        "$SCRIPT_DIR/setup.sh")"
+    # The bootstrap if/else is the first block in both, so everything after its
+    # "fi" is the body that runs with whichever helper set won.
+    _pcg_end="$(printf '%s\n' "$_pcg_src" | grep -n '^fi$' | head -1 | cut -d: -f1)"
+    _pcg_fb="$(printf '%s\n' "$_pcg_src" | sed -n 's/^    \([a-z_][a-z0-9_]*\)() {.*/\1/p')"
+    _pcg_body="$(printf '%s\n' "$_pcg_src" | sed -n "$((_pcg_end + 1)),\$p" \
+        | grep -v '^[[:space:]]*#')"
+    _pcg_bare=""
+    _pcg_seen=0
+    for _pcg_fn in $PCG_LIB_FNS; do
+        printf '%s\n' "$_pcg_fb" | grep -qx "$_pcg_fn" && continue
+        _pcg_first="$(printf '%s\n' "$_pcg_body" | grep -n -w "$_pcg_fn" | head -1)"
+        [ -n "$_pcg_first" ] || continue
+        _pcg_seen=$((_pcg_seen + 1))
+        case "$_pcg_first" in
+            *"command -v"*) ;;
+            *) _pcg_bare="${_pcg_bare}${_pcg_fn} " ;;
+        esac
+    done
+    assert_eq "${_pcg_name}.sh guards every library helper its fallback lacks" \
+        "" "$_pcg_bare"
+    # Without this the loop above passes by checking nothing, which is how a
+    # broken extraction would read as a clean result.
+    assert_true "${_pcg_name}.sh has such helpers to check" [ "$_pcg_seen" -gt 0 ]
 done
-unset _pcg _pcg_bare
+unset _pcg_pair _pcg_name _pcg_mark _pcg_src _pcg_end _pcg_fb _pcg_body
+unset _pcg_bare _pcg_seen _pcg_fn _pcg_first PCG_LIB_FNS
 
 # dnsmasq reads leasetime from the per-interface "config dhcp" sections and from
 # "config host", in dhcp_add() and dhcp_host_add(). It never reads it from the

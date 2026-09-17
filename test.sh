@@ -2643,6 +2643,52 @@ for _fb in post-cfg watchdog; do
 done
 unset _fb _fb_src _fb_fn
 
+describe "the lib.sh-absent fallbacks must keep a moved DNS port"
+
+# setup.sh moves off 5354 when something already holds it and records the
+# choice in controld.env. Both generated scripts source that file and then, if
+# /cfg/lib.sh is gone, define their own minimal helpers. Both set DNS_PORT with
+# a bare assignment, which overwrote the recorded port with the default.
+#
+# In post-cfg.sh that meant starting ctrld from a ctrld.toml on the moved port
+# and then health-checking the default one. The check failed, the redirects
+# were never added, and per-device visibility was silently gone on every boot
+# while DNS kept working through https-dns-proxy. In watchdog.sh it meant a
+# healthy router failing its own check every five minutes for ever.
+#
+# lib.sh states the invariant where it sets the same variable, and uses the
+# defaulting form. These two copies now match it. Run the real preamble instead
+# of grepping for the shape: extract each script up to the end of its bootstrap
+# block, point its /cfg at a sandbox, and read back what DNS_PORT holds.
+FBP_DIR="$TMPDIR/fallback-port"
+for _fbp in post-cfg watchdog; do
+    case "$_fbp" in
+        post-cfg) _fbp_src="$SETUP_PC" ;;
+        *)        _fbp_src="$SETUP_WD" ;;
+    esac
+    rm -rf "$FBP_DIR"; mkdir -p "$FBP_DIR/cfg"
+    printf 'RESOLVER_ID=abc123\nDNS_TYPE=doh3\nCTRLD_VERSION=1.5.7\nDNS_PORT=5355\n' \
+        > "$FBP_DIR/cfg/controld.env"
+    # Strip the heredoc delimiters, then send every /cfg path into the sandbox.
+    printf '%s\n' "$_fbp_src" | sed '1d;$d' | sed "s#/cfg/#${FBP_DIR}/cfg/#g" \
+        > "$FBP_DIR/whole.sh"
+    # The bootstrap if/else is the first block in both, so its "fi" is the first
+    # one in the file. Cutting there keeps the probe clear of anything that
+    # would start ctrld or touch iptables.
+    _fbp_end="$(grep -n '^fi$' "$FBP_DIR/whole.sh" | head -1 | cut -d: -f1)"
+    sed -n "1,${_fbp_end}p" "$FBP_DIR/whole.sh" > "$FBP_DIR/probe.sh"
+    printf '\nprintf "%%s" "$DNS_PORT"\n' >> "$FBP_DIR/probe.sh"
+    assert_eq "${_fbp}.sh keeps a moved port when lib.sh is gone" "5355" \
+        "$(sh "$FBP_DIR/probe.sh" 2>/dev/null)"
+    # And the library path it has to agree with, so the test fails if either
+    # side of the invariant moves.
+    cp "$SCRIPT_DIR/lib.sh" "$FBP_DIR/cfg/lib.sh"
+    assert_eq "${_fbp}.sh keeps it on the library path too" "5355" \
+        "$(sh "$FBP_DIR/probe.sh" 2>/dev/null)"
+done
+rm -rf "$FBP_DIR"
+unset _fbp _fbp_src _fbp_end FBP_DIR
+
 # Drift count from an audit run's summary; 0 when it reports none. Lets a test
 # assert an item's severity from what audit.sh did, not from how it is written.
 audit_drift_count() {

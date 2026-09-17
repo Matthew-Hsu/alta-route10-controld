@@ -358,6 +358,7 @@ correct, but no one has run them on a real device:
 | **Keeping a `ctrld` newer than the pin** | A re-install must not roll a newer binary back to `CTRLD_PIN`. Unit-tested; no router has been ahead of the pin to try it on. |
 | **A real auto-update** | `controld-update.sh`'s version comparison, checksum verification and rollback are unit-tested. No router has taken an actual upgrade through it. |
 | **Reconciliation on the paths that only run while DNS is failing** | The divergence and every repair for it are now verified on hardware, but two paths there are not, because both need DNS to actually fail on the device: the fallback loop seeding its chain from the reconciled protocol rather than the recorded one, and a reboot landing between a retarget and the record of its result, the interruption that produces the divergence in the first place. |
+| **Recovery without `lib.sh` on an install that moved off port 5354** | Both generated scripts used to overwrite the recorded port with the default on that path, so a boot added no redirects and the watchdog restarted `ctrld` every cycle while the router was healthy. The repair is unit-tested by running each script's real preamble against a sandbox `/cfg`. A moved port and a missing `lib.sh` are each verified on hardware on their own; no router here has been in both states at once, and what a boot does to iptables the suite only stubs. |
 
 Every defect in this project's history that CI could not see appeared on a
 router first: a BusyBox awk regex, a cron guard matching another service's

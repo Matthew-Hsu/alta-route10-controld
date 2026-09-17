@@ -461,7 +461,15 @@ if [ -f /cfg/lib.sh ]; then
     . /cfg/lib.sh
 else
     # Inline minimal helpers when lib.sh is absent
-    DNS_PORT=5354
+    #
+    # Defaulted rather than assigned, matching lib.sh. controld.env is sourced
+    # above and an install that had to move off 5354 records its port there. A
+    # bare assignment overwrote it, so this path started ctrld from a ctrld.toml
+    # on the moved port and then health-checked the default one, found nothing
+    # listening, and skipped the redirects. DNS kept working through
+    # https-dns-proxy while per-device visibility was gone on every boot, with
+    # nothing in the log but a failed health check.
+    DNS_PORT="${DNS_PORT:-5354}"
     get_endpoint() {
         case "$1" in
             doq|dot) printf "%s.dns.controld.com" "$2" ;;
@@ -859,7 +867,15 @@ if [ -f /cfg/lib.sh ]; then
     # shellcheck source=/dev/null
     . /cfg/lib.sh
 else
-    DNS_PORT=5354
+    # Defaulted rather than assigned, matching lib.sh. controld.env is sourced
+    # above and carries the port of an install that had to move off 5354. A bare
+    # assignment overwrote it, aiming every check in this script at a port ctrld
+    # was not listening on. A healthy router then failed its own health check
+    # every cycle, walked the fallback chain and restarted ctrld every five
+    # minutes for as long as lib.sh stayed missing. The teardown at the end was
+    # handed the same wrong port, so it matched none of the live rules and
+    # removed nothing.
+    DNS_PORT="${DNS_PORT:-5354}"
     FALLBACK_CHAIN="doh3 doh"
 
     get_endpoint() {

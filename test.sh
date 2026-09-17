@@ -1207,17 +1207,23 @@ describe "lib.sh bootstrap — a missing library must never fail silently"
 # mattered: the README teaches fetching a single script into /tmp, and doing
 # that with the uninstaller removed nothing while looking like it had run.
 #
-# The invariant holds in every environment, which is what makes it testable
-# here and on a router: never silent. Where /cfg/lib.sh exists the fallback
-# now works and the script prints its usage; where it does not, it says so.
+# status.sh and audit.sh were left out of that fix and kept the bare dot, so
+# they had no /cfg fallback at all: on a router they refused to run while their
+# siblings worked. This assertion did not catch it. It asked only that the
+# script "say something", which the shell's own "cannot open" satisfies, so it
+# stayed green over two scripts that could not find an installed library.
+#
+# Assert on the script's own message instead. That is the thing only a script
+# reaching its else branch can produce, and it holds in every environment,
+# which is what makes it testable here and on a router.
 BS_DIR="$TMPDIR/bootstrap"; rm -rf "$BS_DIR"; mkdir -p "$BS_DIR"
 for _bs in reconfigure.sh benchmark.sh uninstall.sh status.sh audit.sh; do
     cp "$SCRIPT_DIR/$_bs" "$BS_DIR/$_bs"
     # --help exits before any of these touches the system, uninstall included.
     _bs_out="$(cd "$BS_DIR" && sh "./$_bs" --help 2>&1 || true)"
     rm -f "$BS_DIR/$_bs"
-    assert_true "${_bs} says something when lib.sh is not beside it" \
-        [ -n "$_bs_out" ]
+    assert_contains "${_bs} reports the missing library itself" \
+        "$_bs_out" 'lib.sh not found'
 done
 
 # The shape that caused it, not the wording of any one instance.

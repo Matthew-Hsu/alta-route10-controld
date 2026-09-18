@@ -209,15 +209,14 @@ names the default LAN bridge `br-lan` and each VLAN `br-lan_<vlan-id>`
 (`br-lan_10`, `br-lan_20`, …), so the bridge list is discovered at runtime. A
 VLAN added after install is picked up by the watchdog within 5 minutes.
 
-```sh
-sh status.sh                  # per-bridge redirect coverage + subnets
-sh reconfigure.sh --repair    # re-apply redirects, and prune rules for bridges that no longer exist
-```
-
 A bridge without a redirect is the usual reason a device resolves fine but never
 appears in the ControlD dashboard: its queries never reach `ctrld`, so ControlD
-only ever sees the router. To leave a VLAN alone (a guest network with its own
-DNS, say), set either of these in `/cfg/controld.env`:
+only ever sees the router. `sh /cfg/status.sh` lists per-bridge coverage and
+subnets, and `sh /cfg/reconfigure.sh --repair` re-applies it and prunes rules
+for bridges that no longer exist, as above.
+
+To leave a VLAN alone (a guest network with its own DNS, say), set either of
+these in `/cfg/controld.env`:
 
 ```sh
 LAN_IFACES_EXCLUDE="br-lan_40"              # cover everything except these

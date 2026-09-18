@@ -10,8 +10,24 @@
 
 # ── Bootstrap lib.sh ─────────────────────────────────────────────────────────
 LIB_DIR="$(dirname "$0")"
-# shellcheck source=lib.sh
-. "$LIB_DIR/lib.sh"
+# The /cfg fallback its three siblings already carry. Without it these two were
+# the only scripts that could not find an installed library: fetched on their
+# own into /tmp, the way README teaches fetching setup.sh, they died on the dot
+# with the shell's own "cannot open" and said nothing about the install. That
+# reads as a broken tool, and it lands on the two commands someone runs to find
+# out whether anything is wrong. reconfigure.sh carries the note on why this is
+# a file test rather than a dot with a fallback after it.
+if [ -f "$LIB_DIR/lib.sh" ]; then
+    # shellcheck source=lib.sh
+    . "$LIB_DIR/lib.sh"
+elif [ -f /cfg/lib.sh ]; then
+    # Running on a router where lib.sh was installed to /cfg/
+    # shellcheck source=/dev/null
+    . /cfg/lib.sh
+else
+    echo "Error: lib.sh not found." >&2
+    exit 1
+fi
 
 # ── Usage ────────────────────────────────────────────────────────────────────
 

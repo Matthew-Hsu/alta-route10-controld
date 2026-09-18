@@ -288,6 +288,11 @@ install-and-reboot cycles including a full pre-release sweep:
   block and the forced-DNS flag all gone, every `https-dns-proxy` instance moved
   off ControlD and back to the stock resolver, the router's own cron jobs and the
   stock `force_dns_port` list untouched, and DNS still resolving afterwards
+- The two readouts run from outside `/cfg`. `status.sh` and `audit.sh`, each
+  fetched on its own into `/tmp` with no `lib.sh` beside it, found the installed
+  library and produced a full report against a live install. Before this they
+  died on the dot with the shell's own error, while their three siblings in the
+  same directory worked
 - Recovery without `lib.sh` on an install that had moved off 5354. With the
   port on 5355 and `/cfg/lib.sh` renamed aside, a reboot brought `ctrld` up on
   5355 and created all twelve port-53 redirects at `PREROUTING` positions 1 to

@@ -32,7 +32,8 @@ environment almost certainly has none of that.
 - Before saying a feature works, check README.md's "Verification Status"
   section. If it is in the "not exercised on hardware" table, say so rather
   than implying the suite covers it. If you do verify one on a device, move
-  the row and record what you ran.
+  the row out of that table and write what you ran into
+  `docs/hardware-verification.md`, under the heading for its area.
 
 ## Verify before you claim
 

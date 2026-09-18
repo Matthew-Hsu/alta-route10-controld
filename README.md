@@ -307,6 +307,15 @@ install-and-reboot cycles including a full pre-release sweep:
   Returning the port to 5354 pruned the 5355 rules the same way it had pruned
   the 5354 ones on the way out, which is the round trip that once left 27,338
   packets going to a closed port, and a second reboot came back with no drift
+- The installer pruning a port it no longer uses. Run twice from the same
+  starting point on a router carrying six bridges and forced DNS: an install
+  moved to 5355 and repaired clean, then the recorded port cleared and the
+  installer re-run, which is the documented way back to the default. On master
+  the install finished reporting success and left redirects to 5355 on all six
+  bridges, which `audit.sh` reported as drift and told the reader to fix by
+  hand. With this change the same run printed `Removed 24 redirect rule(s) from
+  a port no longer in use` and the audit came back clean with nothing run after
+  it
 - A DNS port other than 5354, end to end. 5354 was held by another process at
   install time, so the installer moved to 5355 and recorded it. The port was
   then freed and the installer re-run, which is where this used to come apart:
@@ -377,7 +386,6 @@ correct, but no one has run them on a real device:
 | **Keeping a `ctrld` newer than the pin** | A re-install must not roll a newer binary back to `CTRLD_PIN`. Unit-tested; no router has been ahead of the pin to try it on. |
 | **A real auto-update** | `controld-update.sh`'s version comparison, checksum verification and rollback are unit-tested. No router has taken an actual upgrade through it. |
 | **Reconciliation on the paths that only run while DNS is failing** | The divergence and every repair for it are now verified on hardware, but two paths there are not, because both need DNS to actually fail on the device: the fallback loop seeding its chain from the reconciled protocol rather than the recorded one, and a reboot landing between a retarget and the record of its result, the interruption that produces the divergence in the first place. |
-| **The installer's own stale-redirect prune** | `setup.sh` now removes redirects left pointing at a port it no longer uses, so a re-install that moved the port does not leave behind drift `audit.sh` will report on a router someone has just installed. The pruning itself is verified on hardware in both directions, through `reconfigure.sh --repair`. What has not run on a device is the installer calling it, which is a different moment: mid-install, right after the health check settles which port `ctrld` is on. |
 
 Every defect in this project's history that CI could not see appeared on a
 router first: a BusyBox awk regex, a cron guard matching another service's

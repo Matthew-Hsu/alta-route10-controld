@@ -288,6 +288,11 @@ install-and-reboot cycles including a full pre-release sweep:
   block and the forced-DNS flag all gone, every `https-dns-proxy` instance moved
   off ControlD and back to the stock resolver, the router's own cron jobs and the
   stock `force_dns_port` list untouched, and DNS still resolving afterwards
+- The two readouts run from outside `/cfg`. `status.sh` and `audit.sh`, each
+  fetched on its own into `/tmp` with no `lib.sh` beside it, found the installed
+  library and produced a full report against a live install. Before this they
+  died on the dot with the shell's own error, while their three siblings in the
+  same directory worked
 - A DNS port other than 5354, end to end. 5354 was held by another process at
   install time, so the installer moved to 5355 and recorded it. The port was
   then freed and the installer re-run, which is where this used to come apart:
@@ -358,7 +363,7 @@ correct, but no one has run them on a real device:
 | **Keeping a `ctrld` newer than the pin** | A re-install must not roll a newer binary back to `CTRLD_PIN`. Unit-tested; no router has been ahead of the pin to try it on. |
 | **A real auto-update** | `controld-update.sh`'s version comparison, checksum verification and rollback are unit-tested. No router has taken an actual upgrade through it. |
 | **Reconciliation on the paths that only run while DNS is failing** | The divergence and every repair for it are now verified on hardware, but two paths there are not, because both need DNS to actually fail on the device: the fallback loop seeding its chain from the reconciled protocol rather than the recorded one, and a reboot landing between a retarget and the record of its result, the interruption that produces the divergence in the first place. |
-| **Recovery without `lib.sh` on an install that moved off port 5354** | Both generated scripts used to overwrite the recorded port with the default on that path, so a boot added no redirects and the watchdog restarted `ctrld` every cycle while the router was healthy. The repair is unit-tested by running each script's real preamble against a sandbox `/cfg`. A moved port and a missing `lib.sh` are each verified on hardware on their own; no router here has been in both states at once, and what a boot does to iptables the suite only stubs. |
+| **Recovery without `lib.sh` on an install that moved off port 5354** | Both generated scripts used to overwrite the recorded port with the default on that path, so a boot added no redirects and the watchdog restarted `ctrld` every cycle on a healthy router. Each script's real preamble has since been run on a Route 10 under its own BusyBox ash against a throwaway config recording a moved port, and keeps it, while the same probe against the pre-fix `setup.sh` returns the default: the defect and the repair are both demonstrated on the device. What follows it is not. No router here has been in both states at once, so nothing has watched the redirects themselves land on a non-default port at boot. |
 
 Every defect in this project's history that CI could not see appeared on a
 router first: a BusyBox awk regex, a cron guard matching another service's

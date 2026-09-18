@@ -288,6 +288,20 @@ install-and-reboot cycles including a full pre-release sweep:
   block and the forced-DNS flag all gone, every `https-dns-proxy` instance moved
   off ControlD and back to the stock resolver, the router's own cron jobs and the
   stock `force_dns_port` list untouched, and DNS still resolving afterwards
+- Recovery without `lib.sh` on an install that had moved off 5354. With the
+  port on 5355 and `/cfg/lib.sh` renamed aside, a reboot brought `ctrld` up on
+  5355 and created all twelve port-53 redirects at `PREROUTING` positions 1 to
+  12, above the fw3 zone chains, with the boot log naming every bridge. Before
+  this fix that boot added no redirects at all and logged a failed health
+  check, so DNS kept working through `https-dns-proxy` while every device was
+  missing from the dashboard. Forced DNS is not restored on that path, by
+  design: `ensure_forced_dns` and `ensure_firewall_user_rules` sit behind
+  `command -v` guards and are not in the minimal helper set, so the port-853
+  rules stayed down until `lib.sh` came back, and a single watchdog cycle then
+  restored the uci flag, the twelve 853 rules and the `firewall.user` block.
+  Returning the port to 5354 pruned the 5355 rules the same way it had pruned
+  the 5354 ones on the way out, which is the round trip that once left 27,338
+  packets going to a closed port, and a second reboot came back with no drift
 - A DNS port other than 5354, end to end. 5354 was held by another process at
   install time, so the installer moved to 5355 and recorded it. The port was
   then freed and the installer re-run, which is where this used to come apart:
@@ -358,7 +372,6 @@ correct, but no one has run them on a real device:
 | **Keeping a `ctrld` newer than the pin** | A re-install must not roll a newer binary back to `CTRLD_PIN`. Unit-tested; no router has been ahead of the pin to try it on. |
 | **A real auto-update** | `controld-update.sh`'s version comparison, checksum verification and rollback are unit-tested. No router has taken an actual upgrade through it. |
 | **Reconciliation on the paths that only run while DNS is failing** | The divergence and every repair for it are now verified on hardware, but two paths there are not, because both need DNS to actually fail on the device: the fallback loop seeding its chain from the reconciled protocol rather than the recorded one, and a reboot landing between a retarget and the record of its result, the interruption that produces the divergence in the first place. |
-| **Recovery without `lib.sh` on an install that moved off port 5354** | Both generated scripts used to overwrite the recorded port with the default on that path, so a boot added no redirects and the watchdog restarted `ctrld` every cycle on a healthy router. Each script's real preamble has since been run on a Route 10 under its own BusyBox ash against a throwaway config recording a moved port, and keeps it, while the same probe against the pre-fix `setup.sh` returns the default: the defect and the repair are both demonstrated on the device. What follows it is not. No router here has been in both states at once, so nothing has watched the redirects themselves land on a non-default port at boot. |
 
 Every defect in this project's history that CI could not see appeared on a
 router first: a BusyBox awk regex, a cron guard matching another service's

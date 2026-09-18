@@ -412,8 +412,9 @@ firewall's own rules and left the boot hook, cron jobs and `firewall.user`
 entries behind, so the redirects came back on the next reboot, pointing at a
 binary that was no longer there.
 
-See the [Uninstalling](../README.md#uninstalling) section of the README for
-exactly what is removed from where, and what is deliberately left alone.
+See the [Uninstalling](technical-details.md#uninstalling) section of the
+technical details for exactly what is removed from where, and what is
+deliberately left alone.
 
 ## ctrld locking up the router
 

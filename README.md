@@ -71,6 +71,24 @@ walks you through picking a protocol (or benchmarks all of them and picks the
 fastest for you), and handles everything else: binary download, config,
 firewall rules, scheduled jobs.
 
+#### Guided Protocol Selection
+
+During setup, each protocol is presented with detailed information:
+
+```
+  1) DoH3 (HTTP/3)   : Port 443, UDP/QUIC. Stealthy, fast, widely compatible.
+  2) DoQ  (QUIC)     : Port 853, UDP/QUIC. Dedicated DNS port, lower overhead.
+  3) DoH  (HTTP/2)   : Port 443, TCP+TLS. Most compatible fallback.
+  4) DoT  (TLS)      : Port 853, TCP+TLS. Oldest, most widely supported.
+  5) Benchmark       : Test all four and auto-select the fastest.
+```
+
+Option 5 runs a quick benchmark (10 queries per protocol, about 40 seconds) and automatically configures the winner.
+
+All four protocols the project supports are offered here, and option 5 measures all four — the same set `benchmark.sh` and `reconfigure.sh --benchmark` measure. The two have to match in both directions: a protocol the benchmark measures but the menu does not list is one the installer could select for someone who never saw it, and a protocol the menu lists but the benchmark skips is one "pick the fastest for me" could never pick.
+
+**The port is the tradeoff, not the encryption.** All four encrypt your DNS. DoH3 and DoH ride port 443 and blend with ordinary HTTPS, so they are almost never blocked. DoQ and DoT use port 853, a dedicated DNS port some ISPs and mobile networks block outright — which is why the automatic fallback chain only ever targets 443. If you are unsure, option 1 or option 5.
+
 For non-interactive setup:
 
 ```sh
@@ -183,6 +201,28 @@ sh /cfg/audit.sh --raw    # add crontab, firewall.user, uci and nat dumps
 If it reports rules for a bridge that no longer exists, or a bridge with no
 rules, `sh /cfg/reconfigure.sh --repair` re-applies coverage and prunes the
 stale entries.
+
+### VLAN Coverage
+
+Per-device visibility depends on DNS being intercepted on every LAN bridge. Alta
+names the default LAN bridge `br-lan` and each VLAN `br-lan_<vlan-id>`
+(`br-lan_10`, `br-lan_20`, …), so the bridge list is discovered at runtime. A
+VLAN added after install is picked up by the watchdog within 5 minutes.
+
+```sh
+sh status.sh                  # per-bridge redirect coverage + subnets
+sh reconfigure.sh --repair    # re-apply redirects, and prune rules for bridges that no longer exist
+```
+
+A bridge without a redirect is the usual reason a device resolves fine but never
+appears in the ControlD dashboard: its queries never reach `ctrld`, so ControlD
+only ever sees the router. To leave a VLAN alone (a guest network with its own
+DNS, say), set either of these in `/cfg/controld.env`:
+
+```sh
+LAN_IFACES_EXCLUDE="br-lan_40"              # cover everything except these
+LAN_IFACES="br-lan br-lan_10 br-lan_20"     # or pin the list exactly
+```
 
 ### After a Firmware Update
 
@@ -521,24 +561,6 @@ All scripts source `lib.sh` which provides:
 
 ### How It Works
 
-#### Guided Protocol Selection
-
-During setup, each protocol is presented with detailed information:
-
-```
-  1) DoH3 (HTTP/3)   : Port 443, UDP/QUIC. Stealthy, fast, widely compatible.
-  2) DoQ  (QUIC)     : Port 853, UDP/QUIC. Dedicated DNS port, lower overhead.
-  3) DoH  (HTTP/2)   : Port 443, TCP+TLS. Most compatible fallback.
-  4) DoT  (TLS)      : Port 853, TCP+TLS. Oldest, most widely supported.
-  5) Benchmark       : Test all four and auto-select the fastest.
-```
-
-Option 5 runs a quick benchmark (10 queries per protocol, about 40 seconds) and automatically configures the winner.
-
-All four protocols the project supports are offered here, and option 5 measures all four — the same set `benchmark.sh` and `reconfigure.sh --benchmark` measure. The two have to match in both directions: a protocol the benchmark measures but the menu does not list is one the installer could select for someone who never saw it, and a protocol the menu lists but the benchmark skips is one "pick the fastest for me" could never pick.
-
-**The port is the tradeoff, not the encryption.** All four encrypt your DNS. DoH3 and DoH ride port 443 and blend with ordinary HTTPS, so they are almost never blocked. DoQ and DoT use port 853, a dedicated DNS port some ISPs and mobile networks block outright — which is why the automatic fallback chain only ever targets 443. If you are unsure, option 1 or option 5.
-
 #### Quick Reconfigure
 
 Change your setup without re-running the full installer:
@@ -570,28 +592,6 @@ sh reconfigure.sh --repair
 
 # Interactive menu (no flags)
 sh reconfigure.sh
-```
-
-#### VLAN Coverage
-
-Per-device visibility depends on DNS being intercepted on every LAN bridge. Alta
-names the default LAN bridge `br-lan` and each VLAN `br-lan_<vlan-id>`
-(`br-lan_10`, `br-lan_20`, …), so the bridge list is discovered at runtime. A
-VLAN added after install is picked up by the watchdog within 5 minutes.
-
-```sh
-sh status.sh                  # per-bridge redirect coverage + subnets
-sh reconfigure.sh --repair    # re-apply redirects, and prune rules for bridges that no longer exist
-```
-
-A bridge without a redirect is the usual reason a device resolves fine but never
-appears in the ControlD dashboard: its queries never reach `ctrld`, so ControlD
-only ever sees the router. To leave a VLAN alone (a guest network with its own
-DNS, say), set either of these in `/cfg/controld.env`:
-
-```sh
-LAN_IFACES_EXCLUDE="br-lan_40"              # cover everything except these
-LAN_IFACES="br-lan br-lan_10 br-lan_20"     # or pin the list exactly
 ```
 
 #### Boot Persistence

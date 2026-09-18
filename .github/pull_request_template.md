@@ -27,6 +27,11 @@ uninstall, setup, version, repair.
       implying `test.sh` covers it, and updated README's Verification Status
       table if this changes what's proven vs. not
 
+<!-- If you did exercise something on hardware, the row comes out of README's
+     Verification Status table and the entry goes into
+     docs/hardware-verification.md, under the heading for its area, saying what
+     you ran. See CONTRIBUTING.md's "Testing on hardware". -->
+
 ## Scope and commits
 
 - [ ] One concern. If the summary above needs the word "also," this is

@@ -94,6 +94,11 @@ line numbers drift and a stale pointer aims attention at the wrong line:
   thing while the two match
 - the `── Inline benchmark ──` header in `setup.sh`, which `test.sh` uses as a
   `sed` range anchor from another file
+- the `#### Guided Protocol Selection` heading in `README.md` and the
+  `Option 5 runs` line that closes it. They are the two ends of a `sed` range
+  `test.sh` reads to check the documented menu still matches the installer's.
+  Retitling the heading empties the range, and rewording the closing line
+  leaves it running to the end of the file
 - every `# shellcheck` directive, including the trailing prose ones. The prose
   after the directive is editable; the directive is not
 - every shebang, the four inside `setup.sh`'s heredocs included
@@ -120,8 +125,8 @@ and say in the commit what moved. Deleting one to get green is how this project
 ends up back where it started, with a documented rule and nothing enforcing it.
 
 That rule is the only thing covering an interface added later, so treat it as
-load-bearing. The guards above protect these six and nothing else: add a
-seventh without one and the suite stays green, both when you add it and when
+load-bearing. The guards above protect these seven and nothing else: add an
+eighth without one and the suite stays green, both when you add it and when
 someone reworks the comment away months later, in a different change, with
 nothing to connect the breakage back to the edit that caused it. Simulating
 exactly that is how this section was checked. Whether a new interface is

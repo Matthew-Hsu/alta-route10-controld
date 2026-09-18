@@ -243,10 +243,16 @@ sh /cfg/audit.sh
 
 Clean output means the update moved nothing this install depends on. If
 `audit.sh` reports drift, reboot and run it again, which resolves most of it.
+
+One case a reboot cannot resolve: if the update dropped the line in
+`/etc/rc.local` that sources `/cfg/rc.local`, nothing is restored at any future
+boot, and re-running the installer will not put it back either. You add that
+line by hand. [Firmware Updates](docs/technical-details.md#firmware-updates)
+lists each item an audit can report, what it costs you, and how to recover it.
+
 Anything still reported after that is worth raising as an issue, since it means
 a firmware change moved something this project relies on, and the fix belongs
-here rather than in your router. [Firmware Updates](docs/technical-details.md#firmware-updates) explains
-each item it can report.
+here rather than in your router.
 
 ### Change the Resolver ID
 

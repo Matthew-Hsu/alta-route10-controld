@@ -3659,6 +3659,71 @@ assert_contains "the VLAN's current rule survives" "$PSR_LEFT" \
 assert_contains "someone else's proxy redirect is left alone" "$PSR_LEFT" \
     '--dport 80 -j REDIRECT --to-ports 3128$'
 
+# What this function assumes, written down, because setup.sh now calls it on
+# every install and the assumption is the whole reason that is safe.
+#
+# A DNS redirect in PREROUTING, on a current LAN bridge, pointing at a port
+# this install does not listen on, is taken to be one of ours from an earlier
+# port and is removed. It cannot be told apart from another daemon's: the two
+# are the same rule. Narrowing the match to rules we can prove are ours would
+# retire the function, since a rule pointing at a port we no longer use is by
+# definition one we can no longer recognise.
+#
+# The assumption holds on a Route 10 because the other DNS service present,
+# https-dns-proxy, writes its force_dns redirects into the fw3 zone chains, and
+# the ^-A PREROUTING filter never sees those. The rule below is what that
+# daemon would look like if it ever wrote one at the top level. It is removed,
+# and this asserts that rather than leaving it to be discovered on a router.
+cat > "$IPT_STORE" << 'PSRFOREIGNEOF'
+-A PREROUTING -i br-lan -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354
+-A PREROUTING -i br-lan -p udp -m udp --dport 53 -j REDIRECT --to-ports 5053
+-A PREROUTING -p udp -m udp --dport 53 -j REDIRECT --to-ports 5053
+-A PREROUTING -i eth0 -p udp -m udp --dport 53 -j REDIRECT --to-ports 5053
+PSRFOREIGNEOF
+PSR_FN="$(prune_stale_redirects 5354)"
+PSR_FLEFT="$(cat "$IPT_STORE")"
+assert_eq "a top-level DNS redirect to another port is taken as ours" "2" "$PSR_FN"
+assert_not_contains "and removed from a LAN bridge" "$PSR_FLEFT" \
+    '-i br-lan -p udp -m udp --dport 53 -j REDIRECT --to-ports 5053'
+assert_not_contains "and from an interface that is not a LAN bridge" "$PSR_FLEFT" \
+    '-i eth0 '
+# A rule with no -i at all applies everywhere, including the WAN, so it is
+# nobody's to guess at. redirect_rule_iface returns nothing and the loop skips
+# it; that is deliberate, not an oversight.
+assert_contains "a rule bound to no interface is never touched" "$PSR_FLEFT" \
+    '^-A PREROUTING -p udp -m udp --dport 53 -j REDIRECT --to-ports 5053$'
+assert_contains "and the install's own rule survives" "$PSR_FLEFT" \
+    '--to-ports 5354$'
+
+# setup.sh prunes too, and where it does so is the whole of whether it is safe.
+#
+# A re-install that changes the port leaves the old rules in the live table:
+# post-cfg.sh adds the new ones and removes nothing, so audit.sh reports drift
+# on a router someone has just installed, and only reconfigure.sh --repair
+# cleared it. The installer is where that is someone's to notice.
+#
+# Ordering is the assertion, not presence. Called before Step 9c settles the
+# port, it would prune against a port about to move and delete the rules the
+# install is about to need; called before the health check, ctrld might not be
+# answering on that port at all. A source assertion because installing needs
+# /cfg, uci and iptables, and it checks position rather than the line itself.
+PSR_SETUP_CONFLICT=$(code_lineno "$SCRIPT_DIR/setup.sh" -F 'is already in use by another process')
+PSR_SETUP_HEALTH=$(code_lineno "$SCRIPT_DIR/setup.sh" -F 'ctrld DNS responding on port')
+PSR_SETUP_PRUNE=$(code_lineno "$SCRIPT_DIR/setup.sh" -F '_pruned="$(prune_stale_redirects')
+assert_true "setup.sh prunes stale redirects at all" [ -n "$PSR_SETUP_PRUNE" ]
+PSR_SETUP_ORDER=no
+if [ -n "$PSR_SETUP_CONFLICT" ] && [ -n "$PSR_SETUP_HEALTH" ] && [ -n "$PSR_SETUP_PRUNE" ] \
+        && [ "$PSR_SETUP_CONFLICT" -lt "$PSR_SETUP_PRUNE" ] \
+        && [ "$PSR_SETUP_HEALTH" -lt "$PSR_SETUP_PRUNE" ]; then
+    PSR_SETUP_ORDER=yes
+fi
+assert_eq "and only once the port is settled and ctrld answers on it" \
+    "yes" "$PSR_SETUP_ORDER"
+# post-cfg.sh must not: a reboot rebuilds the nat table and firewall.user is
+# regenerated from the current port, so there is nothing stale left to find.
+assert_false "post-cfg.sh does not prune, having nothing to prune at boot" \
+    code_grep "$SCRIPT_DIR/setup.sh" -E '^\s+prune_stale_redirects'
+
 # Running it again must be a no-op rather than finding new things to delete.
 assert_eq "a second run removes nothing" "0" "$(prune_stale_redirects 5354)"
 

@@ -377,6 +377,7 @@ correct, but no one has run them on a real device:
 | **Keeping a `ctrld` newer than the pin** | A re-install must not roll a newer binary back to `CTRLD_PIN`. Unit-tested; no router has been ahead of the pin to try it on. |
 | **A real auto-update** | `controld-update.sh`'s version comparison, checksum verification and rollback are unit-tested. No router has taken an actual upgrade through it. |
 | **Reconciliation on the paths that only run while DNS is failing** | The divergence and every repair for it are now verified on hardware, but two paths there are not, because both need DNS to actually fail on the device: the fallback loop seeding its chain from the reconciled protocol rather than the recorded one, and a reboot landing between a retarget and the record of its result, the interruption that produces the divergence in the first place. |
+| **The installer's own stale-redirect prune** | `setup.sh` now removes redirects left pointing at a port it no longer uses, so a re-install that moved the port does not leave behind drift `audit.sh` will report on a router someone has just installed. The pruning itself is verified on hardware in both directions, through `reconfigure.sh --repair`. What has not run on a device is the installer calling it, which is a different moment: mid-install, right after the health check settles which port `ctrld` is on. |
 
 Every defect in this project's history that CI could not see appeared on a
 router first: a BusyBox awk regex, a cron guard matching another service's

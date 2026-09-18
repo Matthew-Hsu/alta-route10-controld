@@ -21,7 +21,9 @@ grep -E 'DISTRIB_(REVISION|DESCRIPTION)' /etc/openwrt_release
 ```
 
 Everything below was verified on that combination unless an entry says
-otherwise.
+otherwise. For the other half, the paths that pass the test suite and have
+never run on a device, see [Verification
+Status](../README.md#verification-status) in the README.
 
 ## Install and Upgrade
 

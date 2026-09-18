@@ -203,14 +203,21 @@ else
     print_info "Fix:  sh /cfg/reconfigure.sh --repair"
 fi
 
-# A redirect pointing at a port this install does not use swallows every query
-# on its bridge, because PREROUTING is evaluated in order and a leftover from a
-# previous port can sit above the current rules. Seen on a router after the
-# port moved and moved back: 27,338 packets on one bridge sent to a closed
-# port, while every check here passed. Both the coverage count below and
-# status.sh only ever counted rules already matching the current port, so
-# neither could see it. This is drift, not review: DNS is down for those
-# clients until someone removes the rule.
+# A redirect pointing at a port this install does not use is a leftover from an
+# earlier one. Every rule this project writes is inserted at the head of
+# PREROUTING, so where a bridge also has a current rule that rule outranks the
+# leftover and the traffic is unaffected. A bridge with no current rule is the
+# other case: the leftover is then the only rule there, and every query on that
+# bridge goes to a closed port.
+#
+# This read as the second case unconditionally, carried over from the era when
+# rules were appended rather than inserted, when a leftover really could sit
+# above a working rule. That is where the 27,338 packets on one bridge went to
+# a closed port after the port moved and moved back, while every check here
+# passed, because the coverage count below and status.sh only ever counted
+# rules already matching the current port. Insertion at the head fixed the
+# ordering. Still drift rather than review, because a leftover has no business
+# being there whether or not it is taking traffic today.
 wrongport="$(dns_redirect_rules \
     | sed -n 's/.* -i \([^ ]*\) .*--to-ports \([0-9][0-9]*\).*/\1->\2/p' \
     | grep -v -- "->${DNS_PORT}$" | sort -u | tr '\n' ' ')"
@@ -219,7 +226,8 @@ if [ -z "$wrongport" ]; then
     print_ok "Every redirect points at the port in use (${DNS_PORT})"
 else
     drift "Redirect(s) pointing at a port nothing listens on: ${wrongport}"
-    print_info "These sit above the working rules and take the traffic."
+    print_info "Left from a port this install no longer uses."
+    print_info "Harmless under a current rule, not on a bridge that has none."
     print_info "Fix:  sh /cfg/reconfigure.sh --repair"
 fi
 

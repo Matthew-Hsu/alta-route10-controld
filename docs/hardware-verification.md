@@ -1,8 +1,27 @@
 # Hardware Verification
 
-**Verified on hardware.** An Alta Labs Route 10 (BusyBox v1.33.1), six LAN
-bridges, forced DNS enabled, `ctrld` 1.5.7 over DoH3, across repeated
-install-and-reboot cycles including a full pre-release sweep:
+What has been watched happen on a real device, and on which one. Everything
+here was exercised across repeated install-and-reboot cycles, including a full
+pre-release sweep.
+
+| Part | What was running |
+|---|---|
+| Router | Alta Labs Route 10 (`qcom,ipq9574-alta-route10`) |
+| Firmware | Alta `1.5g` on OpenWrt 21.02.1 (`r16325-88151b8303`) |
+| Kernel | 5.4.213, aarch64 |
+| BusyBox | 1.33.1, stock for OpenWrt 21.02.1 |
+| ctrld | 1.5.7 over DoH3 |
+| Scripts | 1.10.1 |
+| Install | six LAN bridges, forced DNS enabled |
+
+Check what your own router runs:
+
+```sh
+grep -E 'DISTRIB_(REVISION|DESCRIPTION)' /etc/openwrt_release
+```
+
+Everything below was verified on that combination unless an entry says
+otherwise.
 
 - Install, and re-install over an existing install, each followed by a reboot
 - Redirect coverage on all six bridges, the port-853 DoT hijack, and

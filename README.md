@@ -296,7 +296,18 @@ removed and what doesn't.
 
 ## Troubleshooting
 
-See [docs/troubleshooting.md](docs/troubleshooting.md).
+Each of these has a worked fix in
+[docs/troubleshooting.md](docs/troubleshooting.md):
+
+- [DNS not working after setup](docs/troubleshooting.md#dns-not-working-after-setup)
+- [Devices on a VLAN never appear in ControlD](docs/troubleshooting.md#devices-on-a-vlan-never-appear-in-controld)
+- [Devices showing as MAC addresses only (no hostnames)](docs/troubleshooting.md#devices-showing-as-mac-addresses-only-no-hostnames)
+- [LAN DNS dies after the port moved, but everything reports healthy](docs/troubleshooting.md#lan-dns-dies-after-the-port-moved-but-everything-reports-healthy)
+- [status.sh says the DNS redirects were removed](docs/troubleshooting.md#statussh-says-the-dns-redirects-were-removed)
+- [ctrld keeps crashing](docs/troubleshooting.md#ctrld-keeps-crashing)
+- [QUIC / DoQ / DoH3 not connecting](docs/troubleshooting.md#quic--doq--doh3-not-connecting)
+- [Changes not persisting after reboot](docs/troubleshooting.md#changes-not-persisting-after-reboot)
+- [Firmware update wiped everything](docs/troubleshooting.md#firmware-update-wiped-everything)
 
 ## Verification Status
 

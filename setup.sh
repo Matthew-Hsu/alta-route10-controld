@@ -1445,6 +1445,25 @@ else
     print_warn "ctrld not responding on port ${DNS_PORT} (may need a moment)"
 fi
 
+# Drop redirects this install can no longer use: one from a port it used
+# earlier, or one on a bridge that is gone.
+#
+# Only here, not in post-cfg.sh. A reboot rebuilds the nat table from nothing
+# and firewall.user is regenerated from the current port, so nothing stale
+# survives one. What does survive is a re-install that changed the port: the
+# old rules stay in the live table, and audit.sh reports them as drift on a
+# router someone has only just installed. The installer is where that is
+# someone's to notice and nobody's to fix.
+#
+# After the health check rather than before it, so DNS_PORT is the port Step 9c
+# settled on and ctrld is known to be answering there. Pruning against a port
+# that is about to move would delete the rules the install is about to need.
+_pruned="$(prune_stale_redirects "$DNS_PORT")"
+case "$_pruned" in
+    ''|0|*[!0-9]*) ;;
+    *) print_ok "Removed ${_pruned} redirect rule(s) from a port no longer in use" ;;
+esac
+
 _covered=""; _uncovered=""
 for _if in $(lan_ifaces); do
     if iptables -t nat -C PREROUTING -i "$_if" -p udp --dport 53 \

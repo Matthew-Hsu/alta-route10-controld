@@ -354,9 +354,9 @@ this document.
 
 **Verified on hardware.** [docs/hardware-verification.md](docs/hardware-verification.md)
 records what has been watched happen on a real device and on which firmware,
-grouped by area: install and upgrade, redirect coverage, DNS port changes, the
-watchdog, boot persistence, protocol reconciliation, split DNS, the readouts,
-and uninstall.
+grouped by area: per-device visibility, install and upgrade, redirect
+coverage, DNS port changes, the watchdog, boot persistence, protocol
+reconciliation, split DNS, the readouts, and uninstall.
 
 **Not exercised on hardware.** These pass the test suite and are believed
 correct, but no one has run them on a real device:

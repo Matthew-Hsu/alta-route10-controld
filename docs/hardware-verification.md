@@ -25,6 +25,12 @@ otherwise. For the other half, the paths that pass the test suite and have
 never run on a device, see [Verification
 Status](../README.md#verification-status) in the README.
 
+## Per-Device Visibility
+
+- **Devices appearing individually in ControlD.** Across all six bridges,
+  devices resolved through `ctrld` and showed up as separate clients rather
+  than the router alone.
+
 ## Install and Upgrade
 
 - Install, and re-install over an existing install, each followed by a reboot

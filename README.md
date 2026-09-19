@@ -87,8 +87,6 @@ During setup, each protocol is presented with detailed information:
 
 Option 5 runs a quick benchmark (10 queries per protocol, about 40 seconds) and automatically configures the winner.
 
-All four protocols the project supports are offered here, and option 5 measures all four — the same set `benchmark.sh` and `reconfigure.sh --benchmark` measure. The two have to match in both directions: a protocol the benchmark measures but the menu does not list is one the installer could select for someone who never saw it, and a protocol the menu lists but the benchmark skips is one "pick the fastest for me" could never pick.
-
 **The port is the tradeoff, not the encryption.** All four encrypt your DNS. DoH3 and DoH ride port 443 and blend with ordinary HTTPS, so they are almost never blocked. DoQ and DoT use port 853, a dedicated DNS port some ISPs and mobile networks block outright — which is why the automatic fallback chain only ever targets 443. If you are unsure, option 1 or option 5.
 
 For non-interactive setup:

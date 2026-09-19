@@ -3773,8 +3773,17 @@ describe "CI must run on every pull request, not only ones based on master"
 #
 # There is no behavioural test for a CI config — the runner is not here. What
 # is asserted is the one line whose absence caused it, in every workflow.
-for _wf in .github/workflows/ci.yml .forgejo/workflows/ci.yml \
-           .forgejo/workflows/secrets-scan.yml; do
+#
+# One workflow, and still a loop: a second one added later gets checked
+# without anyone remembering to check it. The Forgejo mirror this used to
+# iterate is gone.
+#
+# SC2043 is a warning, so the first shellcheck pass reports it and this
+# directive is the thing keeping that pass green. Delete the directive and
+# that pass goes red on the spot, which is the guard, unlike the SC2086 ones
+# that needed a second narrow pass built for them.
+# shellcheck disable=SC2043  # one workflow today, and the loop is for the next one
+for _wf in .github/workflows/ci.yml; do
     if [ ! -f "$SCRIPT_DIR/$_wf" ]; then
         skip "$_wf not found"
         continue

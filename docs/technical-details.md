@@ -294,6 +294,11 @@ recommendation, because nothing is installed yet and there is no running
 protocol to compare against — it simply selects the winner. None of the three
 entry points interrupts DNS for the LAN.
 
+The two sets have to match in both directions: a protocol the benchmark
+measures but the menu does not list is one the installer could select for
+someone who never saw it, and a protocol the menu lists but the benchmark
+skips is one "pick the fastest for me" could never pick.
+
 ### Fallback Safety
 
 Two layers of protection:

@@ -146,6 +146,17 @@ it: run `code_only()` over the file before and after and diff the two. Matching
 output means no code line changed. A trailing inline comment survives that
 filter, so check those by eye.
 
+Proving the text is identical is not proving the move is correct, and on prose
+the two come apart. A sentence carries what it refers to: "this", "here",
+"that", "above", "the two". Those point at whatever preceded them, and moving
+the text silently re-points them, while every byte-for-byte check passes.
+Three bugs in one restructure came from exactly this, including a section
+whose first line became circular once its heading was renamed around it, and a
+paragraph reading "the two sets" under a sentence naming three things. So
+after a move, read the first sentence of what moved against what now precedes
+it, and read what is left behind at the origin, where a following sentence may
+have been leaning on the text you took.
+
 Title-case headings stay as they are. They are the convention across the repo
 and `README.md`'s table of contents links to them.
 

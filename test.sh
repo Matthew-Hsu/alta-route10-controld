@@ -173,13 +173,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # is why CONTRIBUTING.md's on-router step is a copy of the repo.
 _ts_missing=""
 for _ts_need in lib.sh setup.sh status.sh benchmark.sh reconfigure.sh \
-                audit.sh uninstall.sh README.md; do
+                audit.sh uninstall.sh README.md docs/technical-details.md; do
     [ -f "$SCRIPT_DIR/$_ts_need" ] || _ts_missing="${_ts_missing} ${_ts_need}"
 done
 if [ -n "$_ts_missing" ]; then
     echo "test.sh needs the project's sources beside it. Missing:${_ts_missing}" >&2
     echo "An install does not put them all in /cfg. Run from a copy of the repo:" >&2
-    echo "  scp *.sh README.md route10:/tmp/controld/" >&2
+    echo "  scp -r *.sh README.md docs route10:/tmp/controld/" >&2
     echo "  ssh route10 'sh /tmp/controld/test.sh'" >&2
     exit 1
 fi
@@ -3816,8 +3816,9 @@ describe "the suite must refuse a partial checkout, not die inside one"
 # A partial tree is built and the real suite is run inside it. The preflight
 # makes this cheap: it exits before the first assertion.
 PF_DIR="$TMPDIR/partial"
-mkdir -p "$PF_DIR"
-for _pf in lib.sh test.sh status.sh benchmark.sh reconfigure.sh audit.sh uninstall.sh README.md; do
+mkdir -p "$PF_DIR/docs"
+for _pf in lib.sh test.sh status.sh benchmark.sh reconfigure.sh audit.sh \
+           uninstall.sh README.md docs/technical-details.md; do
     cp "$SCRIPT_DIR/$_pf" "$PF_DIR/$_pf"
 done
 # Everything but setup.sh, exactly as an install leaves it.

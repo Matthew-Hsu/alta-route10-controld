@@ -185,6 +185,30 @@ reports how many packets each bridge has actually redirected. Rules can be
 present and still never match. A VLAN with active devices and zero packets is
 the one to investigate; an idle VLAN reading zero is expected.
 
+A healthy run is not all `[OK]`. `[~~]` marks something worth a glance rather
+than something broken, and the Summary line is the verdict:
+
+    Packets Actually Intercepted
+    [OK]  br-lan: 510 packet(s) redirected
+    [OK]  br-lan_10: 69234 packet(s) redirected
+    [OK]  br-lan_20: 36248 packet(s) redirected
+    [OK]  br-lan_30: 2536 packet(s) redirected
+    [~~] br-lan_40: 0 packets — nothing has queried through this bridge yet
+    [OK]  br-lan_50: 449 packet(s) redirected
+
+    Leftovers
+    [~~] /etc/controld — created by ctrld while running; uninstall removes it
+    [OK]  Nothing unexpected in /cfg
+
+    Device Discovery
+    [OK]  dhcp.leases is current (88 lease(s)) — ctrld can name devices
+
+    Summary
+    [OK]  No drift. 2 item(s) to review above.
+
+That is a clean install. The idle bridge and `/etc/controld` are the two items
+it asks you to review.
+
 `audit.sh` opens with the versions actually on the router. Because it can be
 run from a checkout in `/tmp` as well as from `/cfg`, it compares the library
 it sourced against the one installed and says so when they differ. An audit

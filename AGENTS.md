@@ -100,11 +100,12 @@ line numbers drift and a stale pointer aims attention at the wrong line:
   Retitling the heading empties the range, and rewording the closing line
   leaves it running to the end of the file
 - the `lib.sh` function names in `docs/technical-details.md`'s Shared Library
-  list. `test.sh` scans `*.sh`, `*.md` and `docs/*.md` for a caller of every
-  function, so that inventory counts as one. No function depends on it alone
-  today, which was checked by running the suite against a tree without
-  `docs/`; the exposure is a future function whose only mention outside
-  `lib.sh` lands there
+  list. `test.sh` scans `*.sh`, `*.md`, `docs/*.md` and `config/*.example` for
+  a caller of every function, so that inventory counts as one. No function
+  depends on it alone today, which was checked by deleting the inventory and
+  re-running the suite: the dead-function assertion still passed, because
+  calls inside `lib.sh` count as references. The exposure is a future function
+  whose only mention outside `lib.sh` lands there
 - every `# shellcheck` directive, including the trailing prose ones. The prose
   after the directive is editable; the directive is not
 - every shebang, the four inside `setup.sh`'s heredocs included

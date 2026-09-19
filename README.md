@@ -43,8 +43,11 @@ individually in the ControlD dashboard, including devices on VLANs, not just
 the router as a whole. It survives reboots and firmware updates without
 help, and falls back to a still-encrypted resolver if something goes wrong.
 
-> A few paths pass the test suite but have not been run on a real router — a
-> real auto-update among them. See [Verification
+> Everything here was exercised on an Alta Route 10 running firmware `1.5g`,
+> across six LAN bridges, and
+> [docs/hardware-verification.md](docs/hardware-verification.md) records what
+> was watched happen. A few paths pass the test suite but have not been run on
+> a real router, a real auto-update among them. See [Verification
 > Status](#verification-status) before relying on them. **DNS interception is
 > IPv4-only**, and that plus the project's other limits are in [Not
 > Supported](#not-supported).
@@ -324,9 +327,11 @@ confidence in what is here. For capabilities and workflows this project
 doesn't support at all, see [Not Supported](#not-supported) near the top of
 this document.
 
-**Verified on hardware.** The full list of what has been watched happen on a
-real device, and on which firmware, is in
-[docs/hardware-verification.md](docs/hardware-verification.md).
+**Verified on hardware.** [docs/hardware-verification.md](docs/hardware-verification.md)
+records what has been watched happen on a real device and on which firmware,
+grouped by area: install and upgrade, redirect coverage, DNS port changes, the
+watchdog, boot persistence, protocol reconciliation, split DNS, the readouts,
+and uninstall.
 
 **Not exercised on hardware.** These pass the test suite and are believed
 correct, but no one has run them on a real device:

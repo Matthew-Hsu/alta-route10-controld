@@ -1,8 +1,9 @@
 name: ci
 
-# Mirrors .forgejo/workflows/ci.yml, which GitHub does not read. This fork is
-# the canonical home, so the checks have to run here. secrets-scan mirrors
-# .forgejo/workflows/secrets-scan.yml for the same reason.
+# This fork's canonical home is GitHub, and this file is the only CI definition
+# it has. A Forgejo mirror of it lived in .forgejo/workflows/ until it was
+# removed: GitHub never read it, nobody ran this on Forgejo, and two copies
+# kept in step by hand is a drift waiting to happen.
 #
 # pull_request carries no branches filter on purpose. With [master] on it, a PR
 # based on another branch was not merely unchecked — no check ever appeared, so

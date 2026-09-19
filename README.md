@@ -316,6 +316,21 @@ sh /cfg/status.sh                             # shows forced-DNS status and DoT 
 See [Forced DNS Hijacking](docs/technical-details.md#forced-dns-hijacking) for exactly what it catches
 and what it can't.
 
+### Send a Device to a Different Profile
+
+Put a device or a whole subnet on a second ControlD profile, so a kid's tablet
+gets a filtered resolver while everything else does not.
+
+```sh
+sh /cfg/reconfigure.sh --policy      # lists your VLAN subnets to pick from
+sh /cfg/status.sh                    # shows the upstreams and policies in use
+```
+
+Devices are matched by MAC address or by subnet, not by name. Policies survive
+protocol changes, resolver changes and re-running the installer. See [Split DNS
+and Per-Device Policy](docs/technical-details.md#split-dns-and-per-device-policy)
+for how the rules are stored and what a config with two profiles looks like.
+
 ### Uninstall
 
 ```sh

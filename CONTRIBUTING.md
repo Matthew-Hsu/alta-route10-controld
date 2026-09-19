@@ -98,6 +98,17 @@ invisible to it, and deleting one leaves that pass green.
 AGENTS.md counts those directives as interfaces. This is what enforces it, so
 running only the first three commands means a clean local run and a red CI.
 
+CI runs on every push to `master` and on **every** pull request, whatever
+branch it targets, via GitHub Actions (`.github/workflows/ci.yml`), this
+fork's canonical home. The original `.forgejo/workflows/` definitions are kept
+in step for anyone running this on a Forgejo instance, but GitHub does not
+read them.
+
+The `pull_request` trigger deliberately carries no branch filter. Filtered to
+`master`, a PR based on another branch got no checks at all, not pending, not
+failing, simply absent, so a stack of PRs could be reviewed and merged without
+CI ever having run on it.
+
 ## Testing on hardware
 
 The unit suite runs anywhere; iptables and firewall behavior is stubbed. Every

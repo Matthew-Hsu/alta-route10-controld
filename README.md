@@ -393,13 +393,13 @@ firmware updates.
 
 ## CI
 
-CI runs on every push to `master` and on **every** pull request, whatever branch it targets, via **GitHub Actions** (`.github/workflows/ci.yml`), this fork's canonical home. The original `.forgejo/workflows/` definitions are kept in step for anyone running this on a Forgejo instance, but GitHub does not read them.
-
-The `pull_request` trigger deliberately carries no branch filter. Filtered to `master`, a PR based on another branch got no checks at all — not pending, not failing, simply absent — so a stack of PRs could be reviewed and merged without CI ever having run on it.
-
-1. **secrets-scan**: runs `betterleaks` over the tree so no credential or key gets committed
-2. **shellcheck**: lints all shell scripts
-3. **test suite**: runs `test.sh` three times, under GNU awk, under BusyBox awk, and under BusyBox `ash` as well as BusyBox awk. The router runs BusyBox throughout, and both its awk and its shell differ from the runner's in ways that have silently broken on-device behavior while CI was green (integration tests run only on-router)
+Every push to `master` and every pull request runs a `betterleaks` secrets
+scan, shellcheck over every script, and `test.sh` three times: under GNU awk,
+under BusyBox awk, and under BusyBox `ash` as well. The router runs BusyBox
+throughout, and both its awk and its shell differ from the runner's in ways
+that have silently broken on-device behavior while CI was green. Integration
+tests run only on the router. [CONTRIBUTING.md](CONTRIBUTING.md) has the
+workflow layout and the commands to run the same checks yourself.
 
 ## Credits
 

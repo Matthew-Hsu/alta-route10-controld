@@ -43,8 +43,8 @@ individually in the ControlD dashboard, including devices on VLANs, not just
 the router as a whole. It survives reboots and firmware updates without
 help, and falls back to a still-encrypted resolver if something goes wrong.
 
-> Everything here was exercised on an Alta Route 10 running firmware `1.5g`,
-> across six LAN bridges, and
+> This project is developed and exercised on an Alta Route 10 running firmware
+> `1.5g`, across six LAN bridges;
 > [docs/hardware-verification.md](docs/hardware-verification.md) records what
 > was watched happen. A few paths pass the test suite but have not been run on
 > a real router, a real auto-update among them. See [Verification
@@ -276,9 +276,9 @@ boot, and re-running the installer will not put it back either. You add that
 line by hand. [Firmware Updates](docs/technical-details.md#firmware-updates)
 lists each item an audit can report, what it costs you, and how to recover it.
 
-Anything still reported after that is worth raising as an issue, since it means
-a firmware change moved something this project relies on, and the fix belongs
-here rather than in your router.
+Anything still reported after a reboot is worth raising as an issue, since it
+means a firmware change moved something this project relies on, and the fix
+belongs here rather than in your router.
 
 ### Change the Resolver ID
 

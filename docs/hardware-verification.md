@@ -29,7 +29,8 @@ Status](../README.md#verification-status) in the README.
 
 - **Devices appearing individually in ControlD.** Across all six bridges,
   devices resolved through `ctrld` and showed up as separate clients rather
-  than the router alone.
+  than the router alone. A bridge reading zero packets in any one audit is
+  idle at that moment, not uncovered.
 
 ## Install and Upgrade
 

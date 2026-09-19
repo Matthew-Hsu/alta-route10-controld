@@ -55,8 +55,10 @@ help, and falls back to a still-encrypted resolver if something goes wrong.
 ### Prerequisites
 
 - Alta Labs Route 10 router
-- A [ControlD](https://controld.com) account with a resolver ID
-- SSH access to the router (add your key at [manage.alta.inc](https://manage.alta.inc) > Settings > System > SSH Keys)
+- A [ControlD](https://controld.com) account with a resolver ID. ControlD's
+  [getting started guide](https://docs.controld.com/docs/getting-started)
+  covers creating one.
+- SSH access to the router as `root` (add your key at [manage.alta.inc](https://manage.alta.inc) > Settings > System > SSH Keys)
 
 ### Install
 

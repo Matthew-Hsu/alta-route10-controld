@@ -100,9 +100,7 @@ running only the first three commands means a clean local run and a red CI.
 
 CI runs on every push to `master` and on **every** pull request, whatever
 branch it targets, via GitHub Actions (`.github/workflows/ci.yml`), this
-fork's canonical home. The original `.forgejo/workflows/` definitions are kept
-in step for anyone running this on a Forgejo instance, but GitHub does not
-read them.
+fork's canonical home and its only CI definition.
 
 The `pull_request` trigger deliberately carries no branch filter. Filtered to
 `master`, a PR based on another branch got no checks at all, not pending, not

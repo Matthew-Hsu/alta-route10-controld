@@ -415,13 +415,3 @@ binary that was no longer there.
 See the [Uninstalling](technical-details.md#uninstalling) section of the
 technical details for exactly what is removed from where, and what is
 deliberately left alone.
-
-## ctrld locking up the router
-
-This was a known issue when ctrld binds to port 53, conflicting with dnsmasq. This setup avoids that by:
-
-- Running ctrld on port 5354 (not 53)
-- Using iptables REDIRECT (not replacing dnsmasq)
-- Health checking before switching DNS
-
-If your router locks up, the only fix is a physical reboot. The lockup won't persist since iptables rules don't survive reboots without post-cfg.sh.

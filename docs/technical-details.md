@@ -62,6 +62,17 @@ Any device hardcoding a DNS server, or using DNS-over-TLS
 See [Forced DNS Hijacking](#forced-dns-hijacking) for when and why you'd
 enable that third path.
 
+#### Why ctrld Does Not Bind Port 53
+
+Running a DNS daemon on port 53 conflicts with dnsmasq, which is a known way
+to lock this router up. This setup avoids it by:
+
+- Running ctrld on port 5354 (not 53)
+- Using iptables REDIRECT (not replacing dnsmasq)
+- Health checking before switching DNS
+
+If your router locks up, the only fix is a physical reboot. The lockup won't persist since iptables rules don't survive reboots without post-cfg.sh.
+
 ### Scripts
 
 | Script | Purpose | Key Flags |

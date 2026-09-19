@@ -99,6 +99,12 @@ line numbers drift and a stale pointer aims attention at the wrong line:
   `test.sh` reads to check the documented menu still matches the installer's.
   Retitling the heading empties the range, and rewording the closing line
   leaves it running to the end of the file
+- the `lib.sh` function names in `docs/technical-details.md`'s Shared Library
+  list. `test.sh` scans `*.sh`, `*.md` and `docs/*.md` for a caller of every
+  function, so that inventory counts as one. No function depends on it alone
+  today, which was checked by running the suite against a tree without
+  `docs/`; the exposure is a future function whose only mention outside
+  `lib.sh` lands there
 - every `# shellcheck` directive, including the trailing prose ones. The prose
   after the directive is editable; the directive is not
 - every shebang, the four inside `setup.sh`'s heredocs included
@@ -125,8 +131,8 @@ and say in the commit what moved. Deleting one to get green is how this project
 ends up back where it started, with a documented rule and nothing enforcing it.
 
 That rule is the only thing covering an interface added later, so treat it as
-load-bearing. The guards above protect these seven and nothing else: add an
-eighth without one and the suite stays green, both when you add it and when
+load-bearing. The guards above protect these eight and nothing else: add a
+ninth without one and the suite stays green, both when you add it and when
 someone reworks the comment away months later, in a different change, with
 nothing to connect the breakage back to the edit that caused it. Simulating
 exactly that is how this section was checked. Whether a new interface is

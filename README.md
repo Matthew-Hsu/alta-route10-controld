@@ -95,7 +95,8 @@ For non-interactive setup:
 sh /tmp/setup.sh --resolver abc123 --protocol doh3
 ```
 
-Re-running the installer later is the documented upgrade path, and it's safe
+Re-running the installer later is the documented upgrade path (see
+[Upgrading the Scripts](#upgrading-the-scripts)), and it's safe
 over an existing install: it keeps your forced-DNS choice and any split-DNS
 policy, and it leaves a `ctrld` newer than the pinned release alone, provided
 that binary still runs. One that doesn't gets replaced, so a re-install
@@ -372,6 +373,33 @@ Devices are matched by MAC address or by subnet, not by name. Policies survive
 protocol changes, resolver changes and re-running the installer. See [Split DNS
 and Per-Device Policy](docs/technical-details.md#split-dns-and-per-device-policy)
 for how the rules are stored and what a config with two profiles looks like.
+
+### Upgrading the Scripts
+
+`ctrld` updates itself weekly. These scripts do not, so check the version
+against the repository now and then:
+
+```sh
+sh /cfg/status.sh --version    # controld-tools 1.10.1 (pins ctrld 1.5.7)
+```
+
+Compare that with the latest tag on
+[Releases](https://github.com/Matthew-Hsu/alta-route10-controld/releases).
+To upgrade, re-run the installer, which is the same command that installed it:
+
+```sh
+wget -O /tmp/setup.sh https://raw.githubusercontent.com/Matthew-Hsu/alta-route10-controld/master/setup.sh
+sh /tmp/setup.sh --resolver YOUR_ID --protocol doh3
+```
+
+It keeps your forced-DNS choice, your split-DNS policy, your auto-update
+setting and any optional keys in `/cfg/controld.env`, and it leaves a `ctrld`
+newer than the pinned release alone. Pass `--resolver` and `--protocol` as
+above to skip the prompts; without them you will be asked for your resolver ID
+again, since it is not read back from the existing install.
+
+`sh /cfg/audit.sh` afterwards tells you whether the router and the checkout
+agree on the version.
 
 ### Uninstall
 

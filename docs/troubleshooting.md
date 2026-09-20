@@ -293,6 +293,49 @@ dhcp_lease_file_format = "dnsmasq"
 
 Devices with `*` as their hostname in the lease file will never show a name. They never reported one to DHCP.
 
+## A hand-edited setting disappeared from controld.env
+
+**Symptom:** You added a key to `/cfg/controld.env` by hand, it worked, and
+some time later it was gone. Usually the run that removed it was doing
+something unrelated, like switching protocol.
+
+**Cause:** `/cfg/controld.env` is rewritten in full by `setup.sh` and by
+`reconfigure.sh --protocol`, `--resolver` and `--benchmark`. The rewrite keeps
+the keys it does not manage, but only where the value is in a shape it can put
+back safely. The file is sourced by every script here, so a value it cannot
+read confidently is dropped rather than made permanent.
+
+These survive a rewrite:
+
+```sh
+DNS_PORT=5355                            # plain: letters, digits, . : / @ % + - _
+LAN_IFACES_EXCLUDE="br-lan_40"           # or fully double-quoted
+```
+
+These do not, and the rewrite now names them on stderr as it drops them:
+
+```sh
+NOTE=two words                           # unquoted space
+WHEN="$(date)"                           # would run on every load
+UNBAL="oops                              # unbalanced quote
+```
+
+**Comments are not kept**, wherever they sit. A comment on its own line goes,
+and so does one after a value. What changed is that a trailing comment no
+longer takes its setting with it: the value is written back without the
+comment. So the two examples the README gives for excluding a VLAN work as
+written, and the annotation is gone the next time the file is rewritten.
+
+**Check** what the file actually carries after a rewrite:
+
+```sh
+cat /cfg/controld.env
+```
+
+Where a command exists for the setting, prefer it. `reconfigure.sh
+--auto-update`, `--force-dns` and `--protocol` write the one shape that always
+survives, and none of the above can go wrong.
+
 ## Changes not persisting after reboot
 
 The Route 10's `/etc/config/` is reset on boot. Only `/cfg/` persists. Make sure:

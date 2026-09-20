@@ -247,6 +247,12 @@ LAN_IFACES_EXCLUDE="br-lan_40"              # cover everything except these
 LAN_IFACES="br-lan br-lan_10 br-lan_20"     # or pin the list exactly
 ```
 
+The setting survives; the comment does not. `controld.env` is rewritten in full
+by `setup.sh` and several `reconfigure.sh` flags, and it keeps no comments. See
+[A hand-edited setting disappeared from
+controld.env](docs/troubleshooting.md#a-hand-edited-setting-disappeared-from-controldenv)
+for which shapes come back.
+
 ### After a Firmware Update
 
 Expect nothing to break. Updates keep `/cfg/` intact, the boot hook restores
@@ -333,40 +339,24 @@ network, so if you would rather decide when that happens, turn the job off:
 ```sh
 sh /cfg/reconfigure.sh --auto-update            # interactive prompt
 sh /cfg/reconfigure.sh --auto-update --force    # no confirmation
+sh /cfg/controld-update.sh --now                # update by hand, any time
 ```
 
-It is on by default. Turning it off records `AUTO_UPDATE=0` in
-`/cfg/controld.env` and removes the cron immediately, and the choice holds
-across reboots, firmware updates and re-running `setup.sh`. Use the command
-rather than editing that file by hand: it writes the one form that always
-survives a config rewrite. Without that it
-would not be an off switch at all: the crontab lives in `/etc`, which firmware
-updates wipe, so the boot hook puts both jobs back at every boot unless
-something tells it not to.
+It is on by default, and the choice holds across reboots, firmware updates and
+re-running `setup.sh`. Use the command rather than editing `/cfg/controld.env`
+by hand.
 
-After that, `status.sh` reports the update as off rather than missing, and
-`audit.sh` stops counting it as drift. If either one says the cron is
-installed while the flag is off, something put the job back: it will fire on
-schedule and decline, because the updater carries the same flag, and the next
-reboot removes it.
-
-Update on your own schedule:
-
-```sh
-sh /cfg/controld-update.sh --now    # the same update the cron would have run
-```
-
-`--now` is the part that makes the opt-out liveable. It runs the identical
-check, checksum and rollback the weekly job does, and it is the only way to
-reach them once the flag is off: without it the script declines, because it
-carries its own copy of the flag as a backstop against a cron that came back.
-
-Re-running `setup.sh` is not the same thing. It installs the version this
-project pins, which may be older than the newest release, so reach for
-`--now` when what you want is the latest.
+`--now` runs the identical check, checksum and rollback the weekly job does,
+and is the only way to reach them once the flag is off. Re-running `setup.sh`
+is not the same thing: it installs the version this project pins, which may be
+older than the newest release.
 
 The tradeoff is the obvious one. A `ctrld` release that fixes something you
 care about waits until you go and get it.
+
+See [Auto-Update](docs/technical-details.md#auto-update) for what makes the
+choice survive a firmware update, and what `status.sh` and `audit.sh` report
+while it is off.
 
 ### Send a Device to a Different Profile
 
@@ -432,6 +422,7 @@ correct, but no one has run them on a real device:
 | **The watchdog lock under contention** | Two cycles overlapping. The fix that makes overlap unlikely also makes it hard to observe: every hardware run took and released the lock cleanly, but no two ever raced. |
 | **Keeping a `ctrld` newer than the pin** | A re-install must not roll a newer binary back to `CTRLD_PIN`. Unit-tested; no router has been ahead of the pin to try it on. |
 | **A real auto-update** | `controld-update.sh`'s version comparison, checksum verification and rollback are unit-tested. No router has taken an actual upgrade through it. |
+| **A quoted `FORCED_DNS` through a real firmware update** | Config rewriting is verified on a Route 10, protocol change included. The one case standing in for the real thing is `uci` being unable to answer, which was a stub rather than a router that had just been updated. |
 | **Reconciliation on the paths that only run while DNS is failing** | The divergence and every repair for it are now verified on hardware, but two paths there are not, because both need DNS to actually fail on the device: the fallback loop seeding its chain from the reconciled protocol rather than the recorded one, and a reboot landing between a retarget and the record of its result, the interruption that produces the divergence in the first place. |
 
 Every defect in this project's history that CI could not see appeared on a

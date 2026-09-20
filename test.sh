@@ -4026,6 +4026,37 @@ assert_false "and none of them ran" test -e "$TMPDIR/c-pwned"
 # carrying one cannot be sourced at all.
 assert_not_contains "an unbalanced quote is not carried" \
     "$(wefc_rewrite 'UNBAL="oops')" 'UNBAL='
+
+# Until now a rejected line just vanished. Everything this filter refuses is
+# something a person typed into the file on purpose, and the guest VLAN that
+# stopped being excluded is what a silent drop costs, so the keys are named at
+# the moment they stop being carried. On stderr, so a caller capturing the
+# writer's output is unaffected.
+wefc_stderr() {
+    printf 'RESOLVER_ID=abc123\n' > "$WEFC"
+    printf '%s\n' "$1" >> "$WEFC"
+    # stdout discarded inside, stderr of the subshell out: the report is on
+    # stderr and the writer prints nothing else worth reading here.
+    ( RESOLVER_ID=abc123; BOOTSTRAP_IP=76.76.2.22; CTRLD_VERSION=1.5.7
+      DNS_TYPE=doh3; PREFERRED_PROTOCOL=doh3
+      write_env_file "$WEFC" >/dev/null ) 2>&1
+}
+assert_contains "a dropped key is named"      "$(wefc_stderr 'EVIL=bar baz')" "EVIL"
+# The substitution is the case most worth naming, and the first version of this
+# report missed it: the dangerous-character test returns before the reporting
+# line, so the one value that would run on every load was the one dropped in
+# silence.
+assert_contains "a command substitution is named"  "$(wefc_stderr 'SUBST="$(id)"')"  "SUBST"
+assert_contains "a backtick is named"              "$(wefc_stderr 'TICK=`id`')"      "TICK"
+assert_contains "an unbalanced quote is named"     "$(wefc_stderr 'UNBAL="oops')"    "UNBAL"
+# A managed key is rewritten rather than dropped, so it must not be reported as
+# lost; nor may a value that survives.
+assert_not_contains "a carried key is not reported" \
+    "$(wefc_stderr 'LAN_IFACES_EXCLUDE="br-lan_40"   # guest')" "LAN_IFACES_EXCLUDE"
+assert_eq "and a file with nothing to drop says nothing" "" \
+    "$(wefc_stderr 'DNS_PORT=5355')"
+assert_not_contains "a managed key is not reported as dropped" \
+    "$(wefc_stderr 'DNS_TYPE=doq')" "DNS_TYPE"
 assert_file_contains "an excluded VLAN still survives"      "$WEF" '^LAN_IFACES_EXCLUDE="br-lan_40"$'
 assert_file_contains "an unknown key still survives"        "$WEF" '^POLICY_UPSTREAMS=2$'
 # Sourcing what was written must not run anything. If a substitution had been

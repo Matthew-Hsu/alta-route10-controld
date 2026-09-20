@@ -2274,6 +2274,45 @@ printf 'DNS_PORT=00005355\n' > "$IDP"
 assert_eq "a port with leading zeros falls back to the default" "5354" \
     "$(installed_dns_port "$IDP")"
 
+# A trailing comment is the shape the docs put on the neighbouring key, and the
+# pattern this replaced required the value to end the line. So DNS_PORT read as
+# 5354 while every sourcing reader on the same router said 5355, and that
+# disagreement is what puts a port into ctrld.toml that nothing is listening on.
+# Asserted against the shell rather than a literal, because agreeing with
+# load_env is the property, not matching a number someone typed twice.
+printf 'DNS_PORT=5355   # moved off the default\n' > "$IDP"
+assert_eq "a commented port is adopted"  "5355" "$(installed_dns_port "$IDP")"
+assert_eq "and it agrees with what the shell sets" \
+    "$(installed_dns_port "$IDP")" \
+    "$(sh -c '. "$1" >/dev/null 2>&1; printf "%s" "${DNS_PORT:-}"' _ "$IDP")"
+
+# errexit is inherited into the subshell, and setup.sh calls this under set -e.
+# A line that fails ahead of DNS_PORT aborted the read and handed back the
+# default, which is the bug installed_auto_update had before its set +e.
+printf 'false\nDNS_PORT=5355\n' > "$IDP"
+assert_eq "a failing line ahead of the key does not lose it" "5355" \
+    "$( set -e; installed_dns_port "$IDP" )"
+
+# Nothing the file sets may escape into the caller, or reading the port would
+# quietly adopt the protocol and resolver setup.sh is in the middle of asking
+# for. That is the whole reason setup.sh cannot just call load_env.
+printf 'DNS_PORT=5355\nDNS_TYPE=doq\nRESOLVER_ID=leaked\n' > "$IDP"
+IDP_LEAK="$(installed_dns_port "$IDP"; printf ' DNS_TYPE=%s RESOLVER_ID=%s' "${DNS_TYPE:-unset}" "${RESOLVER_ID:-unset}")"
+assert_not_contains "reading the port does not adopt the protocol" "$IDP_LEAK" "DNS_TYPE=doq"
+assert_not_contains "and does not adopt the resolver"              "$IDP_LEAK" "RESOLVER_ID=leaked"
+
+# An inherited DNS_PORT must not stand in for one the file does not set. A file
+# that names the key hides this, because sourcing overwrites the inherited value
+# either way; the case that needs the reset is a file with no DNS_PORT at all,
+# where without it setup.sh would adopt whatever its own environment happened to
+# carry and call it the installed port.
+printf 'RESOLVER_ID=abc123\n' > "$IDP"
+assert_eq "an inherited value is not mistaken for a recorded one" "5354" \
+    "$( DNS_PORT=9999; installed_dns_port "$IDP" )"
+printf 'DNS_PORT=5355\n' > "$IDP"
+assert_eq "and the file still wins when it does name the key" "5355" \
+    "$( DNS_PORT=9999; installed_dns_port "$IDP" )"
+
 # The outcome that matters: after a re-install the two files must name the same
 # port. write_env_file preserves the recorded one and write_ctrld_config takes
 # whatever DNS_PORT holds, so adopting it first is what keeps them in step.

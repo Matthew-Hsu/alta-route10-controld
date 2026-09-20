@@ -1431,7 +1431,36 @@ preserved_forced_dns() {
     _pfd_env="${1:-/cfg/controld.env}"
     _pfd_val=""
     if [ -f "$_pfd_env" ]; then
-        _pfd_val="$(sed -n 's/^FORCED_DNS=\([01]\).*/\1/p' "$_pfd_env" | head -1)"
+        # Matched rather than sourced, and it is the one reader here that has
+        # no choice: its only caller is write_env_file, which is under a tested
+        # invariant that it reach its decision without sourcing, because it runs
+        # on a file it has not filtered yet. installed_dns_port and
+        # installed_auto_update both read through the shell and say why.
+        #
+        # So the pattern has to earn its keep instead. Four expressions rather
+        # than one with optional parts: a \{0,1\} on a \(...\) is the kind of
+        # thing the two seds on this project's path could read differently, and
+        # making the quotes individually optional accepted FORCED_DNS="1 with no
+        # closing quote. Spelling the four shapes out keeps the quotes balanced,
+        # which a pair of independent \{0,1\} cannot.
+        #
+        # The quotes are optional because FORCED_DNS="1" is a shape the shell
+        # honours and the keep filter carries, and the old pattern did not match
+        # it. It fell through to uci, which after a firmware update has no
+        # /etc/config to answer from, so the rewrite recorded forced DNS as off
+        # for someone who had turned it on. That window is the whole reason the
+        # value is preserved in the file at all.
+        #
+        # The end is anchored now, which is what makes FORCED_DNS=10 stop
+        # reading as 1. The shell sets that to 10, every consumer compares
+        # against 1 and treats it as off, and the old pattern was the only thing
+        # in the project calling it on.
+        _pfd_val="$(sed -n \
+            -e 's/^FORCED_DNS=\([01]\)[[:blank:]]*$/\1/p' \
+            -e 's/^FORCED_DNS=\([01]\)[[:blank:]]*#.*$/\1/p' \
+            -e 's/^FORCED_DNS="\([01]\)"[[:blank:]]*$/\1/p' \
+            -e 's/^FORCED_DNS="\([01]\)"[[:blank:]]*#.*$/\1/p' \
+            "$_pfd_env" | head -1)"
     fi
     if [ "$_pfd_val" = "1" ]; then
         printf '1'

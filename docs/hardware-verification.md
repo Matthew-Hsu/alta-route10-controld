@@ -176,10 +176,16 @@ Status](../README.md#verification-status) in the README.
   `already on v1.5.7 — nothing to update`.
 
 - **Where the boot hook's log lines go.** They do reach `/tmp/log/messages`,
-  but they carry pre-NTP timestamps and sort to the top of the file, so looking
-  for them with `tail` finds nothing. That file also keeps entries written
-  before a reboot, while anything left in `/root` is gone after one, so put a
-  backup you mean to restore from in `/cfg`.
+  but they carry pre-NTP timestamps, dated `Oct 24 09:02` on this router, and
+  sort to the top of the file, so looking for them with `tail` finds nothing.
+  The file is recreated at boot: after five reboots in one session it held one
+  `ControlD boot hook starting` line, not five. An earlier version of this
+  entry said it kept entries from before a reboot, which was wrong. The
+  pre-NTP lines are from the same boot as the correctly dated ones, and reading
+  them as a previous boot's is what produced the mistake.
+
+  `/root` is cleared by a reboot too, so a backup you mean to restore from goes
+  in `/cfg`.
 
 ## Protocol Reconciliation
 

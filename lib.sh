@@ -1598,6 +1598,7 @@ write_env_file() {
     # started intercepting that VLAN within five minutes of an unrelated
     # protocol change.
     _wef_keep=""
+    _wef_drop=""
     if [ -f "$_wef_path" ]; then
         # Only well-formed assignments are carried. The file is sourced, so a
         # malformed line like `FOO=bar baz` runs `baz` on every load; carrying
@@ -1651,26 +1652,48 @@ write_env_file() {
         # exits on the spot: every script here dies at exit 2 printing nothing,
         # which is the silent failure CONTRIBUTING.md warns is
         # indistinguishable from success.
-        _wef_keep="$($AWK -v managed=" $WEF_MANAGED " '
+        _wef_scan="$($AWK -v managed=" $WEF_MANAGED " '
             /^[A-Za-z_][A-Za-z0-9_]*=/ {
                 eq = index($0, "=")
                 k = substr($0, 1, eq - 1)
                 if (index(managed, " " k " ") != 0) next
                 v = substr($0, eq + 1)
-                if (index(v, "$") || index(v, "`") || index(v, "\\")) next
+                if (index(v, "$") || index(v, "`") || index(v, "\\")) { print "D " k; next }
                 if (substr(v, 1, 1) == "\"") {
                     q = index(substr(v, 2), "\"")
-                    if (q == 0) next
+                    if (q == 0) { print "D " k; next }
                     rest = substr(v, q + 2)
-                    if (rest !~ /^[[:blank:]]*$/ && rest !~ /^[[:blank:]]+#/) next
+                    if (rest !~ /^[[:blank:]]*$/ && rest !~ /^[[:blank:]]+#/) { print "D " k; next }
                     v = substr(v, 1, q + 1)
                 } else {
                     sub(/[[:blank:]]+#.*$/, "", v)
                     sub(/[[:blank:]]+$/, "", v)
                 }
-                if (v ~ /^"[^"]*"$/ || v ~ /^[A-Za-z0-9_.:\/@%+-]*$/) print k "=" v
+                if (v ~ /^"[^"]*"$/ || v ~ /^[A-Za-z0-9_.:\/@%+-]*$/) print "K " k "=" v
+                else print "D " k
             }
         ' "$_wef_path")"
+        # One pass, two answers. Reporting the drops from a second awk meant a
+        # second copy of the filter, and two copies of a rule this fiddly drift
+        # apart: the copy that decides and the copy that explains would disagree
+        # and the explanation would be the one nobody tested.
+        _wef_keep="$(printf '%s\n' "$_wef_scan" | sed -n 's/^K //p')"
+        _wef_drop="$(printf '%s\n' "$_wef_scan" | sed -n 's/^D //p' | tr '\n' ' ')"
+    fi
+
+    # Until now a rejected line just vanished. Everything the filter refuses is
+    # something a person typed into this file on purpose, so the one outcome it
+    # must not have is the silent one: the keys are named, once, at the moment
+    # they stop being carried, and the message names the shape that survives
+    # rather than pointing at a document, which would be a tenth thing code
+    # reads as text and so would need a guard of its own. It names it rather
+    # than describing it: "fully quoted" reads as though a single-quoted value
+    # qualifies, and one is dropped like any other shape this file does not
+    # carry. To stderr, so a caller capturing the writer's output is
+    # unaffected.
+    if [ -n "$_wef_drop" ]; then
+        print_warn "Not carried through the rewrite: ${_wef_drop}— write KEY=value or KEY=\"value\"" >&2
+        logger -t controld "write_env_file dropped: ${_wef_drop}" 2>/dev/null || true
     fi
 
     cat > "$_wef_path" << WEFEOF

@@ -1875,20 +1875,39 @@ done
 # window after a firmware update wiped /etc/config.
 # audit.sh runs off-device, so this is an outcome test: with uci stubbed to
 # report forced DNS off, an inherited FORCED_DNS=1 must still win.
+#
+# Both cases run against a sandboxed /cfg, because both are about what
+# controld.env says and audit.sh reads that file through load_env. Driven from
+# the environment, the first assertion failed outright on any router whose
+# controld.env carries FORCED_DNS=0, which is every install that has not turned
+# forced DNS on, and the second was skipped on every install that has. So the
+# on-router run that CONTRIBUTING.md prescribes reported a failure this suite
+# could not see anywhere else, on master as much as here.
 AU_BIN="$TMPDIR/auditbin"; mkdir -p "$AU_BIN"
 printf '#!/bin/sh\necho 0\n' > "$AU_BIN/uci"; chmod +x "$AU_BIN/uci"
-AU_OUT="$(PATH="$AU_BIN:$PATH" FORCED_DNS=1 sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
-assert_contains "the env flag wins over live uci" "$AU_OUT" "forced DNS 1"
-# The fallback can only be exercised where nothing supplies the flag: audit.sh
-# reads /cfg/controld.env through load_env, and on a configured router that file
-# sets FORCED_DNS, so this asserted something the environment controls, and
-# failed on a real install with forced DNS on. Skip rather than assert a lie.
-if [ -f /cfg/controld.env ] && grep -q '^FORCED_DNS=' /cfg/controld.env 2>/dev/null; then
-    skip "uci fallback (this router's controld.env supplies FORCED_DNS)"
-else
-    AU_OUT0="$(PATH="$AU_BIN:$PATH" sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
-    assert_contains "and uci is the fallback when the flag is unset" "$AU_OUT0" "forced DNS 0"
-fi
+# uci alone left audit.sh making real iptables and crontab calls against the
+# host, which on a router is the live nat table and the live crontab. Read-only
+# there, but it makes this the fixture most likely to go red for reasons that
+# have nothing to do with the code under test.
+for _austub in iptables ip nslookup logread pidof netstat crontab; do
+    printf '#!/bin/sh\nexit 1\n' > "$AU_BIN/$_austub"; chmod +x "$AU_BIN/$_austub"
+done
+AU_FW="$TMPDIR/au-fw.user"
+printf '# controld-dns-redirect BEGIN\n# controld-dns-redirect END\n' > "$AU_FW"
+AU_CFG="$TMPDIR/au-cfg"; mkdir -p "$AU_CFG"
+for _aus in audit.sh lib.sh; do
+    sed -e "s|/cfg/|${AU_CFG}/|g" "$SCRIPT_DIR/$_aus" > "$AU_CFG/$_aus"
+done
+chmod +x "$AU_CFG/audit.sh"
+au_run() {   # $1 = the FORCED_DNS line, or empty for none
+    { printf 'RESOLVER_ID=abc123\nCTRLD_VERSION=1.5.7\nDNS_TYPE=doh3\n'
+      [ -z "$1" ] || printf '%s\n' "$1"
+    } > "$AU_CFG/controld.env"
+    ( PATH="$AU_BIN:$PATH"; FW_USER="$AU_FW" sh "$AU_CFG/audit.sh" ) 2>/dev/null || true
+}
+assert_contains "the env flag wins over live uci" "$(au_run 'FORCED_DNS=1')" "forced DNS 1"
+assert_contains "and uci is the fallback when the flag is unset" \
+    "$(au_run '')" "forced DNS 0"
 
 describe "bench_domain() — the benchmark must query real hostnames"
 
@@ -2738,25 +2757,36 @@ for _fs in uci iptables ip nslookup logread pidof netstat crontab; do
 done
 FW_EMPTY="$TMPDIR/fw-empty.user"; : > "$FW_EMPTY"
 
-FW_OUT="$(PATH="$FW_BIN:$PATH" FW_USER="$FW_EMPTY" CTRLD_VERSION=1.5.7 \
-    sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+# Sandboxed /cfg, so the gate comes from this fixture rather than from whatever
+# the machine running the suite happens to have installed. The bare-checkout
+# case was skipped on every real router otherwise, which is the one place the
+# on-router run was supposed to add something.
+FW_CFG="$TMPDIR/fw-cfg"; mkdir -p "$FW_CFG"
+for _fws in audit.sh lib.sh; do
+    sed -e "s|/cfg/|${FW_CFG}/|g" "$SCRIPT_DIR/$_fws" > "$FW_CFG/$_fws"
+done
+chmod +x "$FW_CFG/audit.sh"
+fw_run() {   # $1 = recorded|bare, $2 = the firewall.user to present
+    if [ "$1" = "recorded" ]; then
+        printf 'RESOLVER_ID=abc123\nCTRLD_VERSION=1.5.7\nDNS_TYPE=doh3\n' > "$FW_CFG/controld.env"
+    else
+        printf 'RESOLVER_ID=abc123\nDNS_TYPE=doh3\n' > "$FW_CFG/controld.env"
+    fi
+    ( PATH="$FW_BIN:$PATH"; FW_USER="$2" sh "$FW_CFG/audit.sh" ) 2>/dev/null || true
+}
+
+FW_OUT="$(fw_run recorded "$FW_EMPTY")"
 assert_contains "an empty firewall.user is reported when an install is recorded" \
     "$FW_OUT" "will not survive a firewall reload"
 # Severity from the count, for the same reason.
 printf '# controld-dns-redirect BEGIN\n# controld-dns-redirect END\n' > "$TMPDIR/fw-ok.user"
-FW_OK="$(PATH="$FW_BIN:$PATH" FW_USER="$TMPDIR/fw-ok.user" CTRLD_VERSION=1.5.7 \
-    sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+FW_OK="$(fw_run recorded "$TMPDIR/fw-ok.user")"
 assert_eq "an empty firewall.user adds exactly one drift item" \
     "$(( $(audit_drift_count "$FW_OK") + 1 ))" "$(audit_drift_count "$FW_OUT")"
 
 # Nothing installed: an empty firewall.user is simply correct.
-if [ -f /cfg/controld.env ] && grep -q '^CTRLD_VERSION=' /cfg/controld.env 2>/dev/null; then
-    skip "bare checkout (this router's controld.env supplies CTRLD_VERSION)"
-else
-    FW_NONE="$(PATH="$FW_BIN:$PATH" FW_USER="$FW_EMPTY" sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
-    assert_not_contains "but not when nothing is installed" \
-        "$FW_NONE" "will not survive a firewall reload"
-fi
+assert_not_contains "but not when nothing is installed" \
+    "$(fw_run bare "$FW_EMPTY")" "will not survive a firewall reload"
 
 describe "audit.sh — a wiped crontab must not pass as healthy"
 
@@ -4258,7 +4288,12 @@ else
     # the number: a loose match also counts a leftover rule pointing at a port
     # this install no longer uses, which is the one case where a redirect
     # existing proves nothing.
-    RULES=$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c "redir ports ${IT_PORT}$")
+    # "|| true": grep -c exits 1 when the count is zero, and an assignment from
+    # a failing command substitution ends a set -e shell on the spot. The suite
+    # then stopped mid-file with no Results block, which reads as a pass to
+    # anything scanning for the word FAIL, and it did that only on a router
+    # with no matching redirect rule, which is the state most worth reporting.
+    RULES=$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c "redir ports ${IT_PORT}$" || true)
     assert_true "iptables rules active ($RULES)" [ "$RULES" -gt 0 ]
 
     # Integration: cron jobs (wrap pipeline in sh -c so assert_true runs the

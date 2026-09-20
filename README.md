@@ -324,6 +324,50 @@ sh /cfg/status.sh                             # shows forced-DNS status and DoT 
 See [Forced DNS Hijacking](docs/technical-details.md#forced-dns-hijacking) for exactly what it catches
 and what it can't.
 
+### Turn Off the Weekly Auto-Update
+
+A cron job at 03:00 every Monday checks for a newer `ctrld` and installs it.
+The binary it replaces is the one answering DNS for every device on the
+network, so if you would rather decide when that happens, turn the job off:
+
+```sh
+sh /cfg/reconfigure.sh --auto-update            # interactive prompt
+sh /cfg/reconfigure.sh --auto-update --force    # no confirmation
+```
+
+It is on by default. Turning it off records `AUTO_UPDATE=0` in
+`/cfg/controld.env` and removes the cron immediately, and the choice holds
+across reboots, firmware updates and re-running `setup.sh`. Use the command
+rather than editing that file by hand: it writes the one form that always
+survives a config rewrite. Without that it
+would not be an off switch at all: the crontab lives in `/etc`, which firmware
+updates wipe, so the boot hook puts both jobs back at every boot unless
+something tells it not to.
+
+After that, `status.sh` reports the update as off rather than missing, and
+`audit.sh` stops counting it as drift. If either one says the cron is
+installed while the flag is off, something put the job back: it will fire on
+schedule and decline, because the updater carries the same flag, and the next
+reboot removes it.
+
+Update on your own schedule:
+
+```sh
+sh /cfg/controld-update.sh --now    # the same update the cron would have run
+```
+
+`--now` is the part that makes the opt-out liveable. It runs the identical
+check, checksum and rollback the weekly job does, and it is the only way to
+reach them once the flag is off: without it the script declines, because it
+carries its own copy of the flag as a backstop against a cron that came back.
+
+Re-running `setup.sh` is not the same thing. It installs the version this
+project pins, which may be older than the newest release, so reach for
+`--now` when what you want is the latest.
+
+The tradeoff is the obvious one. A `ctrld` release that fixes something you
+care about waits until you go and get it.
+
 ### Send a Device to a Different Profile
 
 Put a device or a whole subnet on a second ControlD profile, so a kid's tablet

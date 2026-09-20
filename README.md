@@ -380,10 +380,11 @@ for how the rules are stored and what a config with two profiles looks like.
 against the repository now and then:
 
 ```sh
-sh /cfg/status.sh --version    # controld-tools 1.10.1 (pins ctrld 1.5.7)
+sh /cfg/status.sh --version
 ```
 
-Compare that with the latest tag on
+That prints the version of these scripts and the `ctrld` release they pin.
+Compare the first against the latest tag on
 [Releases](https://github.com/Matthew-Hsu/alta-route10-controld/releases).
 To upgrade, re-run the installer, which is the same command that installed it:
 

@@ -91,7 +91,7 @@ Every script except `test.sh` supports `--help` with full usage documentation, a
 
 | File | Purpose |
 |---|---|
-| `/cfg/controld.env` | Resolver ID, version, bootstrap IP, protocol type, preferred protocol, forced-DNS flag |
+| `/cfg/controld.env` | Resolver ID, version, bootstrap IP, protocol type, preferred protocol, forced-DNS flag, auto-update flag |
 | `/cfg/ctrld` | DNS proxy binary (arm64) |
 | `/cfg/ctrld.toml` | DNS proxy config (upstreams, policies, routing rules) |
 | `/cfg/lib.sh` | Shared function library used by all scripts |
@@ -124,6 +124,7 @@ All scripts source `lib.sh` which provides:
 - Split-DNS writing (`policy_add_rule`) and preservation across a config rewrite (`carry_policy_blocks`)
 - Config reporting (`list_upstreams`, `policy_rule_count`, `policy_rules`, `format_policy_rules`): what `status.sh` and `reconfigure.sh --show` print, and the split-DNS rules `reconfigure.sh --policy` lists, each resolved to the upstream it routes to
 - Env file rewriting (`write_env_file`), which carries keys it does not manage rather than truncating them, and reading back the one key an installer must not lose (`installed_dns_port`)
+- Auto-update opt-out: `installed_auto_update` reads whether the weekly update is wanted, from the env file rather than through `load_env`, so `setup.sh` can ask without also adopting the protocol and resolver it is in the middle of prompting for; `set_auto_update_flag` writes the choice back
 - Benchmarking (`bench_protocol`, `bench_stop`), shared by all three entry points and never run against production DNS
 - Version comparison (`version_gt`), so a re-install does not roll `ctrld` back to the pin
 
@@ -184,6 +185,8 @@ After a firmware update or reboot, ControlD is fully operational within ~30 seco
 6. Restores forced-DNS state (uci + port-853 rules + firewall.user) if `FORCED_DNS=1`
 7. If `ctrld` fails, keeps `https-dns-proxy` as the DNS backend
 
+`/cfg/rc.local` reinstalls both cron jobs at the same boot, because the crontab lives in `/etc` and a firmware update wipes it. It reinstalls the weekly update only when `AUTO_UPDATE` is not `0`, sourcing `controld.env` in a subshell to read it: nothing set there escapes, so a block that runs alongside `post-cfg.sh` does not adopt the rest of the file, and a missing or malformed file leaves the cron installed. The watchdog is reinstalled either way.
+
 ### Auto-Update
 
 A cron job runs weekly (Monday 3 AM) to check for new `ctrld` releases and update automatically.
@@ -193,6 +196,34 @@ The binary it replaces is the only thing answering DNS for every client on every
 1. **Verified**: the download is checked against the SHA-256 in the release's `checksums.txt`. A mismatch aborts before anything is swapped.
 2. **Proven**: the current binary is kept as `/cfg/ctrld.prev`, and the new one must answer a real DNS query within 15 seconds.
 3. **Rolled back**: if it does not, `ctrld.prev` is restored and `CTRLD_VERSION` is left untouched, so the next run retries. Recovery needs no network, since the old binary is already on disk.
+
+#### Turning It Off
+
+`AUTO_UPDATE=0` in `/cfg/controld.env` stops it, and `sh /cfg/reconfigure.sh --auto-update` is what sets that. Absent means on, which is forced: every install predating the flag has no such line, so reading a missing key as "off" would have switched the update off across every router in the field at the first re-install. A value nobody can parse leaves a router patching itself rather than silently stuck.
+
+What counts as off is whatever the shell reads as `0` when it sources the file, so `AUTO_UPDATE="0"`, `AUTO_UPDATE='0'`, an indented line, an `export` in front and a trailing comment all work as well as the bare `0` the toggle writes. The next config rewrite puts whichever shape you used back to the bare `0`.
+
+Three readers act on the key. `load_env` sources the file, and its answer is what every readout prints. `installed_auto_update` sources it in a subshell, and that is what `setup.sh` and the boot hook act on. `write_env_file` is the third, and it is the one that cannot source: it decides whether an opt-out survives a rewrite, and it runs on a file that has not been filtered yet, where a value carrying a command substitution is exactly what its filter refuses to carry forward. So it matches the line instead, and the three are kept in step by a test that drives the same values and the same line shapes through all of them.
+
+Editing the file by hand is supported, but understand what sourcing means: this file is executed, not parsed. A value carrying `$(...)` runs when any script loads the config, and an unbalanced quote swallows the lines after it. `write_env_file` refuses to carry such a value forward, which is not the same as refusing to run it. `reconfigure.sh --auto-update` is the way to set this that never has to think about any of it.
+
+Three places can start a weekly update, and all three check the flag:
+
+| Where | What it does when the flag is `0` |
+|---|---|
+| `setup.sh` step 8 | Removes any existing job and installs none. `cron_remove` runs ahead of the check, so an opt-out made since the last install takes the job away rather than being handed it back |
+| `/cfg/rc.local` at boot | Does not reinstall the job it would otherwise restore after a firmware update wiped `/etc` |
+| `/cfg/controld-update.sh` itself | Logs and exits before reaching the network, which covers a crontab restored from a backup or a line added by hand that neither installer sees. `--now` overrides it, which is how a person updates on their own schedule; the cron line passes no arguments, so the backstop still holds for it |
+
+The toggle moves the cron as well as writing the flag. The flag alone governs the next boot and the next re-install, neither of which has happened when the command returns, so setting it without touching the crontab would still let the job run that Monday.
+
+`write_env_file` carries the choice across a re-install, which is what makes it survive `setup.sh`, this project's documented upgrade path. It does so without knowing anything about this key: `AUTO_UPDATE` is not in `WEF_MANAGED`, so it rides through on the same filter that already carries `DNS_PORT` and `LAN_IFACES_EXCLUDE`. The shell is the only thing that ever decides what the line means.
+
+That filter accepts a narrower set of values than the shell does, so an opt-out written by hand in an unusual shape, single-quoted, indented, behind an `export`, or with a trailing comment, is dropped at the next rewrite and the weekly update resumes. The two forms that matter are carried: the `AUTO_UPDATE=0` the toggle writes, and the quoted `AUTO_UPDATE="0"` a hand-edit produces.
+
+Losing an opt-out that way is recoverable and the readouts show it. That is the trade, and it was made deliberately. The alternative was for `write_env_file` to parse the line itself, which it cannot do by sourcing, since it runs on a file that has not been filtered yet and sourcing a value carrying a command substitution would execute it. Matching the line textually instead meant re-deriving the shell's quoting rules, and that code twice concluded the update was off from a file every other reader called on, which silently stops a router patching the binary answering its DNS. Inventing an opt-out is worse than losing one, so the parser was removed and the four shapes it rescued went with it.
+
+`status.sh` reports the opt-out as a setting rather than a missing job, and `audit.sh` stops counting it as drift. Both report the opposite case too: a cron installed while the flag says it is not wanted. That job fires and declines, because the updater carries the same flag, and the boot hook removes it, so `audit.sh` raises it as a review note rather than drift.
 
 ### Watchdog (Health Monitor)
 

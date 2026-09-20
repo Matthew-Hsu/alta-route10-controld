@@ -1615,6 +1615,25 @@ write_env_file() {
         # every status.sh, audit.sh, reconfigure.sh, uninstall.sh,
         # benchmark.sh, post-cfg.sh and watchdog cycle.
         #
+        # A trailing comment annotates a setting; it must not delete it. The
+        # filter used to print the whole line or nothing, so the one shape
+        # README and troubleshooting.md tell people to write,
+        # LAN_IFACES_EXCLUDE="br-lan_40"   # cover everything except these,
+        # failed both tests and was dropped. That key is how a guest VLAN is
+        # kept off ControlD, so the watchdog began intercepting it within five
+        # minutes of an unrelated protocol change, silently. Comments are not
+        # carried anywhere in this file, standalone ones included, so the value
+        # is written back without it rather than the comment being preserved.
+        # What goes into the file is therefore less than what came out of it,
+        # which is the direction a filter guarding a sourced file should err in.
+        #
+        # A quoted value is measured to its closing quote rather than having a
+        # comment stripped off the end, because a # inside quotes belongs to the
+        # value: NOTE="a # b" is one word to the shell. Outside quotes a blank
+        # has to precede the #, for the same reason. Only a # that begins a word
+        # is a comment, so DNS_PORT=5355#x is the value 5355#x and is dropped by
+        # the character class below, as it was before.
+        #
         # Backslash is rejected before either test, for two reasons that the
         # character class below cannot cover.
         #
@@ -1639,7 +1658,17 @@ write_env_file() {
                 if (index(managed, " " k " ") != 0) next
                 v = substr($0, eq + 1)
                 if (index(v, "$") || index(v, "`") || index(v, "\\")) next
-                if (v ~ /^"[^"]*"$/ || v ~ /^[A-Za-z0-9_.:\/@%+-]*$/) print
+                if (substr(v, 1, 1) == "\"") {
+                    q = index(substr(v, 2), "\"")
+                    if (q == 0) next
+                    rest = substr(v, q + 2)
+                    if (rest !~ /^[[:blank:]]*$/ && rest !~ /^[[:blank:]]+#/) next
+                    v = substr(v, 1, q + 1)
+                } else {
+                    sub(/[[:blank:]]+#.*$/, "", v)
+                    sub(/[[:blank:]]+$/, "", v)
+                }
+                if (v ~ /^"[^"]*"$/ || v ~ /^[A-Za-z0-9_.:\/@%+-]*$/) print k "=" v
             }
         ' "$_wef_path")"
     fi

@@ -1449,8 +1449,8 @@ preserved_forced_dns() {
 # setup.sh needs this and cannot use load_env: that would also adopt DNS_TYPE,
 # RESOLVER_ID and PREFERRED_PROTOCOL from the old install, and the installer
 # asks the user for those rather than inheriting them. So it reads the one key
-# it must not lose, the same way preserved_forced_dns reads the one key it must
-# not lose.
+# it must not lose. preserved_forced_dns has the same job for its own key and
+# cannot do it this way: its caller may not source the file at all.
 #
 # Only a plain number is accepted, and only in the range a listener can bind.
 # A hand-edited or truncated value falls back to the default rather than being
@@ -1461,17 +1461,38 @@ installed_dns_port() {
     _idp_env="${1:-/cfg/controld.env}"
     _idp_val=""
     if [ -f "$_idp_env" ]; then
-        # The quotes are optional because write_env_file's own filter accepts a
-        # fully quoted value and carries it forward, and load_env sources it, so
-        # DNS_PORT="5355" is a shape the rest of the project honours. Rejecting
-        # it here fell back to 5354 and recreated the very ctrld.toml/env
-        # disagreement this function exists to prevent.
+        # Sourced in a subshell rather than matched, for the reason
+        # installed_auto_update is: the shell is what sets DNS_PORT everywhere
+        # else, so reading it any other way means re-deriving the shell's
+        # quoting rules and disagreeing with load_env wherever that derivation
+        # falls short. It did. The pattern this replaces required the value to
+        # end the line, so DNS_PORT=5355 with a trailing comment read as 5354
+        # while every sourcing reader on the same router said 5355, which is
+        # exactly the ctrld.toml/env divergence this function exists to prevent.
         #
-        # Leading zeros are not accepted: 00005355 passed a numeric range check
-        # and would be written straight into ctrld.toml, where it is not a legal
-        # TOML integer, so ctrld would refuse the config it was given.
-        _idp_val="$(sed -n 's/^DNS_PORT="\{0,1\}\(0\|[1-9][0-9]*\)"\{0,1\}[[:space:]]*$/\1/p' "$_idp_env" | head -1)"
+        # set +e because this inherits the caller's errexit, and setup.sh runs
+        # under it: any line failing ahead of DNS_PORT would otherwise abort the
+        # read and hand back the default. The reset in front of the dot stops a
+        # DNS_PORT inherited from the environment beating the file.
+        #
+        # Safe here and not in write_env_file, which must reach its decision
+        # without sourcing: this runs from setup.sh, which never sources this
+        # file, whereas the writer runs on input it has not filtered yet.
+        _idp_val="$(
+            set +e
+            DNS_PORT=
+            # shellcheck source=/dev/null
+            . "$_idp_env" >/dev/null 2>&1
+            printf '%s' "${DNS_PORT:-}"
+        )"
     fi
+    # What the shell produced still has to be a port. Leading zeros are refused
+    # rather than normalised: 00005355 passes a numeric range check and is not a
+    # legal TOML integer, so ctrld would refuse the config it was handed.
+    case "$_idp_val" in
+        ''|*[!0-9]*) _idp_val="" ;;
+        0*)          _idp_val="" ;;
+    esac
     if [ -n "$_idp_val" ] && [ "$_idp_val" -ge 1 ] 2>/dev/null && [ "$_idp_val" -le 65535 ]; then
         printf '%s' "$_idp_val"
         return 0

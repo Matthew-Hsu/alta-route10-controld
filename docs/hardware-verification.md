@@ -40,6 +40,33 @@ Status](../README.md#verification-status) in the README.
   expected, nothing duplicated, and the second run re-downloading `lib.sh`
   rather than reusing the copy the first left in `/tmp`
 
+- **What a config rewrite keeps.** `write_env_file` run on the device, against
+  the router's own `lib.sh` and its BusyBox `awk` and `sed`, carried
+  `LAN_IFACES_EXCLUDE="br-lan_40"   # guest wifi` and a commented `DNS_PORT`
+  through with their comments stripped and their values intact, and named
+  `JUNK=two words` on stderr as it dropped it. Sourcing that file first printed
+  `ash: line 12: words: not found`, which is the value being executed rather
+  than parsed, and is why that shape is refused.
+
+- **Forced DNS with `uci` unable to answer.** `FORCED_DNS="1"` came back as
+  `FORCED_DNS=1` with `uci` replaced by a stub that exits non-zero, which is
+  the state a firmware update leaves behind and the only window where the file
+  is the sole record. Simulated rather than encountered: no router here has
+  been through a firmware update with a quoted flag in place.
+
+- **The same thing through a real protocol change.** With
+  `LAN_IFACES_EXCLUDE="br-lan_40"   # guest wifi` in place, `reconfigure.sh
+  --protocol --to dot --force` and back to `doh3` left the key in the file with
+  its comment stripped, and the redirects it then wrote covered five bridges
+  rather than six: `firewall.user DNS redirect rules updated (br-lan br-lan_10
+  br-lan_20 br-lan_30 br-lan_50 )`. So the setting survived the rewrite and
+  took effect, which is the outcome the key exists for and the one a dropped
+  line used to cost. Removing the line and running the watchdog put coverage
+  back to six bridges and 24 rules.
+
+  The drop report reaches syslog as well as stderr: `controld: write_env_file
+  dropped: JUNK`.
+
 ## Redirect Coverage
 
 - Redirect coverage on all six bridges, the port-853 DoT hijack, and

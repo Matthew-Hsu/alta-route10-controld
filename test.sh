@@ -2372,6 +2372,49 @@ assert_eq "falls back to live uci state"      "1" "$(preserved_forced_dns "$TMPD
 printf 'FORCED_DNS=0\n' > "$TMPDIR/fd.env"
 assert_eq "uci on beats a stale 0 in the file" "1" "$(preserved_forced_dns "$TMPDIR/fd.env")"
 
+# Back to uci saying nothing, which is a router whose /etc/config a firmware
+# update has just wiped. That is the window the value is preserved in the file
+# for, and the only one where the file is the sole record.
+printf '#!/bin/sh\nexit 1\n' > "$TMPDIR/bin/uci"
+
+# The shapes the shell honours and the old pattern did not. Each one read as
+# off, and with uci unable to answer the rewrite then recorded off for someone
+# who had turned it on. Asserted against the shell, because agreeing with
+# load_env is the property rather than matching a literal typed twice.
+for _pfd_on in 'FORCED_DNS="1"' 'FORCED_DNS=1  # leave this on' 'FORCED_DNS=1 '; do
+    printf '%s\n' "$_pfd_on" > "$TMPDIR/fd.env"
+    assert_eq "'${_pfd_on}' is read as on" "1" "$(preserved_forced_dns "$TMPDIR/fd.env")"
+done
+printf 'FORCED_DNS="1"\n' > "$TMPDIR/fd.env"
+assert_eq "and a quoted flag agrees with what the shell sets" \
+    "$(preserved_forced_dns "$TMPDIR/fd.env")" \
+    "$(sh -c '. "$1" >/dev/null 2>&1; printf "%s" "${FORCED_DNS:-}"' _ "$TMPDIR/fd.env")"
+
+# The end is anchored, so a value that only starts with 1 stops reading as 1.
+# The shell sets FORCED_DNS=10, every consumer compares against 1 and treats it
+# as off, and the unanchored pattern was the only thing calling it on.
+# An unbalanced quote is in the list because making each quote independently
+# optional accepted it, and a file carrying one cannot be sourced at all: the
+# shell dies on the syntax error, so nothing downstream would see a 1 anyway.
+for _pfd_bad in 'FORCED_DNS=10' 'FORCED_DNS=1x' 'FORCED_DNS="1' 'FORCED_DNS=1"' 'FORCED_DNS=on'; do
+    printf '%s\n' "$_pfd_bad" > "$TMPDIR/fd.env"
+    assert_eq "'${_pfd_bad}' does not read as on" "0" "$(preserved_forced_dns "$TMPDIR/fd.env")"
+done
+
+# A quoted 0 must still read as off rather than falling through to a uci that
+# cannot answer, which would be the same bug pointing the other way.
+printf 'FORCED_DNS="0"\n' > "$TMPDIR/fd.env"
+assert_eq "a quoted 0 is read as off" "0" "$(preserved_forced_dns "$TMPDIR/fd.env")"
+
+# The outcome, through the real writer: a rewrite must carry the flag rather
+# than derive it from a uci that is not there.
+PFD_RT="$TMPDIR/pfd-rt.env"
+printf 'RESOLVER_ID=abc123\nFORCED_DNS="1"\n' > "$PFD_RT"
+( RESOLVER_ID=abc123; BOOTSTRAP_IP=76.76.2.22; CTRLD_VERSION=1.5.7
+  DNS_TYPE=doh3; PREFERRED_PROTOCOL=doh3
+  write_env_file "$PFD_RT" ) >/dev/null 2>&1
+assert_file_contains "a rewrite keeps forced DNS on" "$PFD_RT" '^FORCED_DNS=1$'
+
 # setup.sh must actually preserve it. This fix was once described in a commit
 # before it was in the diff, and no test noticed. The assertion that replaced
 # that gap checked for the literal `FORCED_DNS=$(preserved_forced_dns ...)`

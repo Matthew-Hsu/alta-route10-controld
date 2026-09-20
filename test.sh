@@ -3965,6 +3965,67 @@ assert_false "a quoted parameter expansion is not carried"  grep -q '^BRACE=' "$
 # The whole point of carrying unmanaged keys forward is the documented
 # overrides, so prove the tighter filter still keeps every one of them.
 assert_file_contains "a moved DNS port still survives the tighter filter" "$WEF" '^DNS_PORT=5355$'
+
+# A trailing comment used to take the setting with it. README line 246 and
+# troubleshooting.md both tell people to write exactly this, and any rewrite
+# deleted it: LAN_IFACES_EXCLUDE is how a guest VLAN is kept off ControlD, so
+# the watchdog started intercepting that VLAN within five minutes of an
+# unrelated protocol change, with nothing said.
+#
+# Its own file, not the one above. Appending a commented copy to a file that
+# already carries a clean LAN_IFACES_EXCLUDE proves nothing: the clean line
+# satisfies the assertion whatever the filter does to the commented one, and
+# reverting the filter left the whole suite green.
+WEFC="$TMPDIR/wef-comment.env"
+wefc_rewrite() {
+    printf 'RESOLVER_ID=abc123\n' > "$WEFC"
+    printf '%s\n' "$1" >> "$WEFC"
+    ( RESOLVER_ID=abc123; BOOTSTRAP_IP=76.76.2.22; CTRLD_VERSION=1.5.7
+      DNS_TYPE=doh3; PREFERRED_PROTOCOL=doh3
+      write_env_file "$WEFC" ) >/dev/null 2>&1
+    cat "$WEFC"
+}
+
+assert_contains "a commented exclude keeps its setting" \
+    "$(wefc_rewrite 'LAN_IFACES_EXCLUDE="br-lan_40"              # cover everything except these')" \
+    'LAN_IFACES_EXCLUDE="br-lan_40"'
+assert_contains "a commented port keeps its setting" \
+    "$(wefc_rewrite 'DNS_PORT=5355   # moved off the default')" \
+    'DNS_PORT=5355'
+# The comment itself is not preserved, here or anywhere: standalone comment
+# lines are dropped too, and were before this. Writing back less than came in
+# is the direction this filter should err in.
+assert_not_contains "and the comment is not carried" \
+    "$(wefc_rewrite 'LAN_IFACES_EXCLUDE="br-lan_40"              # cover everything except these')" \
+    '#'
+
+# A # inside quotes belongs to the value. Stripping at the first one produced
+# an unbalanced quote, and the shell reads NOTE="a # b" as a single word.
+assert_contains "a hash inside quotes is part of the value" \
+    "$(wefc_rewrite 'HASHY="a # b"')" 'HASHY="a # b"'
+wefc_rewrite 'HASHY="a # b"' >/dev/null
+assert_eq "and it still agrees with what the shell sets" "a # b" \
+    "$(sh -c '. "$1" >/dev/null 2>&1; printf "%s" "${HASHY:-}"' _ "$WEFC")"
+
+# Only a # that begins a word is a comment, so this is the value 5355#x, which
+# the character class rejects exactly as it did before.
+assert_not_contains "a hash with no blank before it is not a comment" \
+    "$(wefc_rewrite 'TIGHT=5355#x')" 'TIGHT='
+
+# The comment must not become a way past the filter. Each of these is rejected
+# on the whole line before any comment handling runs.
+assert_not_contains "a substitution in a comment is not carried" \
+    "$(wefc_rewrite "CSUB=ok   # \$(touch $TMPDIR/c-pwned)")" 'CSUB='
+assert_not_contains "a backtick in a comment is not carried" \
+    "$(wefc_rewrite 'CTICK=ok   # `touch /tmp/c-pwned2`')" 'CTICK='
+assert_not_contains "a backslash in a comment is not carried" \
+    "$(wefc_rewrite 'CBACK=ok   # trailing\\')" 'CBACK='
+assert_false "and none of them ran" test -e "$TMPDIR/c-pwned"
+
+# An unbalanced quote cannot be measured to a closing quote, and a file
+# carrying one cannot be sourced at all.
+assert_not_contains "an unbalanced quote is not carried" \
+    "$(wefc_rewrite 'UNBAL="oops')" 'UNBAL='
 assert_file_contains "an excluded VLAN still survives"      "$WEF" '^LAN_IFACES_EXCLUDE="br-lan_40"$'
 assert_file_contains "an unknown key still survives"        "$WEF" '^POLICY_UPSTREAMS=2$'
 # Sourcing what was written must not run anything. If a substitution had been

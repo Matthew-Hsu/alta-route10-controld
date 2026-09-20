@@ -836,6 +836,41 @@ CU_ON="$(cat "$CU_LOG" 2>/dev/null)"
 assert_contains     "with the flag absent it goes looking for a release" "$CU_ON" "wget"
 assert_not_contains "and says nothing about being off" "$CU_ON" "auto-update is off"
 
+# Already current is what --now finds most of the time, and it used to exit 0
+# with nothing on stdout, which is indistinguishable from a script that never
+# ran. On hardware this took reading the source to settle, because every other
+# path under --now either prints or exits non-zero. The stub answers on one
+# line, which is how the GitHub API really replies and what the greedy match in
+# the tag_name extraction has to survive.
+cat > "$CU_BIN/wget" << 'CUWGETCUR'
+#!/bin/sh
+echo "wget $*" >> "$CU_LOG"
+printf '%s\n' '{"url":"https://example/1","tag_name":"v1.5.7","name":"Release v1.5.7"}'
+CUWGETCUR
+chmod +x "$CU_BIN/wget"
+
+cat > "$CU_CFG/controld.env" << 'CUENVCUR'
+RESOLVER_ID=abc123
+CTRLD_VERSION=1.5.7
+AUTO_UPDATE=0
+CUENVCUR
+: > "$CU_LOG"
+CU_CUR="$( ( PATH="$CU_BIN:$PATH"; sh "$CUGEN" --now ) 2>&1 || true )"
+assert_contains     "--now says it is already current"  "$CU_CUR" "already on v1.5.7"
+assert_not_contains "and downloads nothing to say it"   "$(cat "$CU_LOG" 2>/dev/null)" "tar.gz"
+
+# The other half, or the line above could be bought by making the weekly job
+# log once a week that it had nothing to do.
+cat > "$CU_CFG/controld.env" << 'CUENVCURCRON'
+RESOLVER_ID=abc123
+CTRLD_VERSION=1.5.7
+CUENVCURCRON
+: > "$CU_LOG"
+CU_CUR_CRON="$( ( PATH="$CU_BIN:$PATH"; sh "$CUGEN" ) 2>&1 || true )"
+assert_eq           "the weekly run stays silent when current" "" "$CU_CUR_CRON"
+assert_not_contains "and logs nothing about it either" \
+    "$(cat "$CU_LOG" 2>/dev/null)" "already on"
+
 describe "rc.local — a reboot must not hand back a cron that was turned off"
 
 # The reinstall at boot is why deleting the cron was never an off switch: /etc

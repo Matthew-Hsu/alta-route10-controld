@@ -1349,7 +1349,18 @@ if [ -z "${CTRLD_VERSION:-}" ]; then
     exit 1
 fi
 CURRENT="v${CTRLD_VERSION}"
-[ "$LATEST" = "$CURRENT" ] && exit 0
+# Already current is the commonest thing --now finds, and reporting it
+# only to syslog left the person who ran the command with no output and
+# exit 0, which is what a script that never ran looks like. Confirming it
+# on hardware took reading the source to work out which branches print.
+# The weekly run stays silent, so the cron does not log a line a week
+# saying nothing happened.
+if [ "$LATEST" = "$CURRENT" ]; then
+    if [ "$_cu_forced" = "1" ]; then
+        _cu_say "already on ${CURRENT} — nothing to update"
+    fi
+    exit 0
+fi
 
 VER="${LATEST#v}"
 ASSET="ctrld_${VER}_linux_arm64.tar.gz"

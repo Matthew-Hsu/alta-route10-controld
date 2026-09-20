@@ -258,14 +258,40 @@ fi
 # install is recorded here, rather than on the scripts existing: a job missing
 # because its script is gone too is still a job that never runs.
 if [ -n "${CTRLD_VERSION:-}" ]; then
+    # The updater is expected only where it is wanted. A cron removed on
+    # purpose is not a broken install, and calling it drift would put a
+    # permanent failure in the exit code of the one person careful enough to
+    # have turned it off.
+    #
+    # The watchdog is never part of that opt-out. It reconciles the protocol,
+    # restores the redirects and drives the fallback chain, so it is missed for
+    # the same reason as before whatever the update flag says.
     nocron=""
-    for _cj in /cfg/watchdog.sh /cfg/controld-update.sh; do
-        cron_has "$_cj" || nocron="${nocron} ${_cj}"
-    done
-    if [ -z "$nocron" ]; then
+    cron_has /cfg/watchdog.sh || nocron="${nocron} /cfg/watchdog.sh"
+    if [ "${AUTO_UPDATE:-1}" = "0" ]; then
+        _upd_wanted=0
+    else
+        _upd_wanted=1
+        cron_has /cfg/controld-update.sh || nocron="${nocron} /cfg/controld-update.sh"
+    fi
+    if [ -n "$nocron" ]; then
+        drift "Script(s) with no cron job, so never run:${nocron}"
+    elif [ "$_upd_wanted" = "1" ]; then
         print_ok "Both cron jobs are in the crontab"
     else
-        drift "Script(s) with no cron job, so never run:${nocron}"
+        print_ok "Watchdog cron present; weekly auto-update off by choice"
+    fi
+    # The other direction, which the check above cannot see once the updater is
+    # off the expected list: a job installed while controld.env says it is not
+    # wanted.
+    #
+    # A review note rather than drift, and the wording matters. The job does
+    # fire, but the updater carries the same flag and declines, so nothing is
+    # replaced. And the boot hook takes the job out, so this self-corrects like
+    # every other review item rather than pinning audit.sh at exit 1 for
+    # someone who edited the file by hand.
+    if [ "$_upd_wanted" = "0" ] && cron_has /cfg/controld-update.sh; then
+        review "AUTO_UPDATE=0 but the update cron is installed — it declines; the next boot removes it"
     fi
 fi
 

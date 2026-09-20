@@ -109,6 +109,11 @@ load_env() {
     PREFERRED_PROTOCOL="${PREFERRED_PROTOCOL:-$DNS_TYPE}"
     BOOTSTRAP_IP="${BOOTSTRAP_IP:-76.76.2.22}"
     DNS_PORT="${DNS_PORT:-5354}"
+    # Absent means on, and it has to. Every install predating this flag has no
+    # such line, so reading a missing key as "off" would switch the weekly
+    # update off on every router in the field the first time setup.sh ran again.
+    # The file records the opt-out, never the default.
+    AUTO_UPDATE="${AUTO_UPDATE:-1}"
     return 0
 }
 
@@ -1474,6 +1479,40 @@ installed_dns_port() {
     printf '5354'
 }
 
+# Is the weekly auto-update wanted, according to an existing install?
+#
+# Exit status, not output: every caller is asking a yes/no question.
+#
+# The file is sourced in a subshell rather than parsed, so the shell settles
+# what the value means and this agrees with load_env by construction. Matching
+# the line with sed instead meant re-deriving the shell's quoting rules, and it
+# did not survive contact.
+#
+# The subshell is what lets setup.sh call this at all: it cannot use load_env,
+# which would adopt the protocol and resolver it is in the middle of prompting
+# for, and nothing set in here escapes.
+#
+# A file that is missing, or malformed enough to kill the subshell, leaves the
+# substitution empty and reads as on, which is the direction that leaves a
+# router patching itself rather than silently stuck.
+# Usage: installed_auto_update [env-file]
+installed_auto_update() {
+    _iau_env="${1:-/cfg/controld.env}"
+    [ -f "$_iau_env" ] || return 0
+    # set +e first: this inherits the caller's errexit, and setup.sh and
+    # reconfigure.sh both run under set -e. There any line returning non-zero
+    # ahead of the flag aborted the read, and the empty result was taken as on,
+    # so the opt-out was ignored in the caller that installs the cron.
+    [ "$(
+        set +e
+        AUTO_UPDATE=
+        # shellcheck source=/dev/null
+        . "$_iau_env" >/dev/null 2>&1
+        printf '%s' "${AUTO_UPDATE:-1}"
+    )" = "0" ] && return 1
+    return 0
+}
+
 # ── Env file ──
 
 # Write the recovery config from the current settings.
@@ -1635,6 +1674,38 @@ set_forced_dns_flag() {
         sed -i "s|^FORCED_DNS=.*|FORCED_DNS=${_val}|" /cfg/controld.env
     else
         printf 'FORCED_DNS=%s\n' "$_val" >> /cfg/controld.env
+    fi
+}
+
+# ── Auto-update ──
+
+# Write AUTO_UPDATE=<0|1> to /cfg/controld.env, in place or appended if absent.
+#
+# The 1 is written rather than the line being deleted. Turning the update back
+# on is a decision too, and a file that records only the off state cannot tell
+# "left at the default" apart from "switched off and on again", which is the
+# first thing to want when working out why a router did or did not patch itself.
+# The env file is a parameter so the suite can assert on what this writes.
+# set_forced_dns_flag hardcodes the path and has no test as a result, which is
+# how a writer and its reader get to disagree about the key with nothing
+# noticing.
+# Usage: set_auto_update_flag <0|1> [env-file]
+set_auto_update_flag() {
+    _sau_val="$1"
+    _sau_env="${2:-/cfg/controld.env}"
+    # A file whose last line has no newline would otherwise take the appended
+    # key onto the end of it. That loses two settings at once and says nothing:
+    # FORCED_DNS=1AUTO_UPDATE=0 stops ensure_forced_dns restoring the port-853
+    # hijack, while installed_auto_update reads the update as still on, all
+    # under a printed "Weekly auto-update off". Command substitution strips
+    # trailing newlines, so a non-empty last byte means the newline is missing.
+    if [ -s "$_sau_env" ] && [ -n "$(tail -c 1 "$_sau_env" 2>/dev/null)" ]; then
+        printf '\n' >> "$_sau_env"
+    fi
+    if grep -q '^AUTO_UPDATE=' "$_sau_env" 2>/dev/null; then
+        sed -i "s|^AUTO_UPDATE=.*|AUTO_UPDATE=${_sau_val}|" "$_sau_env"
+    else
+        printf 'AUTO_UPDATE=%s\n' "$_sau_val" >> "$_sau_env"
     fi
 }
 

@@ -94,6 +94,19 @@ line numbers drift and a stale pointer aims attention at the wrong line:
   thing while the two match
 - the `── Inline benchmark ──` header in `setup.sh`, which `test.sh` uses as a
   `sed` range anchor from another file
+- the `── Step 8: Install cron job for weekly updates ──` and `── Step 9: Copy
+  lib.sh to router for runtime use ──` headers in `setup.sh`, the two ends of
+  another `sed` range `test.sh` reads. It extracts Step 8, points its `/cfg`
+  paths at a sandbox and runs it against a stub crontab, which is the only way
+  the installer's own cron decisions can be tested off-device. The two ends
+  fail differently, exactly as in the `README.md` range below: retitling the
+  Step 8 heading empties the range, while rewording the Step 9 one leaves it
+  running to the end of the file, where the extracted body still contains
+  every string a guard would think to look for. So there are two guards. One
+  checks the range still carries its `cron_remove`, its gate and its crontab
+  write; the other checks it stops before Step 9b's `UTILITY_SCRIPTS`, which
+  is the first thing past it. The second was added after retitling the Step 9
+  header left the whole suite green
 - the `#### Guided Protocol Selection` heading in `README.md` and the
   `Option 5 runs` line that closes it. They are the two ends of a `sed` range
   `test.sh` reads to check the documented menu still matches the installer's.
@@ -132,8 +145,8 @@ and say in the commit what moved. Deleting one to get green is how this project
 ends up back where it started, with a documented rule and nothing enforcing it.
 
 That rule is the only thing covering an interface added later, so treat it as
-load-bearing. The guards above protect these eight and nothing else: add a
-ninth without one and the suite stays green, both when you add it and when
+load-bearing. The guards above protect these nine and nothing else: add a
+tenth without one and the suite stays green, both when you add it and when
 someone reworks the comment away months later, in a different change, with
 nothing to connect the breakage back to the edit that caused it. Simulating
 exactly that is how this section was checked. Whether a new interface is

@@ -1203,10 +1203,47 @@ logger -t rc.local "ControlD boot hook starting"
         (crontab -l 2>/dev/null; echo "*/5 * * * * /cfg/watchdog.sh") | crontab -
         logger -t rc.local "watchdog cron installed"
     }
-    echo "$CRONTAB" | grep -qF "/cfg/controld-update.sh" || {
-        (crontab -l 2>/dev/null; echo "0 3 * * 1 /cfg/controld-update.sh") | crontab -
-        logger -t rc.local "auto-update cron installed"
-    }
+    # A cron someone deliberately removed would otherwise come back here at the
+    # next boot, which is most of why removing it was never an off switch.
+    #
+    # Sourced in a subshell, which is what installed_auto_update does in lib.sh
+    # for the callers that have the library: the shell settles what the value
+    # is, so this and every readout agree on it. Nothing set here escapes the
+    # parentheses, so the rest of the file is not adopted by a block that runs
+    # alongside post-cfg.sh. A missing or malformed file leaves the value empty
+    # and the cron is installed, which is the safe direction.
+    #
+    # Structurally identical to installed_auto_update rather than merely
+    # equivalent, because the shorter form was not. Testing the subshell's exit
+    # status read a file containing `exit 0` as an opt-out, with no AUTO_UPDATE
+    # line in it at all, and the cron was then never reinstalled. Comparing the
+    # value the subshell prints cannot do that. The reset in front of the dot is
+    # the other half: without it an AUTO_UPDATE inherited from the environment
+    # would beat the file this is supposed to be reading.
+    if [ "$(
+        set +e
+        AUTO_UPDATE=
+        . /cfg/controld.env >/dev/null 2>&1
+        printf '%s' "${AUTO_UPDATE:-1}"
+    )" = "0" ]; then
+        # Removed, not merely left uninstalled. A job that outlived the
+        # opt-out, from a crontab restored by hand or an install that predates
+        # the flag, would otherwise sit there forever: nothing else takes it
+        # out between re-installs, so audit.sh reported it at every run with no
+        # way for the user to clear it. The updater declines anyway, but a boot
+        # is the right place to reconcile it.
+        if echo "$CRONTAB" | grep -qF "/cfg/controld-update.sh"; then
+            crontab -l 2>/dev/null | grep -vF "/cfg/controld-update.sh" | crontab - 2>/dev/null
+            logger -t rc.local "auto-update is off — removed the update cron that was still installed"
+        else
+            logger -t rc.local "auto-update is off in controld.env — cron not reinstalled"
+        fi
+    else
+        echo "$CRONTAB" | grep -qF "/cfg/controld-update.sh" || {
+            (crontab -l 2>/dev/null; echo "0 3 * * 1 /cfg/controld-update.sh") | crontab -
+            logger -t rc.local "auto-update cron installed"
+        }
+    fi
 ) &
 
 # 3. Ensure iptables redirect rules survive firewall restarts.
@@ -1247,6 +1284,42 @@ cat > /cfg/controld-update.sh << 'UPDATESCRIPT'
 # Old upstream spelling. See the note in post-cfg.sh above.
 CTRLD_VERSION="${CTRLD_VERSION:-${CURLD_VERSION:-}}"
 
+# The cron is what normally stops this running, and both installers honour the
+# same flag. This is the backstop for the ways a job comes back that neither of
+# them sees: a crontab restored from a backup, or a line someone added by hand
+# years ago and forgot. Last place that can still decline to replace the binary
+# answering DNS for the whole house.
+#
+# --now is how a person updates after opting out, and it is the whole point of
+# the opt-out: turning the weekly job off means choosing when to update, not
+# never updating. Without it this script refused the very command the readouts
+# and the README told the user to run, so the choice was really "stay on this
+# binary until you re-install".
+_cu_forced=0
+case "${1:-}" in
+    --now)  _cu_forced=1 ;;
+    "")     : ;;
+    *)      echo "Usage: controld-update.sh [--now]" >&2
+            echo "  --now   update even when AUTO_UPDATE=0 (the weekly job is off)" >&2
+            exit 2 ;;
+esac
+# Everything this script reports goes through here. Run from cron its only
+# audience is syslog, but a person running --now sees nothing at all
+# otherwise: no output, exit 0, whether it updated, was already current, or
+# could not reach the network. They would have to go to logread, which on this
+# firmware has no buffer to read. The command the opt-out depends on has to
+# answer the person who ran it.
+_cu_say() {
+    logger -t controld-update "$1"
+    [ "$_cu_forced" = "1" ] && printf '%s\n' "$1"
+    return 0
+}
+
+if [ "$_cu_forced" = "0" ] && [ "${AUTO_UPDATE:-1}" = "0" ]; then
+    _cu_say "auto-update is off in controld.env — nothing to do (use --now to update)"
+    exit 0
+fi
+
 if [ -f /cfg/lib.sh ]; then
     # shellcheck source=/dev/null
     . /cfg/lib.sh
@@ -1268,11 +1341,11 @@ start_ctrld_wait() {
 
 LATEST="$(wget -qO- 'https://api.github.com/repos/Control-D-Inc/ctrld/releases/latest' | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\(v[0-9.]*\)".*/\1/')"
 if [ -z "$LATEST" ]; then
-    logger -t controld-update "could not determine latest release (rate limit or no network) — skipping"
+    _cu_say "could not determine latest release (rate limit or no network) — skipping"
     exit 0
 fi
 if [ -z "${CTRLD_VERSION:-}" ]; then
-    logger -t controld-update "CTRLD_VERSION missing from controld.env — re-run setup.sh to migrate"
+    _cu_say "CTRLD_VERSION missing from controld.env — re-run setup.sh to migrate"
     exit 1
 fi
 CURRENT="v${CTRLD_VERSION}"
@@ -1280,7 +1353,7 @@ CURRENT="v${CTRLD_VERSION}"
 
 VER="${LATEST#v}"
 ASSET="ctrld_${VER}_linux_arm64.tar.gz"
-logger -t controld-update "updating ctrld from ${CURRENT} to ${LATEST}"
+_cu_say "updating ctrld from ${CURRENT} to ${LATEST}"
 
 wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/${LATEST}/${ASSET}" || exit 1
 
@@ -1289,15 +1362,15 @@ if command -v verify_ctrld_download >/dev/null 2>&1; then
     _vrc=0; verify_ctrld_download /tmp/ctrld.tar.gz "$ASSET" "$VER" || _vrc=$?
     case "$_vrc" in
         1) rm -f /tmp/ctrld.tar.gz
-           logger -t controld-update "checksum MISMATCH for ${LATEST} — update aborted, keeping ${CURRENT}"
+           _cu_say "checksum MISMATCH for ${LATEST} — update aborted, keeping ${CURRENT}"
            exit 1 ;;
-        2) logger -t controld-update "could not verify ${LATEST} checksum — continuing" ;;
+        2) _cu_say "could not verify ${LATEST} checksum — continuing" ;;
     esac
 fi
 
 tar xzf /tmp/ctrld.tar.gz -C /tmp || exit 1
 [ -f "/tmp/dist/ctrld_${VER}_linux_arm64/ctrld" ] || {
-    logger -t controld-update "release layout unexpected — update aborted, keeping ${CURRENT}"
+    _cu_say "release layout unexpected — update aborted, keeping ${CURRENT}"
     rm -rf /tmp/dist /tmp/ctrld.tar.gz
     exit 1
 }
@@ -1313,13 +1386,13 @@ rm -rf /tmp/dist /tmp/ctrld.tar.gz
 
 if start_ctrld_wait; then
     sed -i "s|CTRLD_VERSION=.*|CTRLD_VERSION=${VER}|" /cfg/controld.env
-    logger -t controld-update "ctrld updated to ${LATEST} and resolving"
+    _cu_say "ctrld updated to ${LATEST} and resolving"
     exit 0
 fi
 
 # New binary will not resolve: put the old one back and leave the recorded
 # version alone so next week retries.
-logger -t controld-update "${LATEST} failed to resolve after install — rolling back to ${CURRENT}"
+_cu_say "${LATEST} failed to resolve after install — rolling back to ${CURRENT}"
 for _kp in $(pidof ctrld 2>/dev/null); do kill "$_kp" 2>/dev/null || true; done
 sleep 1
 if [ -f /cfg/ctrld.prev ]; then
@@ -1327,9 +1400,9 @@ if [ -f /cfg/ctrld.prev ]; then
     chmod +x /cfg/ctrld
 fi
 if start_ctrld_wait; then
-    logger -t controld-update "rolled back to ${CURRENT}, DNS restored"
+    _cu_say "rolled back to ${CURRENT}, DNS restored"
 else
-    logger -t controld-update "rollback failed to resolve — watchdog will take over"
+    _cu_say "rollback failed to resolve — watchdog will take over"
 fi
 exit 1
 UPDATESCRIPT
@@ -1339,11 +1412,30 @@ print_ok "/cfg/controld-update.sh written"
 
 # ── Step 8: Install cron job for weekly updates ──
 
+# cron_remove runs either way. It is what makes re-running setup.sh, this
+# project's documented upgrade path, honour a choice made since the last run
+# instead of quietly handing the job back.
 cron_remove /cfg/controld-update.sh
-(crontab -l 2>/dev/null; printf '0 3 * * 1 /cfg/controld-update.sh\n') | crontab - 2>/dev/null || {
-    print_warn "Could not install cron job (non-fatal, auto-update won't run)"
-}
-print_ok "Weekly auto-update cron installed"
+# command -v before the call, because an older library may not carry the
+# function. setup.sh has two documented bootstrap paths that source a stale
+# lib.sh when fetching a fresh one fails, one from beside the script and one
+# from /cfg, and an undefined function in an `if` is not fatal: it returns 127
+# and takes the else branch. A router upgrading offline would have had its
+# weekly cron removed and not put back, with the installer announcing an
+# opt-out the user never made. Absent library means absent flag, which is on.
+if ! command -v installed_auto_update >/dev/null 2>&1 || installed_auto_update; then
+    # if/else, not a || block followed by an unconditional print. A crontab
+    # that is broken or absent produced both lines at once, one saying the job
+    # could not be installed and the next saying it was.
+    if (crontab -l 2>/dev/null; printf '0 3 * * 1 /cfg/controld-update.sh\n') \
+            | crontab - 2>/dev/null; then
+        print_ok "Weekly auto-update cron installed"
+    else
+        print_warn "Could not install cron job (non-fatal, auto-update won't run)"
+    fi
+else
+    print_info "Weekly auto-update is off in controld.env — cron not installed"
+fi
 
 # ── Step 9: Copy lib.sh to router for runtime use ──
 
@@ -1458,7 +1550,14 @@ fi
 # After the health check rather than before it, so DNS_PORT is the port Step 9c
 # settled on and ctrld is known to be answering there. Pruning against a port
 # that is about to move would delete the rules the install is about to need.
-_pruned="$(prune_stale_redirects "$DNS_PORT")"
+# command -v for the same reason step 8 has it: under set -e an assignment from
+# an undefined function aborts the installer outright, and setup.sh has two
+# documented paths onto a lib.sh older than this function.
+if command -v prune_stale_redirects >/dev/null 2>&1; then
+    _pruned="$(prune_stale_redirects "$DNS_PORT")"
+else
+    _pruned=0
+fi
 case "$_pruned" in
     ''|0|*[!0-9]*) ;;
     *) print_ok "Removed ${_pruned} redirect rule(s) from a port no longer in use" ;;

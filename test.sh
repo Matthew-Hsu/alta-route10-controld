@@ -599,7 +599,742 @@ assert_false "generated hook has no exit"   grep -qE '^[[:space:]]*exit' "$RCGEN
 assert_false "generated hook has no set -e" grep -qE '^[[:space:]]*set -e' "$RCGEN"
 assert_true  "generated hook warns that it is sourced" grep -q 'sources' "$RCGEN"
 
-describe "watchdog — a ctrld that will not start must still reach the teardown"
+describe "load_env() — the default every readout depends on"
+
+# load_env takes the file as a parameter, so this runs the real path rather
+# than an imitation of it. Flipping its default to 0, or deleting the line,
+# left the suite green: every other test here drives the flag through the
+# environment, which reaches the inline ${AUTO_UPDATE:-1} fallbacks in
+# status.sh and audit.sh and never this assignment. On a router that flip
+# means every readout reports the update off while the cron runs it.
+LE_ENV="$TMPDIR/loadenv.env"
+printf 'RESOLVER_ID=abc123\nCTRLD_VERSION=1.5.7\n' > "$LE_ENV"
+assert_eq "an install predating the flag loads as on" "1" \
+    "$( ( AUTO_UPDATE=; load_env "$LE_ENV" >/dev/null 2>&1; printf '%s' "$AUTO_UPDATE" ) )"
+printf 'RESOLVER_ID=abc123\nAUTO_UPDATE=0\n' > "$LE_ENV"
+assert_eq "and a recorded opt-out loads as off" "0" \
+    "$( ( AUTO_UPDATE=; load_env "$LE_ENV" >/dev/null 2>&1; printf '%s' "$AUTO_UPDATE" ) )"
+# The file wins over whatever the caller happened to have set, or a stray
+# value in the environment would decide what the router reports.
+assert_eq "the file beats an ambient value" "0" \
+    "$( ( AUTO_UPDATE=1; load_env "$LE_ENV" >/dev/null 2>&1; printf '%s' "$AUTO_UPDATE" ) )"
+
+describe "installed_auto_update() — only a deliberate 0 turns the update off"
+
+IAU_ENV="$TMPDIR/iau.env"
+assert_true  "no env file at all means on"  installed_auto_update "$TMPDIR/no-such.env"
+printf 'RESOLVER_ID=abc123\n' > "$IAU_ENV"
+assert_true  "an install predating the flag means on" installed_auto_update "$IAU_ENV"
+printf 'AUTO_UPDATE=1\n' >> "$IAU_ENV"
+assert_true  "an explicit 1 means on"       installed_auto_update "$IAU_ENV"
+printf 'RESOLVER_ID=abc123\nAUTO_UPDATE=0\n' > "$IAU_ENV"
+assert_false "an explicit 0 means off"      installed_auto_update "$IAU_ENV"
+# Unparseable is on, not off. The alternative leaves a router that never
+# patches itself because of a typo nobody can see.
+printf 'AUTO_UPDATE=maybe\n' > "$IAU_ENV"
+assert_true  "a value nobody can parse means on" installed_auto_update "$IAU_ENV"
+# A caller running under set -e must read the same answer as one that is not.
+# setup.sh and reconfigure.sh both set it, and the reader inherits it, so a
+# line that returns non-zero before the flag aborted the sourced read and the
+# opt-out was silently ignored in the caller that installs the cron. A
+# malformed assignment is enough: `FOO=bar baz` runs baz.
+IAU_EE="$TMPDIR/iau-errexit.env"
+printf 'RESOLVER_ID=abc123
+NOISY=bar baz
+AUTO_UPDATE=0
+' > "$IAU_EE"
+assert_eq "errexit in the caller does not change the answer"     "$( ( set +e; installed_auto_update "$IAU_EE" && echo on || echo off ) )"     "$( ( set -e; installed_auto_update "$IAU_EE" && echo on || echo off ) )"
+assert_false "and an opt-out behind a failing line is still an opt-out"     installed_auto_update "$IAU_EE"
+
+# AUTO_UPDATE_SOMETHING=0 must not read as AUTO_UPDATE=0.
+printf 'AUTO_UPDATE_NOTES=0\n' > "$IAU_ENV"
+assert_true  "a longer key that starts the same is not this one" installed_auto_update "$IAU_ENV"
+
+describe "AUTO_UPDATE — both readers must agree on every shape of the value"
+
+# Three readers and one key. load_env sources the file, so the shell decides
+# what the value is, and that is what status.sh, audit.sh and reconfigure.sh
+# report. installed_auto_update sources the same file in a subshell, and that is
+# what setup.sh and the rc.local boot hook act on. write_env_file is the third,
+# below. A value they read differently is the
+# worst failure this feature has: every readout says the update is off while the
+# cron goes back at each boot and runs it.
+#
+# Asserted as agreement across a table rather than as regex text, so the shapes
+# are what is pinned, not the expression that happens to handle them today.
+AUV_ENV="$TMPDIR/agree.env"
+auv_shell_says() {   # what load_env's sourcing yields, as on/off
+    (
+        AUTO_UPDATE=
+        # shellcheck source=/dev/null
+        . "$1"
+        [ "${AUTO_UPDATE:-1}" = "0" ] && echo off || echo on
+    )
+}
+auv_sed_says() {     # what setup.sh and the boot hook act on
+    installed_auto_update "$1" && echo on || echo off
+}
+auv_agree() {
+    printf 'RESOLVER_ID=abc123\nAUTO_UPDATE=%s\nDNS_PORT=5354\n' "$1" > "$AUV_ENV"
+    [ "$(auv_shell_says "$AUV_ENV")" = "$(auv_sed_says "$AUV_ENV")" ]
+}
+
+# Written by set_auto_update_flag.
+assert_true "a bare 0 agrees"   auv_agree '0'
+assert_true "a bare 1 agrees"   auv_agree '1'
+# Quoted is a shape write_env_file carries forward untouched and load_env
+# strips, so it reaches both readers and has to mean the same to each.
+assert_true "a quoted 0 agrees" auv_agree '"0"'
+assert_true "a quoted 1 agrees" auv_agree '"1"'
+# Anything hand-edited. None of these is meaningful; what matters is that the
+# readers reach the same conclusion rather than splitting.
+assert_true "a leading-zero value agrees" auv_agree '01'
+assert_true "a doubled zero agrees"       auv_agree '00'
+assert_true "trailing whitespace agrees"  auv_agree '0 '
+assert_true "an empty value agrees"       auv_agree ''
+assert_true "a word agrees"               auv_agree 'maybe'
+assert_true "a 0 with a comment after it agrees" auv_agree '0 # off'
+assert_true "a hash with no space before it agrees"  auv_agree '0#off'
+assert_true "a single-quoted 0 agrees"               auv_agree "'0'"
+assert_true "a 0 with a tab after it agrees"         auv_agree '0	'
+assert_true "a negative zero agrees"                 auv_agree '-0'
+assert_true "an all-caps word agrees"                auv_agree 'OFF'
+assert_true "the string false agrees"                auv_agree 'false'
+assert_true "a 2 agrees"                             auv_agree '2'
+
+# write_env_file does not read this key. It carries the line when its filter
+# accepts the value and drops it otherwise, exactly as it treats DNS_PORT and
+# every other unmanaged key, so the shell stays the only thing deciding what
+# the line means.
+#
+# That is the whole contract, and it is two claims rather than a list of
+# shapes: the forms anyone actually writes survive a rewrite, and a rewrite
+# never turns an install that was updating into one that is not.
+#
+# It was 46 lines of shell-quoting emulation so that four exotic hand-edits
+# also survived. Those 46 lines twice concluded "off" from a file every reader
+# called "on", which silently stops a router patching the binary answering its
+# DNS. Losing an exotic hand-edit is recoverable and the readouts show it;
+# inventing an opt-out is neither.
+auv_survives_rewrite() {
+    printf 'RESOLVER_ID=abc123\n%s\nDNS_PORT=5354\n' "$1" > "$AUV_ENV"
+    _b="$(auv_shell_says "$AUV_ENV")"
+    ( RESOLVER_ID=abc123; BOOTSTRAP_IP=1.2.3.4; CTRLD_VERSION=1.5.7
+      DNS_TYPE=doh3; PREFERRED_PROTOCOL=doh3
+      write_env_file "$AUV_ENV" ) 2>/dev/null
+    [ "$_b" = "$(auv_shell_says "$AUV_ENV")" ]
+}
+assert_true "the form the toggle writes survives a rewrite" \
+    auv_survives_rewrite 'AUTO_UPDATE=0'
+assert_true "and the quoted form a hand-edit produces" \
+    auv_survives_rewrite 'AUTO_UPDATE="0"'
+assert_true "an install that never opted out stays that way" \
+    auv_survives_rewrite 'AUTO_UPDATE=1'
+assert_true "and one carrying no key at all" \
+    auv_survives_rewrite 'DNS_TYPE=doh3'
+assert_true "a repeated key takes the last assignment" \
+    auv_survives_rewrite 'AUTO_UPDATE=1
+AUTO_UPDATE=0'
+
+# And the direction is not arbitrary: everything unparseable has to land on on,
+# because a router that silently stops patching itself is the worse failure.
+printf 'AUTO_UPDATE=maybe\n' > "$AUV_ENV"
+assert_eq "an unparseable value means on, not off" "on" "$(auv_sed_says "$AUV_ENV")"
+
+describe "controld-update.sh — the flag stops an update the cron did not"
+
+# An outcome test on the generated script, run the way the watchdog's is: the
+# updater is heredoc text inside setup.sh, so nothing here would otherwise
+# execute it. The backstop exists for a cron neither installer put there, so
+# the test starts the script exactly as crond would and asserts it reaches the
+# network not at all.
+CU_CFG="$TMPDIR/cu-cfg"; CU_BIN="$TMPDIR/cu-bin"; CU_LOG="$TMPDIR/cu.log"
+mkdir -p "$CU_CFG" "$CU_BIN"
+export CU_LOG
+
+# "|| true" on every run below: the suite runs under set -e (line 6), and this
+# script exits non-zero by design on a rejected argument and on a failed
+# download. Without it the file dies mid-way and prints no summary, which reads
+# as a pass to anything scanning for the word FAIL. Found exactly that way.
+CUGEN="$TMPDIR/controld-update-generated.sh"
+sed -n "/^cat > \/cfg\/controld-update.sh << 'UPDATESCRIPT'/,/^UPDATESCRIPT$/p" "$SCRIPT_DIR/setup.sh" \
+    | sed '1d;$d' \
+    | sed -e "s|/cfg/|${CU_CFG}/|g" > "$CUGEN"
+
+assert_true "the generated updater is valid sh" sh -n "$CUGEN"
+
+printf '#!/bin/sh\necho "logger $*" >> "$CU_LOG"\n' > "$CU_BIN/logger"
+# wget is the first thing an update reaches for. If it runs, the flag failed.
+printf '#!/bin/sh\necho "wget $*" >> "$CU_LOG"\nexit 1\n' > "$CU_BIN/wget"
+chmod +x "$CU_BIN/logger" "$CU_BIN/wget"
+
+cat > "$CU_CFG/controld.env" << 'CUENVOFF'
+RESOLVER_ID=abc123
+CTRLD_VERSION=1.5.7
+AUTO_UPDATE=0
+CUENVOFF
+: > "$CU_LOG"
+( PATH="$CU_BIN:$PATH"; sh "$CUGEN" ) >/dev/null 2>&1 || true
+CU_OFF="$(cat "$CU_LOG" 2>/dev/null)"
+assert_contains     "it says why it did nothing" "$CU_OFF" "auto-update is off"
+assert_not_contains "and never reaches the network" "$CU_OFF" "wget"
+
+# The updater carries its own copy of the reader, so it drifts independently.
+# A quoted opt-out must stop it too.
+cat > "$CU_CFG/controld.env" << 'CUENVQ'
+RESOLVER_ID=abc123
+CTRLD_VERSION=1.5.7
+AUTO_UPDATE="0"
+CUENVQ
+: > "$CU_LOG"
+( PATH="$CU_BIN:$PATH"; sh "$CUGEN" ) >/dev/null 2>&1 || true
+CU_Q="$(cat "$CU_LOG" 2>/dev/null)"
+assert_contains     "a quoted opt-out stops the updater"  "$CU_Q" "auto-update is off"
+assert_not_contains "and it still reaches no network"     "$CU_Q" "wget"
+
+# --now has to answer the person who ran it. Reporting only to syslog it
+# printed nothing at all, whether it updated, was already current, or could not
+# reach the network, and exited 0 either way: the user cannot tell those apart,
+# and this firmware's logread has no buffer to consult.
+CU_SPEAK="$( ( PATH="$CU_BIN:$PATH"; sh "$CUGEN" --now ) 2>&1 || true )"
+assert_contains "--now says what happened on stdout" "$CU_SPEAK" "could not determine latest release"
+# From cron it stays quiet, which is what it has always done.
+CU_QUIET="$( ( PATH="$CU_BIN:$PATH"; sh "$CUGEN" ) 2>&1 || true )"
+assert_eq "and says nothing when run without arguments" "" "$CU_QUIET"
+
+# --now is how a person updates after opting out, and without it the opt-out
+# meant "never update": both the README and reconfigure.sh told the user to run
+# this script, and it declined. The backstop still has to hold for the cron,
+# which passes no arguments, so the two cases are asserted against each other.
+cat > "$CU_CFG/controld.env" << 'CUENVNOW'
+RESOLVER_ID=abc123
+CTRLD_VERSION=1.5.7
+AUTO_UPDATE=0
+CUENVNOW
+: > "$CU_LOG"
+( PATH="$CU_BIN:$PATH"; sh "$CUGEN" --now ) >/dev/null 2>&1 || true
+CU_NOW="$(cat "$CU_LOG" 2>/dev/null)"
+assert_contains     "--now updates despite the opt-out"  "$CU_NOW" "wget"
+assert_not_contains "and does not report itself as off"  "$CU_NOW" "auto-update is off"
+
+# An argument nobody meant must not be taken as --now. Silently updating on a
+# typo is the opposite of what the flag is for.
+: > "$CU_LOG"
+( PATH="$CU_BIN:$PATH"; sh "$CUGEN" --nowish ) >/dev/null 2>&1 || true
+assert_not_contains "an unknown argument does not reach the network" \
+    "$(cat "$CU_LOG" 2>/dev/null)" "wget"
+
+# The same script with the flag absent must still try, or the test above would
+# pass on a script that does nothing at all.
+cat > "$CU_CFG/controld.env" << 'CUENVON'
+RESOLVER_ID=abc123
+CTRLD_VERSION=1.5.7
+CUENVON
+: > "$CU_LOG"
+( PATH="$CU_BIN:$PATH"; sh "$CUGEN" ) >/dev/null 2>&1 || true
+CU_ON="$(cat "$CU_LOG" 2>/dev/null)"
+assert_contains     "with the flag absent it goes looking for a release" "$CU_ON" "wget"
+assert_not_contains "and says nothing about being off" "$CU_ON" "auto-update is off"
+
+describe "rc.local — a reboot must not hand back a cron that was turned off"
+
+# The reinstall at boot is why deleting the cron was never an off switch: /etc
+# does not survive a firmware update, so the hook puts both jobs back. Run the
+# generated hook for real against stubs and read the crontab it leaves behind.
+RCC_CFG="$TMPDIR/rcc-cfg"; RCC_BIN="$TMPDIR/rcc-bin"; RCC_TAB="$TMPDIR/rcc.crontab"
+mkdir -p "$RCC_CFG" "$RCC_BIN"
+export RCC_TAB
+
+# A crontab stub that is a crontab: -l lists, - installs from stdin. Asserting
+# on the file it leaves is what makes this an outcome test rather than a check
+# that some particular command was spelled a particular way.
+cat > "$RCC_BIN/crontab" << 'RCCTABEOF'
+#!/bin/sh
+case "$1" in
+    -l) cat "$RCC_TAB" 2>/dev/null ;;
+    # Written aside and moved into place, because the real thing is atomic and
+    # a truncating stub is not. `(crontab -l; echo job) | crontab -` runs both
+    # halves concurrently, so a stub that opened the file for writing emptied
+    # it while the left half was still reading, and the job already installed
+    # vanished depending on which side won.
+    -)  cat > "${RCC_TAB}.new" && mv "${RCC_TAB}.new" "$RCC_TAB" ;;
+esac
+RCCTABEOF
+printf '#!/bin/sh\nexit 0\n' > "$RCC_BIN/pidof"
+printf '#!/bin/sh\nexit 0\n' > "$RCC_BIN/logger"
+# The hook sleeps 10 before its firewall block. Nothing here is timing, and a
+# test that waits for it would be ten seconds slower for no assertion.
+printf '#!/bin/sh\nexit 0\n' > "$RCC_BIN/sleep"
+chmod +x "$RCC_BIN/crontab" "$RCC_BIN/pidof" "$RCC_BIN/logger" "$RCC_BIN/sleep"
+
+# The hook backgrounds every block so the router's boot script continues, which
+# means the parent exits before they finish. `wait` is appended here, not in
+# setup.sh: blocking is exactly what the real hook must never do.
+# "|| true" on every run of it below, for the reason the updater's fixture
+# gives: this suite runs under set -e, and a generated script that exits
+# non-zero would take the whole file with it and print no summary.
+RCCGEN="$TMPDIR/rc-cron-generated.sh"
+sed -e "s|/cfg/|${RCC_CFG}/|g" "$RCGEN" > "$RCCGEN"
+printf 'wait\n' >> "$RCCGEN"
+
+# Flag off, crontab empty: the boot must leave it empty.
+printf 'RESOLVER_ID=abc123\nAUTO_UPDATE=0\n' > "$RCC_CFG/controld.env"
+: > "$RCC_TAB"
+( PATH="$RCC_BIN:$PATH"; sh "$RCCGEN" ) >/dev/null 2>&1 || true
+assert_not_contains "a reboot does not put the update cron back" \
+    "$(cat "$RCC_TAB" 2>/dev/null)" "controld-update.sh"
+# The watchdog is not part of the opt-out. Turning off auto-update must not
+# switch off the health check that reconciles the protocol and restores the
+# redirects.
+assert_contains "and the watchdog is reinstalled regardless" \
+    "$(cat "$RCC_TAB" 2>/dev/null)" "watchdog.sh"
+
+# A cron that outlived the opt-out is taken out at boot, not merely left in
+# place. Nothing else removes it between re-installs, so it used to sit there
+# forever and audit.sh reported it at every run with no way to clear it.
+printf 'RESOLVER_ID=abc123\nAUTO_UPDATE=0\n' > "$RCC_CFG/controld.env"
+printf '*/5 * * * * %s/watchdog.sh\n0 3 * * 1 %s/controld-update.sh\n' \
+    "$RCC_CFG" "$RCC_CFG" > "$RCC_TAB"
+( PATH="$RCC_BIN:$PATH"; sh "$RCCGEN" ) >/dev/null 2>&1 || true
+assert_not_contains "a boot removes an update cron that outlived the opt-out" \
+    "$(cat "$RCC_TAB" 2>/dev/null)" "controld-update.sh"
+assert_contains "and still leaves the watchdog cron alone" \
+    "$(cat "$RCC_TAB" 2>/dev/null)" "watchdog.sh"
+
+# A shape the canonical one does not cover. The hook's reader is an inline copy
+# of installed_auto_update, so it is the one that can silently drift back to
+# matching the line: reverting it to grep -q '^AUTO_UPDATE=0$' left every other
+# assertion here green, because the fixture only ever wrote the bare 0 that
+# set_auto_update_flag happens to produce.
+printf 'RESOLVER_ID=abc123\nAUTO_UPDATE="0"\n' > "$RCC_CFG/controld.env"
+: > "$RCC_TAB"
+( PATH="$RCC_BIN:$PATH"; sh "$RCCGEN" ) >/dev/null 2>&1 || true
+assert_not_contains "a quoted opt-out is honoured at boot too" \
+    "$(cat "$RCC_TAB" 2>/dev/null)" "controld-update.sh"
+
+# The hook reads the flag by comparing the value the subshell prints, not by
+# testing the subshell's exit status. Those are not the same: a file that exits
+# before the test is reached gives status 0, which the shorter form read as an
+# opt-out and then never reinstalled the cron, with no AUTO_UPDATE line in the
+# file at all. Nothing in this project writes `exit` into controld.env, but the
+# hook must not be one `exit 0` away from silently disabling itself.
+printf 'RESOLVER_ID=abc123\nexit 0\n' > "$RCC_CFG/controld.env"
+: > "$RCC_TAB"
+( PATH="$RCC_BIN:$PATH"; sh "$RCCGEN" ) >/dev/null 2>&1 || true
+assert_contains "an env file that exits early is not read as an opt-out" \
+    "$(cat "$RCC_TAB" 2>/dev/null)" "controld-update.sh"
+
+# An AUTO_UPDATE in the hook's own environment must not beat the file it is
+# supposed to be reading, which is what the reset in front of the dot is for.
+printf 'RESOLVER_ID=abc123\n' > "$RCC_CFG/controld.env"
+: > "$RCC_TAB"
+( PATH="$RCC_BIN:$PATH"; AUTO_UPDATE=0; export AUTO_UPDATE; sh "$RCCGEN" ) >/dev/null 2>&1 || true
+assert_contains "an inherited AUTO_UPDATE does not override the file" \
+    "$(cat "$RCC_TAB" 2>/dev/null)" "controld-update.sh"
+
+# Flag absent, crontab empty: both jobs come back, which is the behaviour this
+# hook has always had and the reason the assertion above is worth anything.
+printf 'RESOLVER_ID=abc123\n' > "$RCC_CFG/controld.env"
+: > "$RCC_TAB"
+( PATH="$RCC_BIN:$PATH"; sh "$RCCGEN" ) >/dev/null 2>&1 || true
+assert_contains "with the flag absent the update cron is restored" \
+    "$(cat "$RCC_TAB" 2>/dev/null)" "controld-update.sh"
+
+describe "set_auto_update_flag() — the writer and the reader must agree"
+
+# Round-tripped through installed_auto_update rather than asserted as text.
+# The two carry the same key by different routes, a grep and a sed here, a
+# subshell source in setup.sh's boot hook, and a disagreement between them is
+# exactly the failure that would leave someone's opt-out silently ignored.
+SAU_ENV="$TMPDIR/sau.env"
+printf 'RESOLVER_ID=abc123\nDNS_PORT=5354\n' > "$SAU_ENV"
+
+set_auto_update_flag 0 "$SAU_ENV"
+assert_false "off is written and reads back as off" installed_auto_update "$SAU_ENV"
+assert_eq    "the key is appended once" "1" "$(grep -c '^AUTO_UPDATE=' "$SAU_ENV")"
+
+set_auto_update_flag 1 "$SAU_ENV"
+assert_true  "on is written and reads back as on"   installed_auto_update "$SAU_ENV"
+assert_eq    "and replaced in place, not appended again" "1" \
+    "$(grep -c '^AUTO_UPDATE=' "$SAU_ENV")"
+
+# On is recorded rather than the line being removed, so "left at the default"
+# and "switched off and back on" stay distinguishable.
+assert_contains "turning it back on records the choice" \
+    "$(cat "$SAU_ENV")" "AUTO_UPDATE=1"
+
+# A file whose last line has no trailing newline must not have the key joined
+# onto it. That reads as an update still enabled while reconfigure.sh has just
+# printed that it is off, and it corrupts whatever setting was last in the file:
+# FORCED_DNS=1AUTO_UPDATE=0 stops ensure_forced_dns restoring the port-853
+# hijack while every readout still calls forced DNS on.
+SAU_NN="$TMPDIR/sau-nonewline.env"
+printf 'RESOLVER_ID=abc123\nFORCED_DNS=1' > "$SAU_NN"
+set_auto_update_flag 0 "$SAU_NN"
+assert_false "a file with no trailing newline still reads as opted out" \
+    installed_auto_update "$SAU_NN"
+assert_contains "and the line before it is intact" "$(cat "$SAU_NN")" "FORCED_DNS=1
+AUTO_UPDATE=0"
+
+# Nothing else in the file may be disturbed. This is sed -i on a config other
+# scripts source; losing DNS_PORT here is the outage described in
+# write_env_file's comment.
+assert_contains "other keys survive the rewrite" "$(cat "$SAU_ENV")" "DNS_PORT=5354"
+assert_contains "and so does the resolver" "$(cat "$SAU_ENV")" "RESOLVER_ID=abc123"
+
+# Round-tripped through write_env_file, which every reconfigure.sh action and
+# every re-install calls. This replaced a grep asserting AUTO_UPDATE was absent
+# from WEF_MANAGED, which was a statement about the implementation and missed
+# the bug entirely: the keep filter accepted a narrower set of values than the
+# readers honour, so three shapes this suite blesses as off were read as off
+# everywhere and then silently deleted by the first rewrite.
+wef_survives() {
+    printf 'RESOLVER_ID=abc123\nAUTO_UPDATE=%s\nDNS_PORT=5354\n' "$1" > "$AUV_ENV"
+    ( RESOLVER_ID=abc123; BOOTSTRAP_IP=1.2.3.4; CTRLD_VERSION=1.5.7
+      DNS_TYPE=doh3; PREFERRED_PROTOCOL=doh3
+      write_env_file "$AUV_ENV" )
+    installed_auto_update "$AUV_ENV" && return 1
+    return 0
+}
+# write_env_file must reach its decision without sourcing. It runs on a file
+# that has not been filtered yet, so a dangerous value in the very key it is
+# reading is the case that matters: reusing installed_auto_update here sourced
+# the file and fired the payload the sibling filter tests plant.
+WEF_EXEC="$TMPDIR/wef-exec.env"
+printf 'RESOLVER_ID=abc123\nAUTO_UPDATE="$(touch %s/auto-pwned)"\n' "$TMPDIR" > "$WEF_EXEC"
+( RESOLVER_ID=abc123; BOOTSTRAP_IP=1.2.3.4; CTRLD_VERSION=1.5.7
+  DNS_TYPE=doh3; PREFERRED_PROTOCOL=doh3
+  write_env_file "$WEF_EXEC" ) 2>/dev/null
+assert_false "reading the flag does not execute it" test -e "$TMPDIR/auto-pwned"
+assert_false "and a dangerous value is not carried forward" \
+    grep -q 'touch' "$WEF_EXEC"
+
+assert_true "a bare 0 survives a config rewrite"        wef_survives '0'
+assert_true "a quoted 0 survives"                       wef_survives '"0"'
+
+# Carried verbatim, not re-encoded. The line is written by
+# set_auto_update_flag and read by the shell; nothing in between re-derives
+# what it means, which is why no shape can be read two ways.
+assert_eq "the rewrite leaves exactly one AUTO_UPDATE line" "1" \
+    "$(grep -c 'AUTO_UPDATE=' "$AUV_ENV")"
+
+# An explicitly recorded 1 must survive too. set_auto_update_flag writes it
+# deliberately so that "left at the default" and "switched off and back on
+# again" stay distinguishable, and the first version of the carry above only
+# re-emitted the 0, quietly undoing that at the next rewrite.
+printf 'RESOLVER_ID=abc123\nAUTO_UPDATE=1\nDNS_PORT=5354\n' > "$AUV_ENV"
+( RESOLVER_ID=abc123; BOOTSTRAP_IP=1.2.3.4; CTRLD_VERSION=1.5.7
+  DNS_TYPE=doh3; PREFERRED_PROTOCOL=doh3
+  write_env_file "$AUV_ENV" ) 2>/dev/null
+assert_contains "an explicitly recorded 1 survives a rewrite" \
+    "$(cat "$AUV_ENV")" "AUTO_UPDATE=1"
+
+# Turning it off again, over a line that already exists. Until this ran, the
+# sed branch had only ever been asked to write a 1: hardcoding the replacement
+# to 1 meant anyone who had ever toggled the flag could no longer turn the
+# update off, while reconfigure.sh printed that they had.
+set_auto_update_flag 0 "$AUV_ENV"
+assert_false "off can be written over an existing line" installed_auto_update "$AUV_ENV"
+assert_eq "still exactly one line" "1" "$(grep -c '^AUTO_UPDATE=' "$AUV_ENV")"
+
+# A longer key that starts the same must not satisfy the "already present"
+# test, or the write becomes a silent no-op on a file carrying one.
+SAU_NEAR="$TMPDIR/sau-near.env"
+printf 'RESOLVER_ID=abc123\nAUTO_UPDATE_NOTES=off since March\n' > "$SAU_NEAR"
+set_auto_update_flag 0 "$SAU_NEAR"
+assert_false "a file carrying AUTO_UPDATE_NOTES still takes the flag" \
+    installed_auto_update "$SAU_NEAR"
+assert_contains "and the neighbouring key is untouched" \
+    "$(cat "$SAU_NEAR")" "AUTO_UPDATE_NOTES=off since March"
+
+# On is the default, so a rewrite must not start writing a key to the file of a
+# router that never opted out.
+printf 'RESOLVER_ID=abc123\nDNS_PORT=5354\n' > "$AUV_ENV"
+( RESOLVER_ID=abc123; BOOTSTRAP_IP=1.2.3.4; CTRLD_VERSION=1.5.7
+  DNS_TYPE=doh3; PREFERRED_PROTOCOL=doh3
+  write_env_file "$AUV_ENV" )
+assert_eq "an install that never opted out gains no AUTO_UPDATE line" "0" \
+    "$(grep -c '^AUTO_UPDATE=' "$AUV_ENV")"
+assert_contains "and unmanaged keys are still carried" "$(cat "$AUV_ENV")" "DNS_PORT=5354"
+
+describe "reconfigure.sh --auto-update — run for real against stubs"
+
+# do_auto_update was covered only by greps over its source, so deleting the
+# option from the parser, deleting its dispatch case, deleting its menu entry,
+# or making the off branch write a 1 all left the suite green. Run the script
+# the way a router does instead: rewrite its /cfg paths into a sandbox, put a
+# real controld.env and lib.sh there, and read the crontab and the env file it
+# leaves behind.
+RA_CFG="$TMPDIR/ra-cfg"; RA_BIN="$TMPDIR/ra-bin"; RA_TAB="$TMPDIR/ra.crontab"
+mkdir -p "$RA_CFG" "$RA_BIN"
+export RA_TAB
+
+sed -e "s|/cfg/|${RA_CFG}/|g" "$SCRIPT_DIR/reconfigure.sh" > "$RA_CFG/reconfigure.sh"
+sed -e "s|/cfg/|${RA_CFG}/|g" "$SCRIPT_DIR/lib.sh"         > "$RA_CFG/lib.sh"
+chmod +x "$RA_CFG/reconfigure.sh"
+
+cat > "$RA_BIN/crontab" << 'RATABEOF'
+#!/bin/sh
+case "$1" in
+    -l) cat "$RA_TAB" 2>/dev/null ;;
+    -)  cat > "${RA_TAB}.new" && mv "${RA_TAB}.new" "$RA_TAB" ;;
+esac
+RATABEOF
+printf '#!/bin/sh
+exit 1
+' > "$RA_BIN/pidof"
+printf '#!/bin/sh
+exit 1
+' > "$RA_BIN/uci"
+chmod +x "$RA_BIN/crontab" "$RA_BIN/pidof" "$RA_BIN/uci"
+
+# "|| true": the suite runs under set -e (line 6), so a run that exits non-zero
+# would abort the whole file inside the command substitution below and the
+# summary would never print. The assertions read the crontab and the env file,
+# so a failed run shows up as a wrong outcome rather than a vanished suite.
+ra_run() { ( PATH="$RA_BIN:$PATH"; sh "$RA_CFG/reconfigure.sh" --auto-update --force ) 2>&1 || true; }
+
+cat > "$RA_CFG/controld.env" << 'RAENVEOF'
+RESOLVER_ID=abc123
+BOOTSTRAP_IP=76.76.2.22
+CTRLD_VERSION=1.5.7
+DNS_TYPE=doh3
+PREFERRED_PROTOCOL=doh3
+FORCED_DNS=0
+DNS_PORT=5354
+RAENVEOF
+printf '0 3 * * 1 %s/controld-update.sh
+*/5 * * * * %s/watchdog.sh
+' "$RA_CFG" "$RA_CFG" > "$RA_TAB"
+
+RA_OFF="$(ra_run)"
+assert_not_contains "turning it off removes the update cron" \
+    "$(cat "$RA_TAB" 2>/dev/null)" "controld-update.sh"
+assert_contains "and leaves the watchdog cron alone" \
+    "$(cat "$RA_TAB" 2>/dev/null)" "watchdog.sh"
+assert_false "and the file records the opt-out" installed_auto_update "$RA_CFG/controld.env"
+assert_contains "and it says so" "$RA_OFF" "Weekly auto-update off"
+
+# --show must agree with status.sh about the weekly update. Read from the flag
+# alone it printed "on (Mondays 03:00)" on a router whose cron was missing,
+# including right after setup.sh reported it could not install one, so two
+# readouts contradicted each other in the same minute.
+ra_show() { ( PATH="$RA_BIN:$PATH"; sh "$RA_CFG/reconfigure.sh" --show ) 2>&1 || true; }
+sed -i 's/^AUTO_UPDATE=.*/AUTO_UPDATE=1/' "$RA_CFG/controld.env"
+printf '*/5 * * * * %s/watchdog.sh\n0 3 * * 1 %s/controld-update.sh\n' \
+    "$RA_CFG" "$RA_CFG" > "$RA_TAB"
+assert_contains "--show reports the update on when its cron is there" \
+    "$(ra_show)" "on (Mondays 03:00)"
+printf '*/5 * * * * %s/watchdog.sh\n' "$RA_CFG" > "$RA_TAB"
+RA_SHOW_GONE="$(ra_show)"
+assert_contains "and says so when the cron is missing" \
+    "$RA_SHOW_GONE" "cron job is missing"
+assert_not_contains "rather than claiming it runs on Mondays" \
+    "$RA_SHOW_GONE" "on (Mondays 03:00)"
+sed -i 's/^AUTO_UPDATE=.*/AUTO_UPDATE=0/' "$RA_CFG/controld.env"
+assert_contains "and an opt-out reads as off whatever the crontab says" \
+    "$(ra_show)" "off"
+
+# An older /cfg/lib.sh that predates the writer. reconfigure.sh is documented
+# as runnable on its own with a /cfg/lib.sh fallback, so this is reachable:
+# unguarded it printed the whole prompt and then died with
+# "set_auto_update_flag: not found" at the moment of writing.
+RA_OLD_CFG="$TMPDIR/ra-old"; mkdir -p "$RA_OLD_CFG"
+sed -e "s|/cfg/|${RA_OLD_CFG}/|g" "$SCRIPT_DIR/reconfigure.sh" > "$RA_OLD_CFG/reconfigure.sh"
+sed -e "s|/cfg/|${RA_OLD_CFG}/|g" "$SCRIPT_DIR/lib.sh" \
+    | sed '/^set_auto_update_flag() {$/,/^}$/d' > "$RA_OLD_CFG/lib.sh"
+assert_false "the stale library really lacks the writer" \
+    grep -q '^set_auto_update_flag()' "$RA_OLD_CFG/lib.sh"
+cp "$RA_CFG/controld.env" "$RA_OLD_CFG/controld.env"
+RA_OLDOUT="$( ( PATH="$RA_BIN:$PATH"; sh "$RA_OLD_CFG/reconfigure.sh" --auto-update --force ) 2>&1 || true )"
+# Matched on the half of the message the sandbox's own /cfg rewrite leaves
+# alone. Keying on the path itself passed nothing through: the fixture rewrites
+# /cfg into the sandbox, so the printed path is not the one a router shows.
+assert_contains "an older lib.sh is reported, not hit mid-write" \
+    "$RA_OLDOUT" "Re-run setup.sh to update it"
+assert_not_contains "and the shell error never reaches the user" \
+    "$RA_OLDOUT" "not found"
+
+# Back on. The same command both ways, so a branch that wrote the wrong value
+# or never ran at all shows up here rather than in a grep over the source.
+RA_ON="$(ra_run)"
+assert_contains "turning it back on restores the update cron" \
+    "$(cat "$RA_TAB" 2>/dev/null)" "controld-update.sh"
+assert_true "and the file records on" installed_auto_update "$RA_CFG/controld.env"
+assert_contains "and it says so" "$RA_ON" "Weekly auto-update on"
+
+# Off again, over a line that already exists, which is the sed branch of
+# set_auto_update_flag rather than the append branch.
+ra_run >/dev/null 2>&1
+assert_false "a second opt-out writes over the existing line" \
+    installed_auto_update "$RA_CFG/controld.env"
+assert_eq "and leaves exactly one line" "1" \
+    "$(grep -c '^AUTO_UPDATE=' "$RA_CFG/controld.env")"
+
+# The menu route has to reach the same action, or entry 7 could be deleted
+# with every assertion above still passing.
+printf '0 3 * * 1 %s/controld-update.sh
+*/5 * * * * %s/watchdog.sh
+' "$RA_CFG" "$RA_CFG" > "$RA_TAB"
+sed -i 's/^AUTO_UPDATE=.*/AUTO_UPDATE=1/' "$RA_CFG/controld.env"
+( PATH="$RA_BIN:$PATH"; printf '7\ny\n' | sh "$RA_CFG/reconfigure.sh" ) >/dev/null 2>&1 || true
+assert_false "menu entry 7 reaches the same action" \
+    installed_auto_update "$RA_CFG/controld.env"
+
+describe "reconfigure.sh --auto-update — the toggle moves the cron too"
+
+# The flag governs the next boot and the next re-install, neither of which has
+# happened when the command returns. Leaving the crontab alone would let the
+# job run on Monday anyway, so the answer is not in force until the cron moves.
+assert_true "turning it off takes the cron out now" \
+    code_grep "$SCRIPT_DIR/reconfigure.sh" -E 'cron_remove /cfg/controld-update\.sh'
+assert_true "and turning it on puts the cron back now" \
+    code_grep "$SCRIPT_DIR/reconfigure.sh" -E "crontab - 2>/dev/null"
+
+# --force has to reach it, or an unattended opt-out blocks on a prompt forever.
+RCF_HELP="$(sh "$SCRIPT_DIR/reconfigure.sh" --help 2>&1 || true)"
+assert_contains "the flag is documented in --help" "$RCF_HELP" "--auto-update"
+
+# An unknown option must still be an error: --auto-update is only wired up if
+# the parser knows it, and a typo silently falling through to the menu is how
+# a scripted opt-out would look like it worked.
+RCF_BAD="$(sh "$SCRIPT_DIR/reconfigure.sh" --auto-updates 2>&1 || true)"
+assert_contains "a near miss is rejected rather than ignored" "$RCF_BAD" "Unknown option"
+
+describe "setup.sh — a re-install honours an opt-out made since the last one"
+
+# Re-running setup.sh is this project's documented upgrade path, and
+# CONTRIBUTING.md lists "a config flag reset on re-install" among the bugs that
+# only ever appeared on hardware. The installer cannot run in this sandbox, so
+# this is a source assertion: the unconditional install is gone and the
+# cron_remove that clears a previously installed job is not inside the branch.
+# Step 8 runs here, rather than being pattern-matched. The block is extracted
+# between its own section headers, its /cfg paths are pointed at a sandbox, and
+# it is executed against a stub crontab, the same way the generated watchdog
+# and updater already are.
+#
+# What the greps this replaced could not see: leaving the gate exactly as
+# written and adding the cron install to the else branch too, which hands the
+# job back to everyone who opted out; and moving cron_remove below the closing
+# fi, where every install deletes the cron it just created, for everyone.
+# Both matched the old patterns and left the suite green.
+S8_CFG="$TMPDIR/s8-cfg"; S8_BIN="$TMPDIR/s8-bin"; S8_TAB="$TMPDIR/s8.crontab"
+mkdir -p "$S8_CFG" "$S8_BIN"
+export S8_TAB
+
+cat > "$S8_BIN/crontab" << 'S8TABEOF'
+#!/bin/sh
+case "$1" in
+    -l) cat "$S8_TAB" 2>/dev/null ;;
+    -)  cat > "${S8_TAB}.new" && mv "${S8_TAB}.new" "$S8_TAB" ;;
+esac
+S8TABEOF
+chmod +x "$S8_BIN/crontab"
+# Same reasoning as the reconfigure fixture: the rewrite bounds paths, not
+# commands, and this one executes a block of the installer.
+for _s8stub in pidof uci iptables ip nslookup logread netstat; do
+    printf '#!/bin/sh\nexit 1\n' > "$S8_BIN/$_s8stub"; chmod +x "$S8_BIN/$_s8stub"
+done
+
+S8GEN="$TMPDIR/step8-generated.sh"
+sed -n '/^# ── Step 8: Install cron job for weekly updates ──$/,/^# ── Step 9: Copy lib.sh to router for runtime use ──$/p'     "$SCRIPT_DIR/setup.sh" | sed '$d' | sed -e "s|/cfg/|${S8_CFG}/|g" > "$TMPDIR/step8-body.sh"
+
+# Both headers are a sed range anchor now (AGENTS.md, "Prose"). Retitling
+# either empties the range, and every assertion below would then pass while
+# running nothing at all, so the range is checked before it is used.
+# The rewrite is the isolation boundary, so assert it is complete rather than
+# trusting it. A surviving /cfg path in any of these would read or write the
+# real one, and on a router that is the live install, during the on-device run
+# CONTRIBUTING.md prescribes.
+for _isolated in "$TMPDIR/step8-body.sh" "$RA_CFG/reconfigure.sh" "$RA_CFG/lib.sh"; do
+    assert_false "no /cfg path survives the rewrite in $(basename "$_isolated")" \
+        grep -q '/cfg/' "$_isolated"
+done
+
+# A crontab that cannot be written must not print both that the job could not
+# be installed and that it was.
+s8_output() {   # runs Step 8 against a crontab stub that fails, echoes its output
+    { printf '. %s/lib.sh\n' "$S8_CFG"; cat "$TMPDIR/step8-body.sh"; } > "$S8GEN"
+    sed -e "s|/cfg/|${S8_CFG}/|g" "$SCRIPT_DIR/lib.sh" > "$S8_CFG/lib.sh"
+    printf 'RESOLVER_ID=abc123\n' > "$S8_CFG/controld.env"
+    printf '#!/bin/sh\nexit 1\n' > "$S8_BIN/crontab"; chmod +x "$S8_BIN/crontab"
+    ( PATH="$S8_BIN:$PATH"; sh "$S8GEN" ) 2>&1 || true
+}
+S8_BROKE="$(s8_output)"
+assert_contains     "a crontab that fails is reported"   "$S8_BROKE" "Could not install cron job"
+assert_not_contains "and not also reported as installed" "$S8_BROKE" "Weekly auto-update cron installed"
+cat > "$S8_BIN/crontab" << 'S8TABEOF2'
+#!/bin/sh
+case "$1" in
+    -l) cat "$S8_TAB" 2>/dev/null ;;
+    -)  cat > "${S8_TAB}.new" && mv "${S8_TAB}.new" "$S8_TAB" ;;
+esac
+S8TABEOF2
+chmod +x "$S8_BIN/crontab"
+
+assert_true "the Step 8 range carries its cron_remove" \
+    grep -q 'cron_remove' "$TMPDIR/step8-body.sh"
+assert_true "and its gate"  grep -q 'installed_auto_update' "$TMPDIR/step8-body.sh"
+assert_true "and the crontab write it is here to test" \
+    grep -q 'controld-update.sh' "$TMPDIR/step8-body.sh"
+# The two anchors fail differently, so they need different guards. A missing
+# START anchor empties the range, which the three greps above catch. A missing
+# END anchor does not empty it: sed runs to EOF, so the body swells to the rest
+# of setup.sh, still carries every string those greps look for, and the
+# assertions below then execute hundreds of unrelated lines. Retitling the
+# Step 9 header left the whole suite green until this was added. Step 9b's
+# marker is the first thing past the range, so its absence bounds the end.
+assert_false "the range stops at the Step 9 header, rather than running to EOF" \
+    grep -q 'UTILITY_SCRIPTS' "$TMPDIR/step8-body.sh"
+
+# $2 picks what is already in the crontab, and it has to be a parameter. Seeded
+# with both jobs every time, "installs the update cron" asserted that a line
+# the fixture had just written was still there: wrapping the whole of Step 8 in
+# `if false` left three of these assertions green.
+s8_run() {   # $1 = lib.sh to run against, $2 = both|watchdog; echoes the crontab
+    { printf '. %s/lib.sh\n' "$S8_CFG"; cat "$TMPDIR/step8-body.sh"; } > "$S8GEN"
+    cp "$1" "$S8_CFG/lib.sh"
+    if [ "${2:-watchdog}" = "both" ]; then
+        printf '0 3 * * 1 %s/controld-update.sh\n*/5 * * * * %s/watchdog.sh\n' \
+            "$S8_CFG" "$S8_CFG" > "$S8_TAB"
+    else
+        printf '*/5 * * * * %s/watchdog.sh\n' "$S8_CFG" > "$S8_TAB"
+    fi
+    ( PATH="$S8_BIN:$PATH"; sh "$S8GEN" ) >/dev/null 2>&1 || true
+    cat "$S8_TAB" 2>/dev/null
+}
+S8_LIB="$TMPDIR/s8-lib.sh"
+sed -e "s|/cfg/|${S8_CFG}/|g" "$SCRIPT_DIR/lib.sh" > "$S8_LIB"
+
+# No opt-out: the cron is installed, and the watchdog is left alone.
+printf 'RESOLVER_ID=abc123\n' > "$S8_CFG/controld.env"
+S8_ON="$(s8_run "$S8_LIB" watchdog)"
+assert_contains "no opt-out installs the update cron"  "$S8_ON" "controld-update.sh"
+assert_contains "and leaves the watchdog cron alone"   "$S8_ON" "watchdog.sh"
+
+# Opt-out: the job already in the crontab is taken away and not put back. This
+# is the re-install path, which CONTRIBUTING.md names as a hardware-only bug.
+printf 'RESOLVER_ID=abc123\nAUTO_UPDATE=0\n' > "$S8_CFG/controld.env"
+S8_OFF="$(s8_run "$S8_LIB" both)"
+assert_not_contains "a re-install honours an opt-out and removes the cron" \
+    "$S8_OFF" "controld-update.sh"
+assert_contains "while still leaving the watchdog cron alone" "$S8_OFF" "watchdog.sh"
+
+# A shape the toggle does not write, so a reader that went back to matching
+# the line rather than sourcing it would install the cron here.
+printf 'RESOLVER_ID=abc123\nAUTO_UPDATE="0"\n' > "$S8_CFG/controld.env"
+assert_not_contains "a quoted opt-out is honoured by the installer too" \
+    "$(s8_run "$S8_LIB" both)" "controld-update.sh"
+
+# An older library that predates the function, which setup.sh's two offline
+# bootstrap paths can supply. No library means no flag, which means on.
+S8_OLD="$TMPDIR/s8-lib-old.sh"
+sed '/^installed_auto_update() {$/,/^}$/d' "$S8_LIB" > "$S8_OLD"
+assert_false "the stale library really lacks the function" \
+    grep -q '^installed_auto_update()' "$S8_OLD"
+printf 'RESOLVER_ID=abc123\n' > "$S8_CFG/controld.env"
+assert_contains "an older lib.sh without the function still installs the cron" \
+    "$(s8_run "$S8_OLD" watchdog)" "controld-update.sh"
 
 # The generated watchdog is heredoc text inside setup.sh, so nothing in this
 # repo has ever executed it. Extract it, point its /cfg and /tmp paths at a
@@ -2810,9 +3545,33 @@ done
 CJ_FW="$TMPDIR/cj-fw.user"
 printf '# controld-dns-redirect BEGIN\n# controld-dns-redirect END\n' > "$CJ_FW"
 
+# audit.sh runs against a sandboxed /cfg, not the router's. It reads
+# controld.env through load_env, so the file wins over anything the test
+# exports, and a router that had opted out of auto-update turned two of the
+# assertions below red: the updater is then not expected, so it is neither
+# named as missing nor counted in "Both cron jobs are in the crontab". That is
+# the failure CONTRIBUTING.md describes, arriving on the exact device state the
+# hardware plan asks for. Staging the file here also retires the two skips this
+# block used to take on any real install, so these run on the router too.
+CJ_CFG="$TMPDIR/cj-cfg"; mkdir -p "$CJ_CFG"
+for _cjs in audit.sh lib.sh; do
+    sed -e "s|/cfg/|${CJ_CFG}/|g" "$SCRIPT_DIR/$_cjs" > "$CJ_CFG/$_cjs"
+done
+chmod +x "$CJ_CFG/audit.sh"
+# No AUTO_UPDATE line: both cron jobs are expected, which is what this block
+# is about. The opt-out has its own fixture further down.
+cj_audit() {   # $1 = recorded|bare, deciding whether the install is recorded
+    if [ "$1" = "recorded" ]; then
+        printf 'RESOLVER_ID=abc123\nCTRLD_VERSION=1.5.7\nDNS_TYPE=doh3\n' > "$CJ_CFG/controld.env"
+    else
+        printf 'RESOLVER_ID=abc123\nDNS_TYPE=doh3\n' > "$CJ_CFG/controld.env"
+    fi
+    ( PATH="$CJ_BIN:$PATH"; FW_USER="$CJ_FW" sh "$CJ_CFG/audit.sh" ) 2>/dev/null || true
+}
+
 # Crontab empty, install recorded: both jobs must be named as never running.
 printf '#!/bin/sh\nexit 0\n' > "$CJ_BIN/crontab"; chmod +x "$CJ_BIN/crontab"
-CJ_GONE="$(PATH="$CJ_BIN:$PATH" FW_USER="$CJ_FW" CTRLD_VERSION=1.5.7 sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+CJ_GONE="$(cj_audit recorded)"
 assert_contains "an empty crontab is reported, not passed over" \
     "$CJ_GONE" "no cron job, so never run"
 assert_contains "the watchdog is named"       "$CJ_GONE" "never run:.*watchdog\.sh"
@@ -2822,47 +3581,138 @@ assert_contains "and so is the updater"       "$CJ_GONE" "controld-update\.sh"
 # only the message text does not catch that, as reverting it proved.
 
 # Only the watchdog missing: the updater alone must not mask it.
-cat > "$CJ_BIN/crontab" <<'CJSTUB1'
-#!/bin/sh
-echo "0 3 * * 1 /cfg/controld-update.sh"
-CJSTUB1
+printf '#!/bin/sh\necho "0 3 * * 1 %s/controld-update.sh"\n' "$CJ_CFG" > "$CJ_BIN/crontab"
 chmod +x "$CJ_BIN/crontab"
-CJ_HALF="$(PATH="$CJ_BIN:$PATH" FW_USER="$CJ_FW" CTRLD_VERSION=1.5.7 sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+CJ_HALF="$(cj_audit recorded)"
 assert_contains "one job present does not excuse the other" \
     "$CJ_HALF" "never run:.*watchdog\.sh"
 
 # Both present: silent.
-cat > "$CJ_BIN/crontab" <<'CJSTUB2'
-#!/bin/sh
-echo "*/5 * * * * /cfg/watchdog.sh"
-echo "0 3 * * 1 /cfg/controld-update.sh"
-CJSTUB2
+printf '#!/bin/sh\necho "*/5 * * * * %s/watchdog.sh"\necho "0 3 * * 1 %s/controld-update.sh"\n' \
+    "$CJ_CFG" "$CJ_CFG" > "$CJ_BIN/crontab"
 chmod +x "$CJ_BIN/crontab"
-CJ_OK="$(PATH="$CJ_BIN:$PATH" FW_USER="$CJ_FW" CTRLD_VERSION=1.5.7 sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+CJ_OK="$(cj_audit recorded)"
 assert_not_contains "a complete crontab says nothing" "$CJ_OK" "no cron job"
 assert_contains "and confirms both are there" "$CJ_OK" "Both cron jobs are in the crontab"
 
 # No install recorded: silent either way, so a bare checkout is not accused.
-# Only assertable where nothing supplies the gate: audit.sh reads
-# /cfg/controld.env through load_env, and on a real install that file sets
-# CTRLD_VERSION, so exporting nothing here proves nothing there.
+# This used to skip on any real install, because the gate came from the
+# router's own controld.env. The sandbox supplies it, so the case runs
+# everywhere now, on the router included.
 printf '#!/bin/sh\nexit 0\n' > "$CJ_BIN/crontab"; chmod +x "$CJ_BIN/crontab"
-if [ -f /cfg/controld.env ] && grep -q '^CTRLD_VERSION=' /cfg/controld.env 2>/dev/null; then
-    skip "bare checkout (this router's controld.env supplies CTRLD_VERSION)"
-    skip "cron severity by drift count (needs the gate-off run above)"
-else
-    CJ_NONE="$(PATH="$CJ_BIN:$PATH" FW_USER="$CJ_FW" sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
-    assert_not_contains "no recorded install means no cron complaint" \
-        "$CJ_NONE" "no cron job"
+CJ_NONE="$(cj_audit bare)"
+assert_not_contains "no recorded install means no cron complaint" \
+    "$CJ_NONE" "no cron job"
     # Severity from what audit did, not from how the line is written: as a
     # review note the count would not move and the exit code would not carry
     # it. Measured against the same empty crontab with the gate off, which is
     # the only pair that differs by this check alone, since comparing against a
     # populated crontab instead just trades this drift item for the
     # neighbouring "points at missing script(s)" one.
-    assert_eq "and with one recorded it is drift, not a review note" \
-        "$(( $(audit_drift_count "$CJ_NONE") + 1 ))" "$(audit_drift_count "$CJ_GONE")"
-fi
+assert_eq "and with one recorded it is drift, not a review note" \
+    "$(( $(audit_drift_count "$CJ_NONE") + 1 ))" "$(audit_drift_count "$CJ_GONE")"
+
+describe "readouts — an opt-out must not read as a broken install"
+
+# Run against a sandboxed /cfg rather than gated on the real one. These used to
+# skip whenever /cfg/controld.env existed, which is every router, so the
+# on-router run CONTRIBUTING.md prescribes said nothing at all about this
+# feature, and on a dev box the flag came from the environment and never from
+# the file the code actually reads. Rewriting the /cfg paths in copies of the
+# readouts, and putting a real controld.env in that sandbox, is what
+# CONTRIBUTING.md means by deriving the expected values from wherever the code
+# under test will read them.
+# Named apart from the version-drift block's RO_BIN 2000 lines above, which
+# stubs the same directory differently. Nothing depended on the collision,
+# but neither block said it shared a directory.
+RDO_CFG="$TMPDIR/rdo-cfg"; RDO_BIN="$TMPDIR/rdo-bin"; RDO_TAB="$TMPDIR/rdo.crontab"
+mkdir -p "$RDO_CFG" "$RDO_BIN"
+export RDO_TAB
+
+for _rdos in audit.sh status.sh lib.sh; do
+    sed -e "s|/cfg/|${RDO_CFG}/|g" "$SCRIPT_DIR/$_rdos" > "$RDO_CFG/$_rdos"
+done
+chmod +x "$RDO_CFG/audit.sh" "$RDO_CFG/status.sh"
+
+for _rdostub in uci iptables ip nslookup logread pidof netstat; do
+    printf '#!/bin/sh\nexit 1\n' > "$RDO_BIN/$_rdostub"; chmod +x "$RDO_BIN/$_rdostub"
+done
+printf '#!/bin/sh\ncat "$RDO_TAB" 2>/dev/null\n' > "$RDO_BIN/crontab"
+chmod +x "$RDO_BIN/crontab"
+RDO_FW="$TMPDIR/ro-fw.user"
+printf '# controld-dns-redirect BEGIN\n# controld-dns-redirect END\n' > "$RDO_FW"
+
+rdo_env() {   # $1 = the AUTO_UPDATE line, or empty for none
+    { printf 'RESOLVER_ID=abc123\nBOOTSTRAP_IP=76.76.2.22\nCTRLD_VERSION=1.5.7\n'
+      printf 'DNS_TYPE=doh3\nPREFERRED_PROTOCOL=doh3\nFORCED_DNS=0\nDNS_PORT=5354\n'
+      [ -z "$1" ] || printf '%s\n' "$1"
+    } > "$RDO_CFG/controld.env"
+}
+rdo_cron() {  # $1 = with|without the updater job
+    if [ "$1" = "with" ]; then
+        printf '*/5 * * * * %s/watchdog.sh\n0 3 * * 1 %s/controld-update.sh\n' \
+            "$RDO_CFG" "$RDO_CFG" > "$RDO_TAB"
+    else
+        printf '*/5 * * * * %s/watchdog.sh\n' "$RDO_CFG" > "$RDO_TAB"
+    fi
+}
+rdo_run() { ( PATH="$RDO_BIN:$PATH"; FW_USER="$RDO_FW" sh "$RDO_CFG/$1" ) 2>/dev/null || true; }
+
+# Opted out, cron gone: the steady state after a toggle.
+rdo_env 'AUTO_UPDATE=0'; rdo_cron without
+RDO_AUDIT_OFF="$(rdo_run audit.sh)"
+RDO_ST_OFF="$(rdo_run status.sh)"
+assert_not_contains "a cron removed on purpose is not drift" \
+    "$RDO_AUDIT_OFF" "never run:.*controld-update\.sh"
+assert_contains "and the audit says why it is absent" \
+    "$RDO_AUDIT_OFF" "auto-update off by choice"
+assert_not_contains "status.sh does not call a deliberate opt-out a failure" \
+    "$RDO_ST_OFF" "No auto-update cron job"
+assert_contains "it says the update is off and where the setting lives" \
+    "$RDO_ST_OFF" "off by choice"
+assert_contains "and how to put it back" "$RDO_ST_OFF" "reconfigure.sh --auto-update"
+assert_contains "reported with the info marker" "$RDO_ST_OFF" '\[--\].*off by choice'
+assert_not_contains "and no failure marker in the cron section" \
+    "$(printf '%s\n' "$RDO_ST_OFF" | sed -n '/Cron Jobs/,/^$/p')" '\[!!\]'
+
+# The same crontab with no opt-out recorded: still drift, still a failure, or
+# the assertions above would pass on readouts that had stopped looking.
+rdo_env ''; rdo_cron without
+RDO_AUDIT_ON="$(rdo_run audit.sh)"
+RDO_ST_ON="$(rdo_run status.sh)"
+assert_contains "with no opt-out the same missing cron is still drift" \
+    "$RDO_AUDIT_ON" "never run:.*controld-update\.sh"
+assert_contains "and status.sh still calls it a failure" \
+    "$RDO_ST_ON" "No auto-update cron job"
+assert_eq "and the opt-out takes one item off the drift count" \
+    "$(( $(audit_drift_count "$RDO_AUDIT_ON") - 1 ))" \
+    "$(audit_drift_count "$RDO_AUDIT_OFF")"
+
+# A quoted opt-out, which only a reader that sources the file will honour.
+rdo_env 'AUTO_UPDATE="0"'; rdo_cron without
+assert_contains "the readouts honour a quoted opt-out too" \
+    "$(rdo_run audit.sh)" "auto-update off by choice"
+
+# Opted out but the cron is still installed. It replaces the LAN's resolver on
+# Monday whatever controld.env says, so both readouts must flag it.
+rdo_env 'AUTO_UPDATE=0'; rdo_cron with
+RDO_AUDIT_Z="$(rdo_run audit.sh)"
+RDO_ST_Z="$(rdo_run status.sh)"
+assert_contains "audit reports a cron that outlived the opt-out" \
+    "$RDO_AUDIT_Z" "AUTO_UPDATE=0 but the update cron is installed"
+# A review note, not drift: the updater carries the same flag and declines, so
+# nothing is replaced, and the boot hook takes the job out at the next boot.
+# Pinning audit.sh at exit 1 for a hand-edited opt-out is the outcome its own
+# comment says this block exists to avoid. Severity asserted by the counts, so
+# promoting or demoting it fails here rather than passing on the wording.
+assert_eq "and counts it as a review note, not drift" \
+    "$(( $(audit_review_count "$RDO_AUDIT_OFF") + 1 ))" "$(audit_review_count "$RDO_AUDIT_Z")"
+assert_eq "and does not raise the drift count" \
+    "$(audit_drift_count "$RDO_AUDIT_OFF")" "$(audit_drift_count "$RDO_AUDIT_Z")"
+assert_contains "status.sh flags it too" \
+    "$RDO_ST_Z" "off in controld.env but its cron is installed"
+assert_not_contains "and does not call that healthy" \
+    "$(printf '%s\n' "$RDO_ST_Z" | sed -n '/Cron Jobs/,/^$/p')" "Weekly auto-update cron installed"
 
 describe "audit.sh — a boot hook that never runs must fail the audit"
 

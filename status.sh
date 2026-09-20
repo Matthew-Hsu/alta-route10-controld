@@ -239,7 +239,17 @@ fi
 
 print_header "Cron Jobs"
 
-if cron_has /cfg/controld-update.sh; then
+# A missing update cron is a failure only when one was wanted. Reported as
+# print_fail either way, a deliberate opt-out read as a broken install every
+# time its owner ran status.sh, which is the readout they would check first.
+if [ "${AUTO_UPDATE:-1}" = "0" ]; then
+    if cron_has /cfg/controld-update.sh; then
+        print_warn "Auto-update is off in controld.env but its cron is installed"
+    else
+        print_info "Weekly auto-update off by choice (AUTO_UPDATE=0 in /cfg/controld.env)"
+        print_info "Turn it back on: sh /cfg/reconfigure.sh --auto-update"
+    fi
+elif cron_has /cfg/controld-update.sh; then
     print_ok "Weekly auto-update cron installed"
 else
     print_fail "No auto-update cron job"

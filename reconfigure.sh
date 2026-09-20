@@ -74,6 +74,7 @@ usage() {
     reconfigure.sh --benchmark              # find fastest, apply it
     reconfigure.sh --policy                 # manage split DNS rules
     reconfigure.sh --force-dns              # toggle forced DNS hijacking
+    reconfigure.sh --auto-update            # toggle the weekly ctrld update
     reconfigure.sh --repair                 # cover VLANs added since install
 "
     exit 0
@@ -95,6 +96,7 @@ while [ $# -gt 0 ]; do
         --benchmark)     ACTION="benchmark" ;;
         --policy)        ACTION="policy" ;;
         --force-dns)     ACTION="force_dns" ;;
+        --auto-update)   ACTION="auto_update" ;;
         --repair)        ACTION="repair" ;;
         --to)            [ -z "${2:-}" ] && die "--to requires a value"; TARGET="$2"; shift ;;
         --force|-f)      FORCE=1 ;;
@@ -167,6 +169,17 @@ do_show() {
     [ "$_pref" = "$DNS_TYPE" ] || printf "  %-20s %s ${DIM}(watchdog will return to it)${RESET}\n" "Preferred:" "$(proto_label "$_pref")"
     printf "  %-20s %s\n" "Bootstrap IP:" "${BOOTSTRAP_IP}"
     printf "  %-20s %s\n" "ctrld version:" "${CTRLD_VERSION}"
+    # Cross-checked against the crontab, the way status.sh and audit.sh do.
+    # Read from the flag alone this said "on (Mondays 03:00)" on a router whose
+    # cron was missing, including right after setup.sh printed that it could
+    # not install it, so --show disagreed with status.sh in the same minute.
+    if [ "${AUTO_UPDATE:-1}" = "0" ]; then
+        printf "  %-20s %s\n" "Weekly update:" "off"
+    elif cron_has /cfg/controld-update.sh; then
+        printf "  %-20s %s\n" "Weekly update:" "on (Mondays 03:00)"
+    else
+        printf "  %-20s %s\n" "Weekly update:" "on, but the cron job is missing"
+    fi
     # pidof prints the PID itself, so the old one-liner put that on stdout
     # inside the substitution and then appended "yes (PID above)" as a second
     # line: printf's %s took both, and the readout wrapped mid-field:
@@ -571,6 +584,79 @@ do_force_dns() {
     fi
 }
 
+# ── Action: Auto-update ──
+
+# The flag alone is not the whole job. It governs what the two installers do at
+# the next boot or re-install, and neither of those has happened yet, so an
+# answer of no that left the crontab alone would still let the update run this
+# Monday. Move the cron here as well, and the change is in force when the
+# command returns.
+do_auto_update() {
+    # An older /cfg/lib.sh may not carry the writer. reconfigure.sh is
+    # documented as runnable on its own, with a /cfg/lib.sh fallback for
+    # exactly that case, so this is reachable: without the guard it printed the
+    # whole prompt and then died with "set_auto_update_flag: not found" at the
+    # moment of writing. setup.sh's step 8 guards the same hazard the same way.
+    if ! command -v set_auto_update_flag >/dev/null 2>&1; then
+        die "This needs a newer /cfg/lib.sh. Re-run setup.sh to update it."
+    fi
+    print_header "Weekly Auto-Update"
+    printf "  A cron job at 03:00 every Monday checks for a newer ctrld and\n"
+    printf "  installs it, replacing the binary that answers DNS for the LAN.\n\n"
+
+    if [ "${AUTO_UPDATE:-1}" = "0" ]; then
+        printf "  Current: ${RED}OFF${RESET} — ctrld is updated only when you do it\n\n"
+        if [ "$FORCE" -eq 1 ]; then
+            confirm="y"
+        else
+            printf "  Turn the weekly update back on? [Y/n]: "
+            read -r confirm
+        fi
+        # [Y/n], defaulting to Yes
+        case "$confirm" in
+            n|N|no|NO)
+                print_info "No changes made."
+                ;;
+            *)
+                set_auto_update_flag 1
+                AUTO_UPDATE=1
+                if cron_has /cfg/controld-update.sh; then
+                    print_ok "Weekly auto-update on. Cron job was already installed."
+                elif (crontab -l 2>/dev/null; printf '0 3 * * 1 /cfg/controld-update.sh\n') \
+                        | crontab - 2>/dev/null; then
+                    print_ok "Weekly auto-update on. Cron job installed."
+                else
+                    print_warn "Flag set, but the cron job could not be installed"
+                    print_info "The boot hook will install it at the next reboot."
+                fi
+                ;;
+        esac
+    else
+        printf "  Current: ${GREEN}ON${RESET} — a new ctrld installs itself weekly\n\n"
+        printf "  Turning this off leaves ctrld where it is until you update it\n"
+        printf "  yourself with ${BOLD}controld-update.sh --now${RESET}. Security fixes wait for you.\n\n"
+        if [ "$FORCE" -eq 1 ]; then
+            confirm="y"
+        else
+            printf "  ${RED}Turn the weekly update off?${RESET} [y/N]: "
+            read -r confirm
+        fi
+        case "$confirm" in
+            y|Y|yes|YES)
+                set_auto_update_flag 0
+                AUTO_UPDATE=0
+                cron_remove /cfg/controld-update.sh
+                print_ok "Weekly auto-update off. Cron job removed."
+                print_info "It stays off across reboots and re-installs."
+                print_info "Update manually with: sh /cfg/controld-update.sh --now"
+                ;;
+            *)
+                print_info "No changes made."
+                ;;
+        esac
+    fi
+}
+
 # ── Action: Repair ──
 
 # Re-assert the port-53 (and, when forced DNS is on, port-853) redirects on
@@ -647,6 +733,7 @@ if [ -z "$ACTION" ]; then
     printf "    ${BOLD}4)${RESET} Manage split DNS policies\n"
     printf "    ${BOLD}5)${RESET} Toggle forced DNS hijacking\n"
     printf "    ${BOLD}6)${RESET} Repair DNS redirects (cover all VLANs)\n"
+    printf "    ${BOLD}7)${RESET} Toggle weekly ctrld auto-update\n"
     printf "    ${BOLD}q)${RESET} Exit\n\n"
     printf "  Choice: "
     read -r menu_choice
@@ -658,6 +745,7 @@ if [ -z "$ACTION" ]; then
         4) do_policy ;;
         5) do_force_dns ;;
         6) do_repair ;;
+        7) do_auto_update ;;
         q|Q) print_info "Done."; exit 0 ;;
         *)  die "Cancelled" ;;
     esac
@@ -669,6 +757,7 @@ else
         benchmark) do_benchmark ;;
         policy)    do_policy ;;
         force_dns) do_force_dns ;;
+        auto_update) do_auto_update ;;
         repair)    do_repair ;;
         *)         die "Unknown action: $ACTION" ;;
     esac

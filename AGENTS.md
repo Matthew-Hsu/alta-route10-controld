@@ -177,6 +177,61 @@ If you cannot reach the skill, the one rule worth keeping from it: do not use
 an em dash as a general-purpose connector. Use the punctuation the sentence is
 already asking for.
 
+## Where a change to the documentation goes
+
+`README.md` is for someone deciding whether to use this and then installing
+it. `docs/` is for how and why. A change that explains mechanism belongs in
+`docs/`, and the README gets a sentence and a link to it. This is not a
+preference someone applied once: `README.md` was 934 lines before `7ad6c40`
+moved the internals out, and it is worth keeping that way.
+
+The test is what a reader does with a paragraph. What the job does, the command
+to run, that a setting survives a reboot, what turning it off costs: that is a
+decision, so it stays. Why the crontab does not survive a firmware update, what
+a backstop flag is for, which readout says what in which state: that is
+mechanism, so it goes to `docs/technical-details.md` or
+`docs/troubleshooting.md` and the README links to it.
+
+Two things in the README are not subject to this. The Verification Status
+table stays there because `CONTRIBUTING.md` makes it canonical and the issue
+and pull request templates point at it. And the section headings are linked
+from the table of contents and used as `sed` range anchors by `test.sh`, so
+they are covered by the interface rule above rather than this one.
+
+When you move a paragraph out, check that the docs file does not already say
+it, and that nothing was lost rather than saying so. Cite the lines that now
+carry it.
+
+Keeping it true is the other half, and it has no safety net. The interface
+rule above catches a comment or string that code reads; a sentence describing
+what something does is read by people only, so nothing fails when it stops
+being true. The suite cannot tell, review usually cannot either, and a stale
+paragraph is worse than a missing one because it is trusted.
+
+So the check is mechanical rather than remembered. Before you call a behaviour
+change finished, search the documentation for what the thing is called:
+
+    grep -rn 'AUTO_UPDATE\|write_env_file' ./*.md docs/
+
+Read every hit, not the first. In this repository two sentences in the same
+section described the same behaviour, the code changed underneath both, one
+was corrected in the commit that changed it and the other was not, and the
+stale one then survived a review that edited the paragraph directly above it.
+It was found later, by accident, while reading that file for something else.
+
+That is also the argument against saying a thing twice. One file owns a fact
+and the others link to it. A paragraph copied into the README because it
+seemed useful there is a second place to remember, and the copy is the one
+that goes stale, because the person changing the behaviour is looking at the
+file nearest the code.
+
+The same applies to what a change makes true. This branch made a trailing
+comment survive a rewrite, which turned a sentence in
+`docs/technical-details.md` from correct to wrong and a sentence in
+`README.md` from wrong to correct. Both needed finding. Grepping for the
+behaviour you changed finds the first kind; the second kind needs you to ask
+what the docs currently promise that the code could not previously deliver.
+
 ## Scope discipline
 
 One concern per commit, per `CONTRIBUTING.md`. If you're operating

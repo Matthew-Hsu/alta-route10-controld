@@ -136,6 +136,55 @@ binary; the updater restores it automatically, but you can do it by hand:
 mv /cfg/ctrld.prev /cfg/ctrld && chmod +x /cfg/ctrld && sh /cfg/post-cfg.sh
 ```
 
+## The boot log says ctrld failed its health check
+
+**Symptom:** `/tmp/log/messages` carries
+
+```
+post-cfg: ctrld failed health check, using https-dns-proxy fallback
+```
+
+and everything looks fine now. That string is also the signature of a real
+defect fixed in 1.10.1, so finding it is alarming.
+
+**Usually benign, and here is how to tell.** `post-cfg.sh` runs at least twice
+per boot. The filename is an Alta convention, and the firmware invokes
+`/cfg/post-cfg.sh` itself as part of applying its config, separately from this
+project's boot hook. The firmware's run happens early and can reach its health
+check before `ctrld` has started, so it falls back and says so. The hook's run
+follows and starts `ctrld` properly.
+
+**Check** that a successful run followed it in the same boot:
+
+```sh
+grep -a "post-cfg" /tmp/log/messages
+```
+
+Benign looks like this, the failure first and a success after it:
+
+```
+post-cfg: ctrld failed health check, using https-dns-proxy fallback
+post-cfg: starting with resolver=abc123 type=doh3
+post-cfg: ctrld started (doh3), DNS redirected to 5354 on: br-lan br-lan_10 ...
+```
+
+Read the whole output rather than the end of it. Lines logged before the clock
+syncs carry a bogus date and sort to the top, so `tail` can miss the ones you
+want. The file is recreated at each boot, so everything in it is from the
+current one.
+
+**It is a real problem when no success follows**, or when `sh /cfg/audit.sh`
+reports missing redirects. Then you are in the case 1.10.1 describes: a moved
+DNS port that a recovery path did not carry. Confirm with:
+
+```sh
+sh /cfg/audit.sh
+sh /cfg/status.sh
+```
+
+Both name the port in use. If the redirects point at a different one from the
+listener, re-running the installer repairs it.
+
 ## LAN DNS dies after the port moved, but everything reports healthy
 
 **Symptom:** clients cannot resolve anything. `ping 1.1.1.1` works, so it is

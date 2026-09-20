@@ -121,6 +121,39 @@ Status](../README.md#verification-status) in the README.
 - Cron installation and survival across a reboot, and that our own cron
   operations leave the router's `wireguard_watchdog` job alone
 
+- **The weekly auto-update off switch, across the paths it exists to survive.**
+  With `AUTO_UPDATE=0` written by `reconfigure.sh --auto-update`, re-running
+  `setup.sh` kept the setting and declined to reinstall the cron, saying so as
+  it went. A reboot came back with the crontab still missing that job and the
+  boot hook logging why. Planting the job by hand and rebooting again had the
+  hook remove it, which is the case a crontab restored from a backup produces.
+  Deleting the key from `controld.env` altogether and rebooting put the weekly
+  job back, which is the state every install predating the flag is in. The five
+  cron jobs on this router that have nothing to do with ControlD were untouched
+  throughout.
+
+- **The toggle itself.** `reconfigure.sh --auto-update --force` wrote the key
+  and took the cron out in the same run, `--show` gained its weekly-update
+  line, and the menu kept items 1 to 6 where they had always been with the
+  toggle added as 7.
+
+- **What the readouts say while the two disagree.** With the flag off and the
+  cron present, `status.sh` warned about the mismatch and `audit.sh` raised it
+  as a review item while still exiting 0, so a hand-edit does not pin the audit
+  at failure. The updater run with no arguments declined and reached no
+  network. `--now` ignored the flag, queried the GitHub API and found 1.5.7
+  already installed. On the build running at the time it then exited 0 in
+  silence, which took reading the source to tell apart from a script that never
+  ran, since every other path under `--now` either prints or exits non-zero.
+  After `cad180e` the same command on the same router answered
+  `already on v1.5.7 — nothing to update`.
+
+- **Where the boot hook's log lines go.** They do reach `/tmp/log/messages`,
+  but they carry pre-NTP timestamps and sort to the top of the file, so looking
+  for them with `tail` finds nothing. That file also keeps entries written
+  before a reboot, while anything left in `/root` is gone after one, so put a
+  backup you mean to restore from in `/cfg`.
+
 ## Protocol Reconciliation
 
 - **Protocol reconciliation, end to end.** `ctrld.toml` was retargeted behind

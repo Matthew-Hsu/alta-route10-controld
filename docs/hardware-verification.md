@@ -30,6 +30,10 @@ forced DNS on, using the changes that followed 1.11.0, installed from their
 branch archive. The fix that makes `audit.sh` read exact counters came out of
 that run and was fetched on its own afterwards. The firmware was not re-read
 for that run.
+
+Entries also marked **on 1.5h** ran after the router took Alta's 1.5h update
+in place, with the same changes installed. `/etc/openwrt_release` then read
+`DISTRIB_REVISION='1.5h'` on the same OpenWrt base, `r16325-88151b8303`.
 Those entries time DNS from a client. A Mac on VLAN 10 asked the router's LAN
 address for a record once a second with `dig +time=1 +tries=1`, and the
 `br-lan_10` redirect counter rose with the queries, which shows the probe went
@@ -262,6 +266,33 @@ failed probes.
   an hour and a half, so the current file and the two kept beside it hold
   about four to five hours. A healthy watchdog logs nothing, so finding no
   ControlD lines in that window is normal.
+
+- **A firmware update, after 1.11.0, on 1.5h.** The router came back from
+  Alta's 1.5h update with all 24 redirect rules, forced DNS with its 12
+  port-853 rules, both cron jobs and the boot hook, and `audit.sh` exited 0
+  with no drift. The update rewrote the https-dns-proxy instances, adding
+  `use_http1='1'` and `polling_interval='3600'` and swapping the listen ports
+  of the first two, and added `local_ttl='300'` to dnsmasq. It left dnsmasq's
+  three servers, `noresolv` and `leasefile` as they were.
+
+- **dnsmasq left running at boot, after 1.11.0, on 1.5h.** Before
+  `post-cfg.sh` compared dnsmasq's servers first, the boot after the update
+  started dnsmasq three times: once from the firmware and once from each run
+  of `post-cfg.sh`. With the comparison in place, re-running `setup.sh` left
+  dnsmasq's process ID unchanged, and a reboot showed one start, the
+  firmware's own, with both runs of `post-cfg.sh` logging
+  `dnsmasq already forwards to https-dns-proxy — left running`. The failed
+  probes spanned 38 seconds and `audit.sh` exited 0.
+
+- **Leases handed out before the clock is set, on 1.5h.** After that reboot
+  the four access points on `br-lan` kept working at their addresses but were
+  missing from `/cfg/dhcp.leases`. The switch, whose lease predated the
+  reboot, was still listed. The boot log showed dnsmasq acknowledging all
+  four between `Oct 24 09:01` and `09:02`, before the clock was set, so their
+  leases expired in October 2021 and were dropped once the time was right. The
+  boot after the firmware update did the same, and one of those addresses
+  later went to a second access point. This is the firmware's, and
+  `docs/troubleshooting.md` has the check and the workaround.
 
 ## Protocol Reconciliation
 

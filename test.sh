@@ -1256,14 +1256,37 @@ describe "reconfigure.sh — a config that does not answer is rolled back"
 RR_CFG="$TMPDIR/rr-cfg"; RR_BIN="$TMPDIR/rr-bin"
 mkdir -p "$RR_CFG" "$RR_BIN"
 export RR_CFG
+# The check reconfigure.sh makes before a change runs a throwaway ctrld on the
+# benchmark port with its own config. Keep that config in the sandbox, and put
+# the suite's own value back once these tests are done.
+RR_SAVED_BENCH_CONF="$BENCH_CONF"
+BENCH_CONF="$RR_CFG/bench.toml"; export BENCH_CONF
 sed -e "s|/cfg/|${RR_CFG}/|g" "$SCRIPT_DIR/reconfigure.sh" > "$RR_CFG/reconfigure.sh"
 sed -e "s|/cfg/|${RR_CFG}/|g" "$SCRIPT_DIR/lib.sh"         > "$RR_CFG/lib.sh"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$RR_CFG/ctrld.calls"\n' > "$RR_CFG/ctrld"
 for _rr in pidof uci; do printf '#!/bin/sh\nexit 1\n' > "$RR_BIN/$_rr"; done
 for _rr in sleep logger; do printf '#!/bin/sh\nexit 0\n' > "$RR_BIN/$_rr"; done
-printf '#!/bin/sh\necho "udp 0 0 0.0.0.0:5354 0.0.0.0:* 1/ctrld"\n' > "$RR_BIN/netstat"
+# Production always listens. The benchmark port is taken while the check's
+# config exists, which is from the moment probe_resolver writes it to the
+# moment it removes it.
+cat > "$RR_BIN/netstat" << 'RRNETEOF'
+#!/bin/sh
+echo "udp 0 0 0.0.0.0:5354 0.0.0.0:* 1/ctrld"
+[ -f "$BENCH_CONF" ] && echo "udp 0 0 127.0.0.1:5360 0.0.0.0:* 1/ctrld"
+exit 0
+RRNETEOF
+# Production answers unless ctrld.toml carries DoQ, a bad resolver or a broken
+# policy, which is what the rollback tests need. The check answers unless its
+# config matches the ERE a test writes into bench.fail, so the rollback tests,
+# which write none, pass the check and reach the rollback.
 cat > "$RR_BIN/nslookup" << 'RRNSEOF'
 #!/bin/sh
+case "${2:-}" in
+    *#5360)
+        [ -f "$BENCH_CONF" ] || exit 1
+        [ -f "$RR_CFG/bench.fail" ] && grep -qE "$(cat "$RR_CFG/bench.fail")" "$BENCH_CONF" && exit 1
+        exit 0 ;;
+esac
 grep -qE 'type = "doq"|zzbad|ControlD-Broken' "$RR_CFG/ctrld.toml" && exit 1
 exit 0
 RRNSEOF
@@ -1283,7 +1306,7 @@ RRENVEOF
       write_ctrld_config "$RR_CFG/ctrld.toml" abc123 76.76.2.22 doh3 )
     cp "$RR_CFG/ctrld.toml" "$RR_CFG/toml.before"
     cp "$RR_CFG/controld.env" "$RR_CFG/env.before"
-    rm -f "$RR_CFG/ctrld.calls"
+    rm -f "$RR_CFG/ctrld.calls" "$RR_CFG/bench.fail"
 }
 # Exit status is printed as the last line, since the suite runs under set -e.
 rr_run() {
@@ -1347,6 +1370,61 @@ unset _rr _rr_esc RR_MENU
 assert_contains "and choosing DoT from it switches to DoT" "$(cat "$RR_CFG/controld.env")" "DNS_TYPE=dot"
 RR_OUT="$( ( PATH="$RR_BIN:$PATH"; printf '5\n' | sh "$RR_CFG/reconfigure.sh" --protocol --force ) 2>&1 || true )"
 assert_contains "while the Benchmark entry still runs the benchmark" "$RR_OUT" "Benchmarking Protocols"
+
+describe "reconfigure.sh — a change is checked before production is touched"
+
+# The rollback above costs the LAN about 19 seconds of DNS, measured on a Route
+# 10, because it finds a bad resolver or a blocked protocol by restarting
+# production on it. Asking a throwaway ctrld on the benchmark port first finds
+# the same thing with production still answering. "Production never restarted"
+# is read from the stub ctrld's call log: production runs with ctrld.toml, the
+# check with the benchmark config.
+rr_prod_starts() { grep -c "run -c $RR_CFG/ctrld.toml" "$RR_CFG/ctrld.calls" 2>/dev/null || true; }
+
+rr_reset
+printf 'zzpre' > "$RR_CFG/bench.fail"
+RR_OUT="$(rr_run --resolver --to zzpre11 --force)"
+assert_contains "a resolver ID ControlD refuses is refused before the change" "$RR_OUT" \
+    "ControlD did not answer for zzpre11"
+assert_contains "with the exit status saying so" "$RR_OUT" "rc=1"
+assert_not_contains "without reaching the rollback" "$RR_OUT" "restoring the previous one"
+assert_eq "and without restarting production" "0" "$(rr_prod_starts)"
+assert_true "leaving controld.env as it was" cmp -s "$RR_CFG/env.before" "$RR_CFG/controld.env"
+assert_true "and ctrld.toml" cmp -s "$RR_CFG/toml.before" "$RR_CFG/ctrld.toml"
+assert_false "and no throwaway config behind" [ -f "$BENCH_CONF" ]
+
+rr_reset
+printf 'type = "dot"' > "$RR_CFG/bench.fail"
+RR_OUT="$(rr_run --protocol --to dot --force)"
+assert_contains "a protocol the network blocks is refused before the switch" "$RR_OUT" \
+    "ControlD did not answer over DoT (TLS)"
+assert_contains "with the exit status saying so" "$RR_OUT" "rc=1"
+assert_eq "and without restarting production" "0" "$(rr_prod_starts)"
+assert_true "leaving the recorded protocol as it was" cmp -s "$RR_CFG/env.before" "$RR_CFG/controld.env"
+
+rr_reset
+printf 'zzpre' > "$RR_CFG/bench.fail"
+RR_OUT="$( ( PATH="$RR_BIN:$PATH"; printf '2\naa:bb:cc:dd:ee:01\nzzpre22\nKids\nq\n' \
+    | sh "$RR_CFG/reconfigure.sh" --policy; echo "rc=$?" ) 2>&1 || true )"
+assert_contains "a policy resolver ControlD refuses is not added" "$RR_OUT" \
+    "ControlD did not answer for zzpre22"
+assert_true "leaving ctrld.toml as it was" cmp -s "$RR_CFG/toml.before" "$RR_CFG/ctrld.toml"
+assert_eq "without restarting production" "0" "$(rr_prod_starts)"
+assert_contains "and the menu carries on" "$RR_OUT" "rc=0"
+
+# A change that answers still goes through, the check included.
+rr_reset
+RR_OUT="$(rr_run --resolver --to good5678 --force)"
+assert_contains "a resolver ID that answers is still applied" "$(cat "$RR_CFG/controld.env")" \
+    "RESOLVER_ID=good5678"
+assert_contains "after the check says so" "$RR_OUT" "Checking that ControlD answers for good5678"
+unset -f rr_prod_starts
+
+# Unset first: that drops the export, so later sandboxes that rewrite lib.sh's
+# default are not overridden from the environment.
+unset BENCH_CONF
+BENCH_CONF="$RR_SAVED_BENCH_CONF"
+unset RR_SAVED_BENCH_CONF
 
 describe "setup.sh — a re-install honours an opt-out made since the last one"
 

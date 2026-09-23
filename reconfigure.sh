@@ -126,6 +126,31 @@ reconcile_dns_type && print_info "Corrected recorded protocol to $(proto_label "
 
 PLABEL=$(proto_label "$DNS_TYPE")
 
+# ── Check before changing ──
+
+# Does ControlD answer for <resolver> over <proto>? Asked of a throwaway ctrld
+# on the benchmark port (probe_resolver in lib.sh), so production DNS keeps
+# answering while it is asked. A resolver ID ControlD refuses, or a protocol
+# the network blocks, is then refused here with nothing changed, rather than
+# found by restarting production on it and rolling back, which costs the LAN
+# about 19 seconds of DNS.
+#
+# Returns 1 only for a clear no. Where the question cannot be asked, an older
+# lib.sh or a benchmark port already in use, the change goes ahead and the
+# rollback in restart_or_restore is what protects it.
+# Usage: resolver_answers <proto> <resolver>
+resolver_answers() {
+    command -v probe_resolver >/dev/null 2>&1 || return 0
+    print_info "Checking that ControlD answers for $2 over $(proto_label "$1")..."
+    _ra_rc=0; probe_resolver "$1" "$2" "$BOOTSTRAP_IP" || _ra_rc=$?
+    case "$_ra_rc" in
+        0) return 0 ;;
+        1) return 1 ;;
+    esac
+    print_warn "Could not check it first — the change is rolled back if it does not answer"
+    return 0
+}
+
 # ── Apply and restart ──
 
 # Restart ctrld on the config just written. If it does not answer, put the
@@ -283,6 +308,11 @@ do_protocol() {
         return
     fi
 
+    if ! resolver_answers "$new_type" "$RESOLVER_ID"; then
+        print_fail "ControlD did not answer over $(proto_label "$new_type") — this network may block it, nothing was changed"
+        exit 1
+    fi
+
     [ "$FORCE" -eq 1 ] || {
         printf "\n  Switch from ${BOLD}%s${RESET} to ${BOLD}%s${RESET}? [Y/n]: " "$PLABEL" "$(proto_label "$new_type")"
         read -r confirm
@@ -313,6 +343,11 @@ do_resolver() {
     if [ "$new_id" = "$RESOLVER_ID" ]; then
         print_info "Same resolver ID. No change needed."
         return
+    fi
+
+    if ! resolver_answers "$DNS_TYPE" "$new_id"; then
+        print_fail "ControlD did not answer for ${new_id} — check the ID in your dashboard, nothing was changed"
+        exit 1
     fi
 
     [ "$FORCE" -eq 1 ] || {
@@ -448,6 +483,10 @@ do_policy() {
                    && ! valid_policy_name "$policy_name"; then
                     print_fail "Policy name cannot contain \" or \\"; continue
                 fi
+                if ! resolver_answers "$DNS_TYPE" "$policy_resolver"; then
+                    print_fail "ControlD did not answer for ${policy_resolver} — check the ID, nothing was added"
+                    continue
+                fi
 
                 # Add upstream and MAC rule to existing config
                 local next_idx
@@ -508,6 +547,10 @@ EOF
                 if command -v valid_policy_name >/dev/null 2>&1 \
                    && ! valid_policy_name "$policy_name"; then
                     print_fail "Policy name cannot contain \" or \\"; continue
+                fi
+                if ! resolver_answers "$DNS_TYPE" "$policy_resolver"; then
+                    print_fail "ControlD did not answer for ${policy_resolver} — check the ID, nothing was added"
+                    continue
                 fi
 
                 local next_up

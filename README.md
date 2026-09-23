@@ -307,8 +307,9 @@ This rewrites `ctrld.toml` and `controld.env`, preserves any split-DNS policy,
 moves the `https-dns-proxy` fallback onto the same new profile, restarts
 `ctrld`, and checks DNS before returning. Confirm with `sh /cfg/status.sh`,
 then delete the old profile in the ControlD dashboard. Until you do, the old
-ID keeps resolving for anyone who has it. If the new ID does not answer, the
-command puts the old configuration back and exits non-zero. [How to change
+ID keeps resolving for anyone who has it. The command checks the new ID
+first, and if ControlD does not answer for it, refuses the change and exits
+non-zero with nothing touched. [How to change
 your resolver ID](docs/troubleshooting.md#how-to-change-your-resolver-id)
 covers what an interrupted change can leave behind and what `audit.sh` says
 about it.
@@ -326,9 +327,9 @@ Use `reconfigure.sh` rather than editing the config by hand. Regenerating
 upstreams are not in the env file. [How to switch
 protocols](docs/troubleshooting.md#how-to-switch-protocols) has the detail.
 
-Trying a protocol is safe. If the new one does not answer, as DoQ and DoT will
-not on a network that blocks port 853, the previous configuration goes back in
-and the command exits non-zero.
+Trying a protocol is safe. The command checks the new one first, and if it
+does not answer, as DoQ and DoT will not on a network that blocks port 853, it
+refuses the switch and exits non-zero while your DNS keeps working.
 
 ### Turn On Forced DNS
 

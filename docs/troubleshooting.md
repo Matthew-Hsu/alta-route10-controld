@@ -506,9 +506,12 @@ clean up afterwards. Three things are worth knowing:
   points it at the new profile and restarts it, so the retired ID stops
   answering everywhere on the router. (Earlier versions left this to
   `setup.sh`; since 2dbfa2a it is part of the resolver change.)
-- **A change that does not answer is undone.** If `ctrld` cannot resolve on
-  the new ID, `reconfigure.sh` restores the old `ctrld.toml` and
-  `controld.env`, restarts on them and exits non-zero.
+- **A new ID is checked before anything changes.** `reconfigure.sh` asks a
+  throwaway `ctrld` on the benchmark port whether ControlD answers for it.
+  If ControlD does not, the ID is refused and the command exits non-zero with
+  DNS untouched. If a change gets past that check and still does not answer, the
+  command restores the old `ctrld.toml` and `controld.env`, restarts on them
+  and exits non-zero.
 - **An interrupted change can leave `/cfg/ctrld.toml.bak`**, the rollback copy,
   which still contains the old ID. It is removed once the change settles either
   way, and `audit.sh` reports it if one survives. An interrupted watchdog

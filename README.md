@@ -159,6 +159,8 @@ installer, a few things matter before you hand it off:
   something an agent should use by default to avoid asking a question.
 - **Check the result.** Run `sh status.sh` after any install, reconfigure, or
   protocol change, and look at the output. Don't take "it worked" on faith.
+  `setup.sh` and `reconfigure.sh` exit non-zero when DNS does not answer at
+  the end, which catches the worst case and little else.
 - **Uninstalling is destructive.** `uninstall.sh` removes everything this
   project installs and resets DNS to defaults. Only run it if asked.
 

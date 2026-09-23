@@ -25,6 +25,17 @@ otherwise. For the other half, the paths that pass the test suite and have
 never run on a device, see [Verification
 Status](../README.md#verification-status) in the README.
 
+Entries marked **after 1.11.0** ran later, on the same six-bridge install with
+forced DNS on, using the changes that followed 1.11.0, installed from their
+branch archive. The fix that makes `audit.sh` read exact counters came out of
+that run and was fetched on its own afterwards. The firmware was not re-read
+for that run.
+Those entries time DNS from a client. A Mac on VLAN 10 asked the router's LAN
+address for a record once a second with `dig +time=1 +tries=1`, and the
+`br-lan_10` redirect counter rose with the queries, which shows the probe went
+through `ctrld` and not straight to dnsmasq. An outage below is the span of
+failed probes.
+
 ## Per-Device Visibility
 
 - **Devices appearing individually in ControlD.** Across all six bridges,
@@ -66,6 +77,32 @@ Status](../README.md#verification-status) in the README.
 
   The drop report reaches syslog as well as stderr: `controld: write_env_file
   dropped: JUNK`.
+
+- **Installing from an unpacked archive, after 1.11.0.** The router's own
+  `wget` fetched the branch archive, following GitHub's redirect to codeload,
+  and `setup.sh` run from the unpacked copy in `/tmp` printed no
+  `Downloading lib.sh from repository` line. It used the `lib.sh` and utility
+  scripts beside it and fetched nothing from master. The installed library was
+  the branch's and the audit was clean. A release archive has the same layout.
+  Over a working install, a client lost DNS for about 4 seconds (two failed
+  probes) while `ctrld` restarted.
+
+- **The installer's verdict on a resolver ID that does not exist, after
+  1.11.0.** ControlD refuses an unknown ID: from the Mac,
+  `curl --doh-url https://dns.controld.com/zzbad99` could not resolve (exit
+  6), while the real ID answered. Re-installing over a working install with
+  `--resolver zzbad99` ended on `Installed, but DNS is not working yet` and
+  exit 1. Re-installing with the real ID straight after ended on
+  `Setup Complete!` and exit 0, with the audit clean.
+
+  The same run showed what a mistyped ID costs. The https-dns-proxy fallback,
+  asked directly on port 5053, timed out, because the installer had already
+  pointed it at the bad ID. A client got no answer, because the earlier
+  redirects still pointed at a `ctrld` that could not resolve. Nothing
+  recovers from that on its own. It cost 40 seconds here only because the
+  correct install ran immediately afterwards. The installer's
+  `System DNS working` check read `[OK]` throughout, since the router answered
+  it from dnsmasq's cache.
 
 ## Redirect Coverage
 
@@ -138,6 +175,13 @@ Status](../README.md#verification-status) in the README.
   are the suite's destructive integration tests; before this release they had
   never executed anywhere, skipped off-router and hanging on-router
 
+- **Re-downloading `ctrld` through `post-cfg.sh`, after 1.11.0.** With
+  `/cfg/ctrld` moved to `/tmp`, `post-cfg.sh` logged `ctrld binary missing,
+  downloading...` and `ctrld binary restored` with no checksum complaint, and
+  `ctrld --version` answered `v1.5.7`. A client lost one probe while it
+  restarted. This is the recipe `docs/troubleshooting.md` gives for a binary
+  that keeps crashing.
+
 ## Boot Persistence and Recovery
 
 - **The recovery path with `/cfg/lib.sh` absent.** With the library moved aside
@@ -187,6 +231,27 @@ Status](../README.md#verification-status) in the README.
   `/root` is cleared by a reboot too, so a backup you mean to restore from goes
   in `/cfg`.
 
+- **A reboot timed from a client, after 1.11.0.** DNS answered again 65
+  seconds after the reboot began. The fallback carried it for roughly the
+  first 30 of those, until `post-cfg: ctrld started (doh3), DNS redirected to
+  5354 on:` all six bridges. Afterwards there were 24 rules, forced DNS with
+  its 12 port-853 rules, both cron jobs, and a clean audit. The boot log
+  carried the firmware's early `ctrld failed health check` line ahead of the
+  hook's success, the sequence `docs/troubleshooting.md` calls benign.
+
+- **The firmware's own line for the hook.** On this router `/etc/rc.local`
+  sources the hook as
+  `if ! grep -q rescue /proc/cmdline && [ -e /cfg/rc.local ]; then . /cfg/rc.local`,
+  which skips it on a rescue boot. That is not the one-line form
+  `docs/technical-details.md` offers for putting it back.
+
+- **The log's clock and how far back it reaches.** syslog stamps its lines in
+  UTC while `date` on the same router prints local time, seven hours behind
+  here. On this router, with 87 DHCP leases, each 200 KB file filled in about
+  an hour and a half, so the current file and the two kept beside it hold
+  about four to five hours. A healthy watchdog logs nothing, so finding no
+  ControlD lines in that window is normal.
+
 ## Protocol Reconciliation
 
 - **Protocol reconciliation, end to end.** `ctrld.toml` was retargeted behind
@@ -201,6 +266,32 @@ Status](../README.md#verification-status) in the README.
   `--protocol --to <preferred>` worked in a single step, where it used to
   no-op. A reboot afterwards came back with the two files in agreement and no
   spurious correction logged.
+
+## Reconfiguration
+
+- **A resolver ID that does not answer is rolled back, after 1.11.0.**
+  `reconfigure.sh --resolver --to zzbad99 --force` printed `ctrld did not
+  answer on the new config — restoring the previous one` and `Previous config
+  restored`, exited 1, and left neither `ctrld.toml` nor `controld.env`
+  mentioning the bad ID, with no `ctrld.toml.bak` behind it. A client lost DNS
+  for 19 seconds (18 failed probes), the start timeout plus the restart, and
+  it came back with nothing run by hand. It printed
+  `Resolver changed to zzbad99` before it had checked anything, which the
+  rollback then contradicts.
+
+- **A protocol the network blocks, after 1.11.0.** With outbound port 853
+  rejected in the router's own `OUTPUT` chain, `--protocol --to doq --force`
+  rolled back the same way in the same 19 seconds. `DNS_TYPE` and
+  `PREFERRED_PROTOCOL` both stayed `doh3`, so the watchdog had nothing to
+  switch back to.
+
+- **DoT from the menu, after 1.11.0.** `--protocol` listed five entries, with
+  DoT as 4 and Benchmark as 5. Choosing 4 switched to DoT and `--to doh3`
+  switched back, each costing a client one failed probe.
+
+- **A quote in a policy name, after 1.11.0.** `Kid "A"` entered through
+  `--policy` was refused with `Policy name cannot contain " or \` before
+  anything was written, and `ctrld` was not restarted.
 
 ## Split DNS
 
@@ -227,6 +318,18 @@ Status](../README.md#verification-status) in the README.
 
 - **`benchmark.sh`'s daemon cleanup.** After a run across all four protocols,
   exactly one `ctrld` process remained
+
+- **Exact packet counts, after 1.11.0.** `audit.sh` reported 1,609 packets
+  redirected on `br-lan_10` while `iptables -t nat -L PREROUTING -n -v -x`
+  counted 261,417 on its udp rule alone. Without `-x` the listing abbreviates
+  that to `261K`, and the audit's awk read it as 261. The fixed `audit.sh`,
+  run from its own directory in `/tmp` against the installed library, read
+  263,874 for the same bridge, and 135,420 for `br-lan_20` where it had read
+  502.
+
+- **A benchmark beside live DNS, after 1.11.0.** All four protocols answered
+  15 of 15 at 7 to 8 ms, and a client probing throughout saw no failure. It
+  recommended moving from DoH3 to DoQ on a 1 ms difference.
 
 ## Uninstall
 

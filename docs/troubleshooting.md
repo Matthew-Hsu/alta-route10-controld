@@ -63,7 +63,11 @@
   netstat -tlnp | grep 5354
   ```
 
-- Network not ready when ctrld starts. The `post-cfg.sh` waits for network, but if the WAN link is slow, you may need to increase the wait.
+- Network not ready when ctrld starts. At boot `post-cfg.sh` waits up to 60
+  seconds for the WAN and then starts ctrld anyway. If ctrld is not answering
+  by then, DNS stays on https-dns-proxy, and the watchdog restarts ctrld if it
+  has to and adds the redirects at its first healthy cycle, within 5 minutes.
+  There is no wait to tune.
 
 **Fix:** Re-download the ctrld binary. Move the damaged one out of `/cfg` and
 let `post-cfg.sh` fetch it again. It downloads the release named by

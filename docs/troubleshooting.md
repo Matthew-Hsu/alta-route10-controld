@@ -65,17 +65,20 @@
 
 - Network not ready when ctrld starts. The `post-cfg.sh` waits for network, but if the WAN link is slow, you may need to increase the wait.
 
-**Fix:** Re-download the ctrld binary:
+**Fix:** Re-download the ctrld binary. Move the damaged one out of `/cfg` and
+let `post-cfg.sh` fetch it again. It downloads the release named by
+`CTRLD_VERSION` in `/cfg/controld.env`, checks it against the release's
+published SHA-256, and starts it:
+
 ```sh
-cd /cfg
-. /cfg/controld.env          # CTRLD_VERSION = the release this install runs
-rm ctrld
-wget -O ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${CTRLD_VERSION}/ctrld_${CTRLD_VERSION}_linux_arm64.tar.gz"
-tar xzf ctrld.tar.gz -C /tmp
-mv /tmp/dist/ctrld_*/ctrld /cfg/ctrld
-chmod +x /cfg/ctrld
-rm -rf /tmp/dist ctrld.tar.gz
+mv /cfg/ctrld /tmp/ctrld.broken
+sh /cfg/post-cfg.sh
+/cfg/ctrld --version          # prints a version once the download worked
 ```
+
+`post-cfg.sh` writes to the log rather than the terminal, so the last line is
+how to tell it worked. If there is still no binary, re-run the installer,
+which reports each step as it goes.
 
 ## status.sh says the DNS redirects were removed
 

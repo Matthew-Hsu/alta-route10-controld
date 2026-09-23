@@ -353,7 +353,9 @@ done
 # where https-dns-proxy's own zone redirect was taking 45,563 queries.
 # redirect_outranked answers it directly.
 print_header "Packets Actually Intercepted"
-counts="$(iptables -t nat -L PREROUTING -nv 2>/dev/null \
+# -x for exact counters. Without it iptables abbreviates anything above 99999
+# (261417 becomes 261K), and awk reads 261K as 261.
+counts="$(iptables -t nat -L PREROUTING -nvx 2>/dev/null \
           | $AWK -v port="$DNS_PORT" '$0 ~ ("redir ports " port) { p[$6] += $1 } END { for (i in p) print i, p[i] }' \
           | sort)"
 if [ -z "$counts" ]; then

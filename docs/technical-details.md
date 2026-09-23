@@ -79,7 +79,7 @@ If your router locks up, the only fix is a physical reboot. The lockup won't per
 |---|---|---|
 | `setup.sh` | Interactive installer with guided protocol selection and inline benchmark | `--help` `--version` `--protocol <type>` `--resolver <id>` |
 | `status.sh` | Health check: services, upstreams, policies, watchdog activity | `--help` `--version` |
-| `reconfigure.sh` | Change protocol, resolver, or policies without re-running setup | `--help` `--version` `--show` `--protocol` `--resolver` `--benchmark` `--policy` `--force-dns` `--repair` `--to <value>` `--force` |
+| `reconfigure.sh` | Change protocol, resolver, or policies without re-running setup | `--help` `--version` `--show` `--protocol` `--resolver` `--benchmark` `--policy` `--force-dns` `--auto-update` `--repair` `--to <value>` `--force` |
 | `benchmark.sh` | Test DNS query latency across DoQ, DoH3, DoH and DoT | `--help` `--version` `--queries N` |
 | `audit.sh` | Read-only drift check: installed versions, duplicates, stale references, leftovers, packets actually intercepted | `--help` `--version` `--raw` |
 | `uninstall.sh` | Removes everything, restores default DNS | `--help` `--version` `--force` |
@@ -155,6 +155,9 @@ sh reconfigure.sh --policy
 
 # Toggle forced DNS hijacking
 sh reconfigure.sh --force-dns
+
+# Toggle the weekly ctrld auto-update
+sh reconfigure.sh --auto-update
 
 # Re-apply DNS redirects to every LAN bridge (picks up new VLANs)
 sh reconfigure.sh --repair

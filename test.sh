@@ -1326,6 +1326,24 @@ assert_contains "and recorded" "$(cat "$RR_CFG/controld.env")" "DNS_TYPE=doh"
 assert_contains "and written" "$(cat "$RR_CFG/ctrld.toml")" 'type = "doh"'
 assert_false "and its rollback copy is removed" [ -f "$RR_CFG/ctrld.toml.bak" ]
 
+# The protocol menu has to offer every protocol its own Benchmark entry can
+# choose. It listed three and benchmarked four, so "pick the fastest" could
+# switch a router to DoT, a protocol the menu never showed.
+rr_reset
+RR_OUT="$( ( PATH="$RR_BIN:$PATH"; printf '4\n' | sh "$RR_CFG/reconfigure.sh" --protocol --force ) 2>&1 || true )"
+# Only the numbered menu lines, with colour codes stripped. A benchmark run
+# prints every protocol's label too, so the whole output would pass for a menu
+# that sent choice 4 to the benchmark.
+_rr_esc="$(printf '\033')"
+RR_MENU="$(printf '%s\n' "$RR_OUT" | sed "s/${_rr_esc}\[[0-9;]*m//g" | grep -E '^[[:space:]]*[0-9]\)' || true)"
+for _rr in doh3 doq doh dot; do
+    assert_contains "the protocol menu offers $(proto_label "$_rr")" "$RR_MENU" "$(proto_label "$_rr")"
+done
+unset _rr _rr_esc RR_MENU
+assert_contains "and choosing DoT from it switches to DoT" "$(cat "$RR_CFG/controld.env")" "DNS_TYPE=dot"
+RR_OUT="$( ( PATH="$RR_BIN:$PATH"; printf '5\n' | sh "$RR_CFG/reconfigure.sh" --protocol --force ) 2>&1 || true )"
+assert_contains "while the Benchmark entry still runs the benchmark" "$RR_OUT" "Benchmarking Protocols"
+
 describe "setup.sh — a re-install honours an opt-out made since the last one"
 
 # Re-running setup.sh is this project's documented upgrade path, and

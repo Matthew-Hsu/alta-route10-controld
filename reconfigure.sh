@@ -259,14 +259,16 @@ do_protocol() {
         printf "  ${BOLD}1)${RESET} DoH3 (HTTP/3) — stealthy, fast\n"
         printf "  ${BOLD}2)${RESET} DoQ (QUIC)    — lowest overhead\n"
         printf "  ${BOLD}3)${RESET} DoH (HTTP/2)  — most compatible\n"
-        printf "  ${BOLD}4)${RESET} Benchmark     — test and pick fastest\n\n"
+        printf "  ${BOLD}4)${RESET} DoT (TLS)     — oldest, most widely supported\n"
+        printf "  ${BOLD}5)${RESET} Benchmark     — test and pick fastest\n\n"
         printf "  Choice: "
         read -r choice
         case "$choice" in
             1) new_type="doh3" ;;
             2) new_type="doq"  ;;
             3) new_type="doh"  ;;
-            4) do_benchmark; return ;;
+            4) new_type="dot"  ;;
+            5) do_benchmark; return ;;
             *) die "Cancelled" ;;
         esac
     fi

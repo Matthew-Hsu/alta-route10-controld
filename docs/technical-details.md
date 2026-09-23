@@ -296,14 +296,14 @@ Example config with per-device routing:
 Smart TVs (Panasonic, Samsung, LG), IoT devices, and some browsers can bypass the router's DHCP DNS setting by using hardcoded DNS servers or DNS-over-TLS (DoT, port 853). Forced DNS intercepts all outbound DNS and redirects it through ControlD.
 
 ```sh
-# Enable (interactive prompt)
+# Check current state first: the command below is a toggle
+sh status.sh   # shows forced DNS status and DoT hijack rules
+
+# Turn it on, or off if it is already on (interactive prompt)
 sh reconfigure.sh --force-dns
 
-# Enable non-interactively
+# The same without a prompt
 sh reconfigure.sh --force-dns --force
-
-# Check current state
-sh status.sh   # shows forced DNS status and DoT hijack rules
 ```
 
 When enabled:

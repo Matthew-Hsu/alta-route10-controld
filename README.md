@@ -156,7 +156,10 @@ installer, a few things matter before you hand it off:
   should only turn this on if you asked for it specifically, separate from a
   basic DoH setup request.
 - **`--force` skips confirmation prompts.** That's for you to decide, not
-  something an agent should use by default to avoid asking a question.
+  something an agent should use by default to avoid asking a question. On
+  `--force-dns` and `--auto-update` it is riskier still, because those two
+  flip whatever is set now. An agent should read `sh status.sh` first rather
+  than assume which way the command will go.
 - **Check the result.** Run `sh status.sh` after any install, reconfigure, or
   protocol change, and look at the output. Don't take "it worked" on faith.
   `setup.sh` and `reconfigure.sh` exit non-zero when DNS does not answer at
@@ -330,10 +333,14 @@ redirects every device on the network at once, not just the one you're
 chasing down.
 
 ```sh
+sh /cfg/status.sh                             # shows forced-DNS status and DoT hijack rules
 sh /cfg/reconfigure.sh --force-dns            # interactive prompt
 sh /cfg/reconfigure.sh --force-dns --force    # no confirmation
-sh /cfg/status.sh                             # shows forced-DNS status and DoT hijack rules
 ```
+
+The command is a toggle. On a router where forced DNS is already on it turns
+it off, and with `--force` it does that without asking, so check `status.sh`
+first.
 
 See [Forced DNS Hijacking](docs/technical-details.md#forced-dns-hijacking) for exactly what it catches
 and what it can't.
@@ -352,7 +359,9 @@ sh /cfg/controld-update.sh --now                # update by hand, any time
 
 It is on by default, and the choice holds across reboots, firmware updates and
 re-running `setup.sh`. Use the command rather than editing `/cfg/controld.env`
-by hand.
+by hand. Like `--force-dns` it is a toggle: with `--force` on a router where
+the update is already off, it turns it back on. `sh /cfg/reconfigure.sh
+--show` prints which state you are in.
 
 `--now` runs the identical check, checksum and rollback the weekly job does,
 and is the only way to reach them once the flag is off. Re-running `setup.sh`

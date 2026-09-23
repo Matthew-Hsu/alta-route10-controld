@@ -403,8 +403,7 @@ needed.
 
 **What it does not restore:** your original `https-dns-proxy` resolver. Nothing
 records what it was before install, so uninstall points it at a public
-resolver (Quad9) and says so. Set it to whatever you want afterwards. The
-dnsmasq lease time is likewise left at 24h.
+resolver (Quad9) and says so. Set it to whatever you want afterwards.
 
 `force_dns` is set to 0, which is the entire disable: the https-dns-proxy init
 script drops its whole forcing block unless `force_dns` is 1, so the port list

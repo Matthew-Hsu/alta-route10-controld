@@ -394,7 +394,25 @@ survives, and none of the above can go wrong.
 
 ## Changes not persisting after reboot
 
-The Route 10's `/etc/config/` is reset on boot. Only `/cfg/` persists. Make sure:
+The Route 10's `/etc/config/` is reset on boot. Only `/cfg/` persists, and the
+install is rebuilt from it at every boot. Start with the two readouts:
+
+```sh
+sh /cfg/status.sh     # the files in /cfg the rebuild starts from
+sh /cfg/audit.sh      # the boot hook, cron jobs and firewall.user block
+```
+
+The piece a re-install cannot fix is the boot hook. The firmware's
+`/etc/rc.local` runs `/cfg/rc.local`, and that is what restores everything
+else at boot. If a firmware update dropped that line, nothing comes back at any
+boot, and re-running the installer does not add it:
+
+```sh
+grep -F '/cfg/rc.local' /etc/rc.local     # nothing printed means the hook is gone
+```
+
+[Firmware Updates](technical-details.md#firmware-updates) has the line to put
+back. Beyond that, make sure:
 - `/cfg/post-cfg.sh` exists and is executable (`chmod +x`)
 - `/cfg/ctrld.toml` exists
 - `/cfg/ctrld` binary exists

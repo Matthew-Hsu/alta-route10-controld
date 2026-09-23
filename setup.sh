@@ -1536,16 +1536,24 @@ print_step "Step 4: Applying configuration..."
 print_step "Step 5: Verification"
 printf "\n"
 
+# Cleared by any check below that fails. The closing banner and the exit
+# status both come from it, so a run whose checks failed cannot end by
+# announcing that DNS goes through ControlD, and a script or agent driving the
+# installer sees the failure in the exit status.
+_setup_ok=1
+
 if pidof ctrld >/dev/null; then
     print_ok "ctrld is running (PID $(pidof ctrld))"
 else
     print_fail "ctrld is NOT running"
+    _setup_ok=0
 fi
 
 if check_dns "127.0.0.1#${DNS_PORT}"; then
     print_ok "ctrld DNS responding on port ${DNS_PORT}"
 else
     print_warn "ctrld not responding on port ${DNS_PORT} (may need a moment)"
+    _setup_ok=0
 fi
 
 # Drop redirects this install can no longer use: one from a port it used
@@ -1587,27 +1595,42 @@ if [ -n "$_covered" ]; then
     print_ok "DNS redirected on:${_covered}"
 else
     print_warn "No iptables redirect rules"
+    _setup_ok=0
 fi
 if [ -n "$_uncovered" ]; then
     print_warn "No redirect on:${_uncovered} (these clients would bypass ControlD)"
+    _setup_ok=0
 fi
 
 if check_dns; then
     print_ok "System DNS working"
 else
     print_fail "System DNS not working"
+    _setup_ok=0
 fi
 
 # ── Done ──
 
 printf "\n"
-printf "  ${BOLD}${GREEN}╔══════════════════════════════════════════════════════════╗${RESET}\n"
-printf "  ${BOLD}${GREEN}║                    Setup Complete!                       ║${RESET}\n"
-printf "  ${BOLD}${GREEN}╚══════════════════════════════════════════════════════════╝${RESET}\n"
-printf "\n"
-printf "  Your DNS is now routed through ControlD via ${PLABEL}.\n\n"
-printf "  Check your dashboard: ${BOLD}https://controld.com${RESET}\n"
-printf "  Individual devices should appear within a few minutes.\n\n"
+if [ "$_setup_ok" = "1" ]; then
+    printf "  ${BOLD}${GREEN}╔══════════════════════════════════════════════════════════╗${RESET}\n"
+    printf "  ${BOLD}${GREEN}║                    Setup Complete!                       ║${RESET}\n"
+    printf "  ${BOLD}${GREEN}╚══════════════════════════════════════════════════════════╝${RESET}\n"
+    printf "\n"
+    printf "  Your DNS is now routed through ControlD via ${PLABEL}.\n\n"
+    printf "  Check your dashboard: ${BOLD}https://controld.com${RESET}\n"
+    printf "  Individual devices should appear within a few minutes.\n\n"
+else
+    printf "  ${BOLD}${YELLOW}╔══════════════════════════════════════════════════════════╗${RESET}\n"
+    printf "  ${BOLD}${YELLOW}║          Installed, but DNS is not working yet           ║${RESET}\n"
+    printf "  ${BOLD}${YELLOW}╚══════════════════════════════════════════════════════════╝${RESET}\n"
+    printf "\n"
+    printf "  The files are in place, but the checks above failed, so DNS is\n"
+    printf "  not going through ControlD. A mistyped resolver ID or a protocol\n"
+    printf "  your network blocks will both do this. Re-run this installer with\n"
+    printf "  the right ones, or see \"DNS not working after setup\" in:\n"
+    printf "    ${BOLD}https://github.com/Matthew-Hsu/alta-route10-controld/blob/master/docs/troubleshooting.md${RESET}\n\n"
+fi
 printf "  ${BOLD}Installed on router:${RESET}\n"
 printf "    /cfg/controld.env         Recovery config (self-healing)\n"
 printf "    /cfg/ctrld                DNS proxy binary\n"
@@ -1630,3 +1653,6 @@ printf "    sh /cfg/uninstall.sh      Remove ControlD\n\n"
 printf "  ${DIM}Note: Use the scripts above instead of running /cfg/ctrld directly.${RESET}\n"
 printf "  ${DIM}The ctrld 'start'/'status' commands expect a different config format.${RESET}\n\n"
 printf "  ${DIM}Smart TVs or IoT gear bypassing DNS? sh /cfg/reconfigure.sh --force-dns${RESET}\n\n"
+
+# Last, so the file list and commands above print either way.
+[ "$_setup_ok" = "1" ] || exit 1

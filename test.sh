@@ -4746,6 +4746,80 @@ assert_not_contains "not the installed copy" "$UPG_STAGED" "SOURCED:old-on-route
 assert_contains "the staged copy survives the failed download" \
     "$UPG_STAGED" "INSTALLED:LIB_MARKER=staged-by-hand"
 
+describe "setup.sh — the closing verdict follows the checks"
+
+# Step 5 printed its checks and then, whatever they said, a green "Setup
+# Complete!" and "Your DNS is now routed through ControlD", and exited 0. A
+# mistyped resolver ID produced a failed ctrld check, no redirects and no
+# system DNS, followed by that banner, and a script or agent driving the
+# installer saw success.
+#
+# So run the whole installer. Every absolute path it touches is rewritten into
+# a sandbox, including /etc/init.d and /tmp, because this suite also runs on a
+# router and must not restart the real dnsmasq. The stub ctrld is a real sleep
+# the sandbox owns, so stop_ctrld only ever kills something started here.
+SV="$TMPDIR/setup-verdict"
+sv_run() {
+    # $1 = sandbox root, $2 = "good" or "broken" (ctrld runs but never answers)
+    _sv="$1"
+    rm -rf "$_sv"
+    mkdir -p "$_sv/src" "$_sv/cfg" "$_sv/bin" "$_sv/initd" "$_sv/tmp" \
+             "$_sv/sys/br-lan" "$_sv/pkg/dist/ctrld_${CTRLD_PIN}_linux_arm64"
+    for _svf in "$SCRIPT_DIR"/*.sh; do
+        sed -e "s|/tmp/|${_sv}/tmp/|g" -e "s|-C /tmp|-C ${_sv}/tmp|g" -e "s|/cfg/|${_sv}/cfg/|g" \
+            -e "s| /cfg ]| ${_sv}/cfg ]|g" -e "s|/etc/init.d/|${_sv}/initd/|g" \
+            "$_svf" > "$_sv/src/${_svf##*/}"
+    done
+    printf '#!/bin/sh\ncase "$1" in --version) echo ctrld; exit 0 ;; esac\necho $$ > "%s/ctrld.pid"\nexec /bin/sleep 300\n' \
+        "$_sv" > "$_sv/pkg/dist/ctrld_${CTRLD_PIN}_linux_arm64/ctrld"
+    chmod +x "$_sv/pkg/dist/ctrld_${CTRLD_PIN}_linux_arm64/ctrld"
+    ( cd "$_sv/pkg" && tar czf "$_sv/ctrld.tgz" dist )
+
+    printf '#!/bin/sh\necho aarch64\n' > "$_sv/bin/uname"
+    printf '#!/bin/sh\n_p="$(cat "%s/ctrld.pid" 2>/dev/null)"\n[ -n "$_p" ] && kill -0 "$_p" 2>/dev/null && echo "$_p"\n' \
+        "$_sv" > "$_sv/bin/pidof"
+    printf '#!/bin/sh\n"$(dirname "$0")/pidof" >/dev/null && echo "udp 0 0 0.0.0.0:5354 0.0.0.0:* 1/ctrld"\nexit 0\n' \
+        > "$_sv/bin/netstat"
+    printf '#!/bin/sh\n"$(dirname "$0")/pidof" >/dev/null && [ ! -f "%s/dns.broken" ]\n' \
+        "$_sv" > "$_sv/bin/nslookup"
+    # The ctrld release tarball is the only download that succeeds. Everything
+    # else, checksums.txt included, fails the way an unreachable network does.
+    printf '#!/bin/sh\n_o=""; _u=""\nwhile [ $# -gt 0 ]; do case "$1" in -O) _o="$2"; shift 2 ;; -*) shift ;; *) _u="$1"; shift ;; esac; done\ncase "$_u" in *ctrld_*_linux_arm64.tar.gz) cp "%s/ctrld.tgz" "$_o"; exit 0 ;; esac\nexit 1\n' \
+        "$_sv" > "$_sv/bin/wget"
+    # Rules are recorded by their match, with the verb and position stripped,
+    # so -C finds what -I added.
+    printf '#!/bin/sh\n_v=""; _r=""\nwhile [ $# -gt 0 ]; do case "$1" in -t) shift 2 ;; -A|-C|-D) _v="$1"; shift 2 ;; -I) _v="$1"; shift 2; case "${1:-}" in [0-9]*) shift ;; esac ;; *) _r="$_r $1"; shift ;; esac; done\ncase "$_v" in\n  -C) grep -qxF -- "$_r" "%s/rules" 2>/dev/null ;;\n  -I|-A) printf "%%s\\n" "$_r" >> "%s/rules" ;;\n  *) exit 0 ;;\nesac\n' \
+        "$_sv" "$_sv" > "$_sv/bin/iptables"
+    printf '#!/bin/sh\ncase "$1" in -l) cat "%s/crontab" 2>/dev/null ;; -) cat > "%s/crontab.new" && mv "%s/crontab.new" "%s/crontab" ;; esac\n' \
+        "$_sv" "$_sv" "$_sv" "$_sv" > "$_sv/bin/crontab"
+    for _svf in uci iptables-save; do printf '#!/bin/sh\nexit 1\n' > "$_sv/bin/$_svf"; done
+    for _svf in sleep logger ping; do printf '#!/bin/sh\nexit 0\n' > "$_sv/bin/$_svf"; done
+    for _svf in dnsmasq https-dns-proxy; do printf '#!/bin/sh\nexit 0\n' > "$_sv/initd/$_svf"; done
+    chmod +x "$_sv/bin"/* "$_sv/initd"/*
+    [ "$2" = "broken" ] && : > "$_sv/dns.broken"
+
+    ( PATH="$_sv/bin:$PATH"; FW_USER="$_sv/firewall.user"; SYSFS_NET="$_sv/sys"
+      DEGRADED_FLAG="$_sv/tmp/degraded"; export FW_USER SYSFS_NET DEGRADED_FLAG
+      sh "$_sv/src/setup.sh" --resolver abc123 --protocol doh3 </dev/null
+      echo "rc=$?" ) 2>&1 || true
+    kill "$(cat "$_sv/ctrld.pid" 2>/dev/null)" 2>/dev/null || true
+}
+
+SV_GOOD="$(sv_run "$SV/good" good)"
+assert_contains "an install whose checks pass says it is complete" "$SV_GOOD" "Setup Complete!"
+assert_contains "and exits 0" "$SV_GOOD" "rc=0"
+assert_contains "the sandboxed install really redirected DNS" \
+    "$(cat "$SV/good/rules" 2>/dev/null)" "--dport 53 -j REDIRECT --to-port 5354"
+
+SV_BAD="$(sv_run "$SV/broken" broken)"
+assert_not_contains "an install whose checks fail does not say it is complete" \
+    "$SV_BAD" "Setup Complete!"
+assert_not_contains "nor that DNS goes through ControlD" "$SV_BAD" "Your DNS is now routed"
+assert_contains "it says DNS is not working yet" "$SV_BAD" "DNS is not working yet"
+assert_contains "and exits non-zero" "$SV_BAD" "rc=1"
+assert_contains "while still listing what it installed" "$SV_BAD" "Installed on router"
+unset SV SV_GOOD SV_BAD _sv _svf
+
 describe "prune_stale_redirects() — a rule for a port nothing listens on"
 
 # Found on a router, not here. The DNS port moved 5354 to 5355 and back, and

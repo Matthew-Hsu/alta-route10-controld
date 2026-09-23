@@ -125,8 +125,42 @@ PLABEL=$(proto_label "$DNS_TYPE")
 
 # ── Apply and restart ──
 
+# Restart ctrld on the config just written. If it does not answer, put the
+# previous config back and restart on that, then exit non-zero.
+#
+# The port-53 redirects stay in place through all of this, so a config that
+# does not answer leaves every client on the LAN without DNS. Ordinary input
+# gets there: DoQ or DoT on a network that blocks port 853, or a mistyped
+# resolver ID. Left alone, the LAN stays dark until the watchdog falls back,
+# which takes two five-minute cycles.
+#
+# <backup> is the copy of ctrld.toml taken before it was rewritten. [env] is
+# the text controld.env held before, for the callers that rewrote it too.
+# Usage: restart_or_restore <backup> [env]
+restart_or_restore() {
+    _ror_bak="$1"
+    stop_ctrld
+    if start_ctrld /cfg/ctrld.toml; then
+        rm -f "$_ror_bak"
+        return 0
+    fi
+    print_fail "ctrld did not answer on the new config — restoring the previous one"
+    [ -f "$_ror_bak" ] && mv "$_ror_bak" /cfg/ctrld.toml
+    [ $# -ge 2 ] && printf '%s\n' "$2" > /cfg/controld.env
+    if restart_ctrld /cfg/ctrld.toml; then
+        print_ok "Previous config restored — DNS is answering again, nothing was changed"
+    else
+        print_fail "The previous config does not answer either — the watchdog will take over"
+    fi
+    exit 1
+}
+
 apply_and_restart() {
     local msg="$1"
+    # Kept in memory rather than as a second backup file, which audit.sh and
+    # uninstall.sh would each have to learn about.
+    local env_before
+    env_before="$(cat /cfg/controld.env)"
     write_ctrld_config /cfg/ctrld.toml "$RESOLVER_ID" "$BOOTSTRAP_IP" "$DNS_TYPE"
 
     # Carry split-DNS config across the rewrite: whole tables, in TOML order,
@@ -148,15 +182,13 @@ apply_and_restart() {
     print_ok "$msg"
     print_info "Restarting ctrld..."
 
-    stop_ctrld
-    start_ctrld /cfg/ctrld.toml || die "ctrld failed to start"
+    restart_or_restore /cfg/ctrld.toml.bak "$env_before"
 
     if check_dns "127.0.0.1#${DNS_PORT}"; then
         print_ok "DNS working on $(proto_label "$DNS_TYPE")"
     else
         print_fail "DNS not responding — watchdog will attempt recovery"
     fi
-    rm -f /cfg/ctrld.toml.bak
 }
 
 # ── Action: Show ──
@@ -423,7 +455,7 @@ do_policy() {
                 # failed write would leave an orphan [upstream.N] behind while
                 # the message below claimed the file was untouched. Snapshot
                 # first and restore on failure, so the message is true.
-                cp /cfg/ctrld.toml /cfg/ctrld.toml.polbak
+                cp /cfg/ctrld.toml /cfg/ctrld.toml.bak
                 cat >> /cfg/ctrld.toml << EOF
 
 [upstream.${next_idx}]
@@ -439,13 +471,12 @@ EOF
                 # existing one, or inserts into it, and fails loudly rather
                 # than reporting a rule it did not write.
                 if ! policy_add_rule /cfg/ctrld.toml mac "$mac" "$next_idx"; then
-                    mv /cfg/ctrld.toml.polbak /cfg/ctrld.toml
+                    mv /cfg/ctrld.toml.bak /cfg/ctrld.toml
                     print_fail "Could not add the MAC rule — /cfg/ctrld.toml rolled back"
                     continue
                 fi
-                rm -f /cfg/ctrld.toml.polbak
 
-                stop_ctrld; start_ctrld /cfg/ctrld.toml || die "ctrld failed to start"
+                restart_or_restore /cfg/ctrld.toml.bak
                 print_ok "Device rule added. MAC ${mac} -> ${policy_name}"
                 ;;
             3)
@@ -478,7 +509,7 @@ EOF
                 read -r confirm
                 case "$confirm" in n|N|no|NO) continue ;; esac
 
-                cp /cfg/ctrld.toml /cfg/ctrld.toml.polbak
+                cp /cfg/ctrld.toml /cfg/ctrld.toml.bak
                 cat >> /cfg/ctrld.toml << EOF
 
 [network.${next_net}]
@@ -495,13 +526,12 @@ EOF
 EOF
 
                 if ! policy_add_rule /cfg/ctrld.toml network "network.${next_net}" "$next_up"; then
-                    mv /cfg/ctrld.toml.polbak /cfg/ctrld.toml
+                    mv /cfg/ctrld.toml.bak /cfg/ctrld.toml
                     print_fail "Could not add the network rule — /cfg/ctrld.toml rolled back"
                     continue
                 fi
-                rm -f /cfg/ctrld.toml.polbak
 
-                stop_ctrld; start_ctrld /cfg/ctrld.toml || die "ctrld failed to start"
+                restart_or_restore /cfg/ctrld.toml.bak
                 print_ok "Network rule added. ${cidr} -> ${policy_name}"
                 ;;
             4)
@@ -516,8 +546,7 @@ EOF
                 # Regenerate base config (drops all policies and extra upstreams)
                 cp /cfg/ctrld.toml /cfg/ctrld.toml.bak
                 write_ctrld_config /cfg/ctrld.toml "$RESOLVER_ID" "$BOOTSTRAP_IP" "$DNS_TYPE"
-                stop_ctrld; start_ctrld /cfg/ctrld.toml || die "ctrld failed to start"
-                rm -f /cfg/ctrld.toml.bak
+                restart_or_restore /cfg/ctrld.toml.bak
                 print_ok "All policies removed. Single upstream restored."
                 ;;
             q|Q) return ;;

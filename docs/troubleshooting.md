@@ -470,17 +470,20 @@ It rewrites `/cfg/ctrld.toml` and `/cfg/controld.env`, preserves any split-DNS
 policy, restarts `ctrld`, and confirms DNS still resolves before returning.
 
 Nothing else on the router refers to the old ID, so there is no stale state to
-clean up afterwards, with two things worth knowing:
+clean up afterwards. Three things are worth knowing:
 
 - **The `https-dns-proxy` fallback moves with it.** `reconfigure.sh --resolver`
   points it at the new profile and restarts it, so the retired ID stops
   answering everywhere on the router. (Earlier versions left this to
   `setup.sh`; since 2dbfa2a it is part of the resolver change.)
-- **A failed change can leave `/cfg/ctrld.toml.bak`**, the rollback copy, which
-  still contains the old ID. It is removed automatically on success;
-  `audit.sh` reports it if one survives. An interrupted watchdog recovery can
-  leave `/cfg/ctrld.toml.fallback` the same way; the next healthy cycle removes
-  it, and `audit.sh` names it meanwhile.
+- **A change that does not answer is undone.** If `ctrld` cannot resolve on
+  the new ID, `reconfigure.sh` restores the old `ctrld.toml` and
+  `controld.env`, restarts on them and exits non-zero.
+- **An interrupted change can leave `/cfg/ctrld.toml.bak`**, the rollback copy,
+  which still contains the old ID. It is removed once the change settles either
+  way, and `audit.sh` reports it if one survives. An interrupted watchdog
+  recovery can leave `/cfg/ctrld.toml.fallback` the same way; the next healthy
+  cycle removes it, and `audit.sh` names it meanwhile.
 
 Verify with `sh /cfg/status.sh` (shows the active resolver ID) and then delete
 the old profile in the ControlD dashboard. Until you do, the old ID still

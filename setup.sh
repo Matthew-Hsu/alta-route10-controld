@@ -350,6 +350,46 @@ PLABEL="$(proto_label "$DNS_TYPE")"
 
 printf "\n"
 
+# ── Check the resolver before changing anything ──
+
+# A resolver ID ControlD does not know, or a protocol the network blocks, only
+# shows itself once ctrld runs on it. By then post-cfg.sh has moved the
+# https-dns-proxy fallback onto the new ID and, on a re-install, the old
+# redirects still point every client at a ctrld that cannot answer, so a
+# mistyped ID leaves the whole LAN without DNS until the installer runs again.
+# Ask first, on the benchmark port, while nothing has been touched.
+#
+# It runs as early as a ctrld binary exists to ask with: before Step 2 on a
+# re-install, which is also before Step 2 stops the running ctrld, and straight
+# after the download on a fresh install, where nothing is running yet.
+_preflight_done=0
+preflight_resolver() {
+    _preflight_done=1
+    # command -v for the reason step 8 gives: an older lib.sh has no probe.
+    command -v probe_resolver >/dev/null 2>&1 || return 0
+    print_info "Checking that ControlD answers for ${RESOLVER_ID} over ${PLABEL}..."
+    _pf_rc=0; probe_resolver "$DNS_TYPE" "$RESOLVER_ID" "$BOOTSTRAP_IP" || _pf_rc=$?
+    case "$_pf_rc" in
+        0) print_ok "ControlD answers for ${RESOLVER_ID} over ${PLABEL}"; return 0 ;;
+        2) print_warn "Could not check the resolver first — continuing without the check"; return 0 ;;
+    esac
+    # Tell a blocked protocol from a wrong ID by asking over DoH, which travels
+    # on TCP 443 like any web page and is the least likely to be blocked.
+    if [ "$DNS_TYPE" != "doh" ] && probe_resolver doh "$RESOLVER_ID" "$BOOTSTRAP_IP"; then
+        print_fail "ControlD answers over DoH but not ${PLABEL} — this network blocks it, nothing was changed"
+        print_info "Run the installer again with another protocol, for example --protocol doh"
+    else
+        print_fail "ControlD did not answer for resolver ID ${RESOLVER_ID} — nothing was changed"
+        print_info "Check the ID in your ControlD dashboard. In a DoH link such as"
+        print_info "https://dns.controld.com/abc123 it is the part after the last slash."
+        print_info "If the ID is right, check that this router can reach the internet."
+    fi
+    exit 1
+}
+if [ -x /cfg/ctrld ] && /cfg/ctrld --version >/dev/null 2>&1; then
+    preflight_resolver
+fi
+
 # ── Step 2: Check for existing config ──
 
 if [ -f /cfg/post-cfg.sh ] || [ -f /cfg/ctrld ]; then
@@ -409,6 +449,9 @@ else
     print_ok "ctrld binary installed to /cfg/ctrld"
     CTRLD_VERSION="${CTRLD_PIN}"
 fi
+
+# A fresh install had no binary to ask with before the download.
+[ "$_preflight_done" = "1" ] || preflight_resolver
 
 # ── Step 4: Write recovery config ──
 

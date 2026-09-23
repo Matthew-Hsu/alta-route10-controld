@@ -889,6 +889,33 @@ bench_protocol() {
     return 0
 }
 
+# Does a resolver answer over a protocol? Asked of a throwaway ctrld on
+# BENCH_PORT, so production DNS on DNS_PORT is never touched.
+#
+# This is the check to run before changing anything. A resolver ID ControlD
+# does not know, or a protocol the network blocks, only shows up once ctrld is
+# running on it, and by then the redirects point every client at it. Installing
+# with a mistyped ID also moves the https-dns-proxy fallback onto that ID, which
+# leaves the LAN with no DNS at all until someone re-runs the installer, and
+# reconfigure.sh's rollback costs 19 seconds of DNS to find the same thing out.
+#
+# Bounded by start_ctrld's wall clock, not by a count of probes.
+#   0 = answers, 1 = does not answer,
+#   2 = could not ask (no ctrld binary, or something else holds BENCH_PORT)
+# Usage: probe_resolver <proto> <resolver> <bootstrap>
+probe_resolver() {
+    _pr_proto="$1"; _pr_res="$2"; _pr_boot="$3"
+    [ -x /cfg/ctrld ] || return 2
+    bench_stop "$BENCH_CONF" >/dev/null
+    port_in_use "$BENCH_PORT" && return 2
+    bench_write_config "$BENCH_CONF" "$_pr_proto" "$_pr_res" "$_pr_boot" "$BENCH_PORT"
+    _pr_rc=0
+    ( DNS_PORT="$BENCH_PORT"; start_ctrld "$BENCH_CONF" 15 ) || _pr_rc=1
+    bench_stop "$BENCH_CONF" >/dev/null
+    rm -f "$BENCH_CONF"
+    return "$_pr_rc"
+}
+
 # ── Upstream Protocol Switching ──
 
 # Resolver ID out of a ControlD endpoint, in either protocol's form.

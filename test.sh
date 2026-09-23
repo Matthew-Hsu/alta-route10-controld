@@ -4799,8 +4799,14 @@ SV="$TMPDIR/setup-verdict"
 sv_run() {
     # $1 = sandbox root, $2 = "good" or "broken" (ctrld runs but never answers),
     # $3 = answers to feed the interactive installer. Without it the run is
-    # the non-interactive --resolver/--protocol form.
+    # the non-interactive form, with SV_RESOLVER (default abc123) and
+    # SV_PROTOCOL (default doh3). SV_BENCH_FAIL is an ERE: a throwaway ctrld on the benchmark port
+    # whose config matches it does not answer, which is how a resolver ID
+    # ControlD refuses or a protocol the network blocks looks to the check.
+    # SV_REUSE=1 runs again over the sandbox a previous run left, and SV_KEEP=1
+    # leaves its ctrld running for that, which is a re-install.
     _sv="$1"
+    if [ -z "${SV_REUSE:-}" ]; then
     rm -rf "$_sv"
     mkdir -p "$_sv/src" "$_sv/cfg" "$_sv/bin" "$_sv/initd" "$_sv/tmp" \
              "$_sv/sys/br-lan" "$_sv/pkg/dist/ctrld_${CTRLD_PIN}_linux_arm64"
@@ -4809,7 +4815,9 @@ sv_run() {
             -e "s| /cfg ]| ${_sv}/cfg ]|g" -e "s|/etc/init.d/|${_sv}/initd/|g" \
             "$_svf" > "$_sv/src/${_svf##*/}"
     done
-    printf '#!/bin/sh\ncase "$1" in --version) echo ctrld; exit 0 ;; esac\necho $$ > "%s/ctrld.pid"\nexec /bin/sleep 300\n' \
+    # A benchmark-port run exits at once: it is asked through the netstat and
+    # nslookup stubs below, and a daemon there would outlive the sandbox.
+    printf '#!/bin/sh\ncase "$1" in --version) echo ctrld; exit 0 ;; esac\ncase "$*" in *ctrld-bench*) exit 0 ;; esac\necho $$ > "%s/ctrld.pid"\nexec /bin/sleep 300\n' \
         "$_sv" > "$_sv/pkg/dist/ctrld_${CTRLD_PIN}_linux_arm64/ctrld"
     chmod +x "$_sv/pkg/dist/ctrld_${CTRLD_PIN}_linux_arm64/ctrld"
     ( cd "$_sv/pkg" && tar czf "$_sv/ctrld.tgz" dist )
@@ -4817,10 +4825,12 @@ sv_run() {
     printf '#!/bin/sh\necho aarch64\n' > "$_sv/bin/uname"
     printf '#!/bin/sh\n_p="$(cat "%s/ctrld.pid" 2>/dev/null)"\n[ -n "$_p" ] && kill -0 "$_p" 2>/dev/null && echo "$_p"\n' \
         "$_sv" > "$_sv/bin/pidof"
-    printf '#!/bin/sh\n"$(dirname "$0")/pidof" >/dev/null && echo "udp 0 0 0.0.0.0:5354 0.0.0.0:* 1/ctrld"\nexit 0\n' \
-        > "$_sv/bin/netstat"
-    printf '#!/bin/sh\n"$(dirname "$0")/pidof" >/dev/null && [ ! -f "%s/dns.broken" ]\n' \
-        "$_sv" > "$_sv/bin/nslookup"
+    # The benchmark port is taken while its throwaway config exists, which is
+    # from the moment probe_resolver writes it to the moment it removes it.
+    printf '#!/bin/sh\n"$(dirname "$0")/pidof" >/dev/null && echo "udp 0 0 0.0.0.0:5354 0.0.0.0:* 1/ctrld"\n[ -f "%s/tmp/ctrld-bench.toml" ] && echo "udp 0 0 127.0.0.1:5360 0.0.0.0:* 1/ctrld"\nexit 0\n' \
+        "$_sv" > "$_sv/bin/netstat"
+    printf '#!/bin/sh\ncase "${2:-}" in\n  *#5360) [ -f "%s/tmp/ctrld-bench.toml" ] || exit 1\n          [ -f "%s/bench.fail" ] && grep -qE "$(cat "%s/bench.fail")" "%s/tmp/ctrld-bench.toml" && exit 1\n          exit 0 ;;\nesac\n"$(dirname "$0")/pidof" >/dev/null && [ ! -f "%s/dns.broken" ]\n' \
+        "$_sv" "$_sv" "$_sv" "$_sv" "$_sv" > "$_sv/bin/nslookup"
     # The ctrld release tarball is the only download that succeeds. Everything
     # else, checksums.txt included, fails the way an unreachable network does.
     printf '#!/bin/sh\n_o=""; _u=""\nwhile [ $# -gt 0 ]; do case "$1" in -O) _o="$2"; shift 2 ;; -*) shift ;; *) _u="$1"; shift ;; esac; done\ncase "$_u" in *ctrld_*_linux_arm64.tar.gz) cp "%s/ctrld.tgz" "$_o"; exit 0 ;; esac\nexit 1\n' \
@@ -4835,17 +4845,21 @@ sv_run() {
     for _svf in sleep logger ping; do printf '#!/bin/sh\nexit 0\n' > "$_sv/bin/$_svf"; done
     for _svf in dnsmasq https-dns-proxy; do printf '#!/bin/sh\nexit 0\n' > "$_sv/initd/$_svf"; done
     chmod +x "$_sv/bin"/* "$_sv/initd"/*
+    fi
+    rm -f "$_sv/dns.broken" "$_sv/bench.fail"
     [ "$2" = "broken" ] && : > "$_sv/dns.broken"
+    [ -n "${SV_BENCH_FAIL:-}" ] && printf '%s' "$SV_BENCH_FAIL" > "$_sv/bench.fail"
 
     ( PATH="$_sv/bin:$PATH"; FW_USER="$_sv/firewall.user"; SYSFS_NET="$_sv/sys"
       DEGRADED_FLAG="$_sv/tmp/degraded"; export FW_USER SYSFS_NET DEGRADED_FLAG
       if [ -n "${3:-}" ]; then
           printf '%b' "$3" | sh "$_sv/src/setup.sh"
       else
-          sh "$_sv/src/setup.sh" --resolver abc123 --protocol doh3 </dev/null
+          sh "$_sv/src/setup.sh" --resolver "${SV_RESOLVER:-abc123}" \
+              --protocol "${SV_PROTOCOL:-doh3}" </dev/null
       fi
       echo "rc=$?" ) 2>&1 || true
-    kill "$(cat "$_sv/ctrld.pid" 2>/dev/null)" 2>/dev/null || true
+    [ -n "${SV_KEEP:-}" ] || kill "$(cat "$_sv/ctrld.pid" 2>/dev/null)" 2>/dev/null || true
 }
 
 SV_GOOD="$(sv_run "$SV/good" good)"
@@ -4875,7 +4889,46 @@ assert_contains "the installer's wizard refuses a quote in a policy name" \
     "$SV_POL" 'Policy name cannot contain'
 assert_not_contains "and writes nothing for it" "$(cat "$SV/policy/cfg/ctrld.toml" 2>/dev/null)" 'Kid'
 assert_contains "and the install still completes" "$SV_POL" "Setup Complete!"
-unset SV SV_GOOD SV_BAD SV_POL _sv _svf
+
+describe "setup.sh — the resolver is checked before anything changes"
+
+# A resolver ID ControlD refuses only showed itself after the install had run:
+# the https-dns-proxy fallback had moved onto it too, and on a Route 10 a
+# re-install with a mistyped ID left no client on the LAN with any DNS until
+# the installer was run again. The check asks a throwaway ctrld on the
+# benchmark port instead, before a file is written or ctrld is stopped.
+assert_contains "a good install says the resolver answered" "$SV_GOOD" \
+    "ControlD answers for abc123 over DoH3 (HTTP/3)"
+
+SV_ID="$(SV_RESOLVER=zzbad99 SV_BENCH_FAIL=zzbad sv_run "$SV/bad-id" good)"
+assert_contains "a resolver ID ControlD refuses stops a fresh install" "$SV_ID" \
+    "ControlD did not answer for resolver ID zzbad99"
+assert_contains "with the exit status saying so" "$SV_ID" "rc=1"
+assert_contains "and says where to find the ID" "$SV_ID" "the part after the last slash"
+assert_false "before controld.env is written" [ -f "$SV/bad-id/cfg/controld.env" ]
+assert_false "or ctrld.toml" [ -f "$SV/bad-id/cfg/ctrld.toml" ]
+assert_false "or the boot script" [ -f "$SV/bad-id/cfg/post-cfg.sh" ]
+assert_false "and before any redirect goes in" [ -s "$SV/bad-id/rules" ]
+
+# A blocked protocol looks the same to the first question, so DoH is asked as
+# well and the answer decides which of the two the user is told.
+SV_PROTO="$(SV_PROTOCOL=doq SV_BENCH_FAIL='type = "doq"' sv_run "$SV/blocked" good)"
+assert_contains "a protocol the network blocks is named as the problem" "$SV_PROTO" \
+    "ControlD answers over DoH but not DoQ (QUIC)"
+assert_not_contains "rather than blaming the resolver ID" "$SV_PROTO" "did not answer for resolver ID"
+assert_contains "and it stops the install too" "$SV_PROTO" "rc=1"
+assert_false "with nothing written" [ -f "$SV/blocked/cfg/controld.env" ]
+
+# The case that took a real LAN down: a re-install over a working router. The
+# check has to come before Step 2 stops the running ctrld.
+SV_KEEP=1 sv_run "$SV/reinstall" good >/dev/null
+SV_RE="$(SV_KEEP=1 SV_REUSE=1 SV_RESOLVER=zzbad99 SV_BENCH_FAIL=zzbad sv_run "$SV/reinstall" good)"
+assert_contains "a refused ID stops a re-install" "$SV_RE" "rc=1"
+assert_not_contains "before the step that stops ctrld" "$SV_RE" "Existing ControlD configuration found"
+assert_contains "leaving the installed ID in place" "$(cat "$SV/reinstall/cfg/controld.env")" "RESOLVER_ID=abc123"
+assert_true "and the running ctrld still running" kill -0 "$(cat "$SV/reinstall/ctrld.pid")"
+kill "$(cat "$SV/reinstall/ctrld.pid" 2>/dev/null)" 2>/dev/null || true
+unset SV SV_GOOD SV_BAD SV_POL SV_ID SV_PROTO SV_RE _sv _svf
 
 describe "config/post-cfg.sh.example — bounded waits, redirects at the head"
 

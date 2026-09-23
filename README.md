@@ -445,6 +445,7 @@ Each of these has a worked fix in
 - [DNS not working after setup](docs/troubleshooting.md#dns-not-working-after-setup)
 - [Devices on a VLAN never appear in ControlD](docs/troubleshooting.md#devices-on-a-vlan-never-appear-in-controld)
 - [Devices showing as MAC addresses only (no hostnames)](docs/troubleshooting.md#devices-showing-as-mac-addresses-only-no-hostnames)
+- [Two devices get the same address after the router reboots](docs/troubleshooting.md#two-devices-get-the-same-address-after-the-router-reboots)
 - [LAN DNS dies after the port moved, but everything reports healthy](docs/troubleshooting.md#lan-dns-dies-after-the-port-moved-but-everything-reports-healthy)
 - [status.sh says the DNS redirects were removed](docs/troubleshooting.md#statussh-says-the-dns-redirects-were-removed)
 - [ctrld keeps crashing](docs/troubleshooting.md#ctrld-keeps-crashing)

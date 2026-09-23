@@ -350,6 +350,50 @@ dhcp_lease_file_format = "dnsmasq"
 
 Devices with `*` as their hostname in the lease file will never show a name. They never reported one to DHCP.
 
+## Two devices get the same address after the router reboots
+
+**Symptom:** after a reboot or a firmware update, Alta reports an IP conflict,
+or two devices answer at one address. Access points are the likely victims,
+because they stay up while the router restarts and ask for their addresses
+again as it comes back.
+
+**Cause:** the firmware, not this project. The Route 10 boots with its clock
+set to October 2021 and only corrects it once it reaches a time server.
+dnsmasq is already handing out addresses by then, and a device that asks in
+that window gets a lease that expires the next day, in 2021. Once the clock is
+right that lease is years out of date, dnsmasq deletes it, and the address can
+go to another device while the first one is still using it.
+
+This project never restarts dnsmasq at boot. With Use DoH on, `post-cfg.sh`
+logs this line each time it runs:
+
+```
+dnsmasq already forwards to https-dns-proxy — left running
+```
+
+**Check:** a device that is online but missing from the lease file has lost
+its lease. The main LAN's entries end in `br-lan`, a VLAN's in `br-lan_<id>`:
+
+```sh
+grep ' br-lan$' /cfg/dhcp.leases
+```
+
+The boot log shows which leases went out before the clock was set, because
+those lines carry the 2021 date (October 24 on firmware 1.5h). The log keeps
+only a few hours, so read it soon after the reboot:
+
+```sh
+cat /tmp/log/messages.1 /tmp/log/messages.0 /tmp/log/messages 2>/dev/null \
+  | grep -a 'DHCPACK' | grep '^Oct 24'
+```
+
+**Fix:** give each device that has to keep its address a DHCP reservation in
+Alta's settings, access points first. dnsmasq never offers a reserved address
+to another device, whatever its lease file says. To clear a conflict that has
+already happened, restart the devices sharing the address so they ask again.
+This is worth reporting to Alta Labs, since only the firmware can stop handing
+out leases before its clock is set.
+
 ## A hand-edited setting disappeared from controld.env
 
 **Symptom:** You added a key to `/cfg/controld.env` by hand, it worked, and

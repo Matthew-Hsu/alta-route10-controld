@@ -104,6 +104,11 @@ remains the way to repair a damaged install. You'll be asked for your
 resolver ID again (it's not read back from the existing install), so have it
 to hand, or pass `--resolver`.
 
+Before it changes anything, the installer checks that ControlD answers for
+your resolver ID over the protocol you picked. If it does not, the installer
+says whether the ID or the protocol is the problem and stops, with your router
+left as it was.
+
 DNS is running through ControlD within about a minute. For split DNS per
 device, blocking smart-TV DNS bypass, or benchmarking protocols, see
 [Technical Details](docs/technical-details.md). If something isn't working, see

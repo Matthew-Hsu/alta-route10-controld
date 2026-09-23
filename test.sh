@@ -4873,6 +4873,42 @@ assert_not_contains "and writes nothing for it" "$(cat "$SV/policy/cfg/ctrld.tom
 assert_contains "and the install still completes" "$SV_POL" "Setup Complete!"
 unset SV SV_GOOD SV_BAD SV_POL _sv _svf
 
+describe "config/post-cfg.sh.example — bounded waits, redirects at the head"
+
+# The manual-setup example waited for https-dns-proxy and for a ping reply with
+# no limit, and appended its redirects. The generated post-cfg.sh fixed all
+# three, and the firmware runs /cfg/post-cfg.sh itself while applying its
+# config, so a loop that never ends there stalls the router's boot. Run the
+# example against stubs where uci and ping never succeed: it has to finish,
+# and every redirect it adds has to be an insert at position 1.
+#
+# Under timeout, so a regression fails this test rather than hanging the
+# suite. Skipped where there is no timeout to run it under.
+if command -v timeout >/dev/null 2>&1; then
+    PX="$TMPDIR/post-cfg-example"
+    mkdir -p "$PX/bin" "$PX/cfg" "$PX/initd" "$PX/sys/br-lan" "$PX/sys/br-lan_10"
+    sed -e "s|/cfg/|${PX}/cfg/|g" -e "s|/etc/init.d/|${PX}/initd/|g" \
+        -e "s|/sys/class/net/|${PX}/sys/|g" \
+        "$SCRIPT_DIR/config/post-cfg.sh.example" > "$PX/post-cfg.sh"
+    for _px in uci ping; do printf '#!/bin/sh\nexit 1\n' > "$PX/bin/$_px"; done
+    for _px in sleep logger nslookup; do printf '#!/bin/sh\nexit 0\n' > "$PX/bin/$_px"; done
+    printf '#!/bin/sh\nexit 0\n' > "$PX/cfg/ctrld"
+    for _px in dnsmasq https-dns-proxy; do printf '#!/bin/sh\nexit 0\n' > "$PX/initd/$_px"; done
+    printf '#!/bin/sh\ncase " $* " in *" -C "*) exit 1 ;; esac\nprintf "%%s\\n" "$*" >> "%s/iptables.log"\n' \
+        "$PX" > "$PX/bin/iptables"
+    chmod +x "$PX/bin"/* "$PX/cfg/ctrld" "$PX/initd"/*
+    unset _px
+    assert_true "the example finishes when uci and ping never answer" \
+        sh -c "PATH='$PX/bin:$PATH' timeout 30 sh '$PX/post-cfg.sh' >/dev/null 2>&1"
+    assert_eq "it adds a udp and a tcp redirect on each of two bridges" "4" \
+        "$(grep -c 'REDIRECT --to-port 5354' "$PX/iptables.log" 2>/dev/null || echo 0)"
+    assert_eq "every one inserted at the head of PREROUTING" "4" \
+        "$(grep -c -- '-I PREROUTING 1 ' "$PX/iptables.log" 2>/dev/null || echo 0)"
+    unset PX
+else
+    skip "config/post-cfg.sh.example run (no timeout command here)"
+fi
+
 describe "prune_stale_redirects() — a rule for a port nothing listens on"
 
 # Found on a router, not here. The DNS port moved 5354 to 5355 and back, and

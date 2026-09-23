@@ -439,7 +439,17 @@ Two versions live in `lib.sh` and move independently:
 
 They used to be one variable, which meant bumping the tools version silently repointed `setup.sh` at a `ctrld` release that does not exist. `test.sh` now asserts they are distinct and that no download URL is built from `VERSION`.
 
-**A tag doesn't pin an install.** `setup.sh` and every utility script it downloads always come from `master`, tag or no tag, since there's no `--ref` flag, so pointing the installer's URL at `v1.10.0` would only fetch the entry script from that tag; everything it pulls afterward still comes from current `master`. The one place a tag actually pins something is [Manual Setup](#manual-setup): a `git checkout v1.10.0` there gets you exactly that version, since it skips `setup.sh`'s downloader entirely. Tags and GitHub Releases exist to anchor the `VERSION` number to real history, not as an install target.
+**Installing a specific release.** The one-line install always gets current `master`. Pointing its `wget` at a tag changes only `setup.sh` itself, because `setup.sh` downloads `lib.sh` and the utility scripts from `master` whenever they are not already beside it. So unpack the release instead and run `setup.sh` from inside it. With the rest of the project next to it, `setup.sh` uses those files and fetches nothing from this repository:
+
+```sh
+V=X.Y.Z       # the release you want, from the Releases page, without the v
+cd /tmp
+wget -O controld.tar.gz "https://github.com/Matthew-Hsu/alta-route10-controld/archive/refs/tags/v${V}.tar.gz"
+tar xzf controld.tar.gz
+sh "alta-route10-controld-${V}/setup.sh"
+```
+
+That is the full install, with the boot hook, watchdog and cron jobs, and it installs the `ctrld` release that version pins. Two things still move afterwards. The weekly updater moves `ctrld` past the pin unless you [turn it off](#turning-it-off), and running the one-line installer later puts the scripts back on `master`.
 
 `CTRLD_PIN` is only the starting point. The version actually installed is recorded as `CTRLD_VERSION` in `/cfg/controld.env`, and the weekly updater moves it forward from there, so pinning gives reproducible installs without leaving routers stranded on an old release.
 
@@ -459,9 +469,9 @@ of `status.sh`, `audit.sh` or `reconfigure.sh`.
 That combination has a history here. It is what the old `backup.sh` restored,
 and restoring from it "produced a router with no watchdog, no boot hook and no
 cron jobs" while looking healthy, which is why that script was removed. Use
-this path to read what the pieces do, or to pin an exact version with
-`git checkout`, and re-run `setup.sh` when you want an install that maintains
-itself.
+this path to read what the pieces do. To hold a router at an exact version,
+run that release's own `setup.sh` as [Versioning](#versioning) describes,
+which gives you the install that maintains itself.
 
 ### Firmware Updates
 

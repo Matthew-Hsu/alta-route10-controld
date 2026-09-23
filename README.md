@@ -409,6 +409,9 @@ again, since it is not read back from the existing install.
 `sh /cfg/audit.sh` afterwards tells you whether the router and the checkout
 agree on the version.
 
+That command always installs the current `master`. To install one particular
+release and stay on it, see [Versioning](docs/technical-details.md#versioning).
+
 ### Uninstall
 
 ```sh

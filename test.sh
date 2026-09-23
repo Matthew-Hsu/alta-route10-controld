@@ -5185,16 +5185,27 @@ for _rs in uci ip nslookup logread pidof netstat crontab; do
 done
 RI_CHAIN="$TMPDIR/ri.chain"; export RI_CHAIN
 RI_COUNTS="$TMPDIR/ri.counts"; export RI_COUNTS
+# Like the real iptables, -L -v prints counters abbreviated (261K) unless -x
+# asks for exact ones. RI_COUNTS is the abbreviated listing; a file beside it
+# named .exact, when present, is what -x returns.
 cat > "$RI_BIN/iptables" << 'RIEOF'
 #!/bin/sh
-_want=""
+_want=""; _exact=0
 for _a in "$@"; do
-    case "$_a" in -S) _want=S ;; -C) _want=C ;; -L) [ -z "$_want" ] && _want=L ;; esac
+    case "$_a" in
+        -S) _want=S ;; -C) _want=C ;; -L) [ -z "$_want" ] && _want=L ;;
+        --*) ;; -*x*) _exact=1 ;;
+    esac
 done
 case "$_want" in
     S) cat "$RI_CHAIN" 2>/dev/null; exit 0 ;;
     C) exit 0 ;;
-    L) cat "$RI_COUNTS" 2>/dev/null; exit 0 ;;
+    L) if [ "$_exact" = "1" ] && [ -f "${RI_COUNTS}.exact" ]; then
+           cat "${RI_COUNTS}.exact"
+       else
+           cat "$RI_COUNTS" 2>/dev/null
+       fi
+       exit 0 ;;
 esac
 exit 1
 RIEOF
@@ -5243,6 +5254,24 @@ assert_contains "a flat bridge is still reported" "$RI_OK" \
     "br-lan_10: 0 packets"
 assert_true "and now counts toward the summary" \
     test "$(audit_review_count "$RI_OK")" -ge 1
+
+# iptables -L -v abbreviates any counter above 99999, so a busy bridge's
+# 261,417 packets are listed as 261K, and awk reads 261K as 261. Found on a
+# Route 10, where audit.sh reported a VLAN carrying a quarter of a million
+# queries as having redirected about 1,600.
+cat > "$RI_COUNTS" << 'RIBIGEOF'
+    0     0 REDIRECT   udp  --  br-lan_10 *       0.0.0.0/0    0.0.0.0/0    udp dpt:53 redir ports 5354
+ 261K   17M REDIRECT   udp  --  br-lan_20 *       0.0.0.0/0    0.0.0.0/0    udp dpt:53 redir ports 5354
+RIBIGEOF
+cat > "${RI_COUNTS}.exact" << 'RIBIGXEOF'
+       0        0 REDIRECT   udp  --  br-lan_10 *       0.0.0.0/0    0.0.0.0/0    udp dpt:53 redir ports 5354
+  261417 17548675 REDIRECT   udp  --  br-lan_20 *       0.0.0.0/0    0.0.0.0/0    udp dpt:53 redir ports 5354
+RIBIGXEOF
+RI_BIG="$(PATH="$RI_BIN:$PATH" DNS_PORT=5354 CTRLD_VERSION=1.5.7 LAN_IFACES="br-lan_10 br-lan_20" \
+    sh "$SCRIPT_DIR/audit.sh" 2>/dev/null || true)"
+assert_contains "a busy bridge reports its exact packet count" "$RI_BIG" \
+    "br-lan_20: 261417 packet(s) redirected"
+rm -f "${RI_COUNTS}.exact"
 
 # status.sh made the same claim from the same evidence. Back to the outranked
 # chain — the clean one above was written for the drift comparison.

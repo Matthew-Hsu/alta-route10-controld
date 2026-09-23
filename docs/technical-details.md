@@ -117,7 +117,7 @@ All scripts source `lib.sh` which provides:
 - LAN bridge discovery (`lan_ifaces`, `lan_cidr`, `lan_net_name`) and redirect rules (`ensure_redirect_rule`, `ensure_firewall_user_rules`)
 - Forced DNS (`ensure_forced_dns`, `disable_forced_dns`, `set_forced_dns_flag`)
 - Fallback resolver (`set_fallback_resolver`, `reset_fallback_resolver`): keeps https-dns-proxy on the same ControlD profile as ctrld, and points every instance back at a public resolver on uninstall
-- Input validation (`valid_resolver`, `valid_mac`, `valid_cidr`, `valid_proto`)
+- Input validation (`valid_resolver`, `valid_mac`, `valid_cidr`, `valid_policy_name`, `valid_proto`)
 - Protocol utilities (`proto_label`, `next_proto`) and per-upstream protocol switching (`retarget_upstreams`, `resolver_from_endpoint`)
 - Degraded-mode handling (`remove_dns_redirects`) and config editing (`toml_blocks`, `next_toml_index`)
 - Cron entries matched by script path (`cron_has`, `cron_remove`) and rule hygiene (`dns_redirect_rules`, `redirect_rule_port`, `redirect_rule_iface`, `prune_stale_redirects`): `--repair` removes a redirect on a bridge that is gone **and** one pointing at a port this install does not listen on, which `PREROUTING` would otherwise evaluate ahead of the working rules

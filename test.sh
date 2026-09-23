@@ -245,6 +245,12 @@ assert_eq "doq next"    "doh3" "$(next_proto doq)"
 assert_eq "doh3 next"   "doh"  "$(next_proto doh3)"
 assert_eq "doh wraps"   "doh3" "$(next_proto doh)"
 
+describe "valid_policy_name() — input validation"
+assert_true  "a plain name"             valid_policy_name "Kids"
+assert_true  "spaces and an apostrophe" valid_policy_name "Kid's iPad"
+assert_false "a double quote"           valid_policy_name 'Kid "A"'
+assert_false "a backslash"              valid_policy_name 'Kids\Guest'
+
 describe "valid_resolver() — input validation"
 assert_true  "valid short resolver"  valid_resolver "abc123"
 assert_true  "valid long resolver"   valid_resolver "abc12345de"
@@ -1301,6 +1307,15 @@ RR_OUT="$( ( PATH="$RR_BIN:$PATH"; printf '2\naa:bb:cc:dd:ee:01\nxyz789\nBroken\
 assert_contains "a policy that does not answer is rolled back" "$RR_OUT" "Previous config restored"
 assert_true "leaving ctrld.toml without the new upstream" cmp -s "$RR_CFG/toml.before" "$RR_CFG/ctrld.toml"
 assert_false "and no rollback copy is left behind" [ -f "$RR_CFG/ctrld.toml.bak" ]
+
+# A double quote in a policy name is refused before anything is written, so
+# there is nothing to roll back and ctrld is not restarted at all.
+rr_reset
+RR_OUT="$( ( PATH="$RR_BIN:$PATH"; printf '2\naa:bb:cc:dd:ee:01\nxyz789\nKid "A"\nq\n' \
+    | sh "$RR_CFG/reconfigure.sh" --policy ) 2>&1 || true )"
+assert_contains "reconfigure.sh refuses a quote in a policy name" "$RR_OUT" "Policy name cannot contain"
+assert_true "and leaves ctrld.toml as it was" cmp -s "$RR_CFG/toml.before" "$RR_CFG/ctrld.toml"
+assert_false "without restarting ctrld" [ -f "$RR_CFG/ctrld.calls" ]
 
 # The change that does answer still goes through, or the rollback would be
 # hiding a switch that never happens.
@@ -4760,7 +4775,9 @@ describe "setup.sh — the closing verdict follows the checks"
 # the sandbox owns, so stop_ctrld only ever kills something started here.
 SV="$TMPDIR/setup-verdict"
 sv_run() {
-    # $1 = sandbox root, $2 = "good" or "broken" (ctrld runs but never answers)
+    # $1 = sandbox root, $2 = "good" or "broken" (ctrld runs but never answers),
+    # $3 = answers to feed the interactive installer. Without it the run is
+    # the non-interactive --resolver/--protocol form.
     _sv="$1"
     rm -rf "$_sv"
     mkdir -p "$_sv/src" "$_sv/cfg" "$_sv/bin" "$_sv/initd" "$_sv/tmp" \
@@ -4800,7 +4817,11 @@ sv_run() {
 
     ( PATH="$_sv/bin:$PATH"; FW_USER="$_sv/firewall.user"; SYSFS_NET="$_sv/sys"
       DEGRADED_FLAG="$_sv/tmp/degraded"; export FW_USER SYSFS_NET DEGRADED_FLAG
-      sh "$_sv/src/setup.sh" --resolver abc123 --protocol doh3 </dev/null
+      if [ -n "${3:-}" ]; then
+          printf '%b' "$3" | sh "$_sv/src/setup.sh"
+      else
+          sh "$_sv/src/setup.sh" --resolver abc123 --protocol doh3 </dev/null
+      fi
       echo "rc=$?" ) 2>&1 || true
     kill "$(cat "$_sv/ctrld.pid" 2>/dev/null)" 2>/dev/null || true
 }
@@ -4818,7 +4839,21 @@ assert_not_contains "nor that DNS goes through ControlD" "$SV_BAD" "Your DNS is 
 assert_contains "it says DNS is not working yet" "$SV_BAD" "DNS is not working yet"
 assert_contains "and exits non-zero" "$SV_BAD" "rc=1"
 assert_contains "while still listing what it installed" "$SV_BAD" "Installed on router"
-unset SV SV_GOOD SV_BAD _sv _svf
+
+# The policy wizard writes a name straight into name = "...". A double quote
+# there makes ctrld.toml invalid TOML, and setup.sh has no rollback, so ctrld
+# would never start. Answers: resolver, default bootstrap, DoH3, yes to split
+# DNS, a policy resolver, a bad name, route by network, a CIDR, then an empty
+# resolver to finish. That is a complete policy for a wizard that accepts the
+# name, so one that does gets as far as writing it. One that refuses the name
+# reads the route type and the CIDR as resolver IDs, skips both as invalid,
+# and finishes on the empty line.
+SV_POL="$(sv_run "$SV/policy" good 'abc123\n\n1\ny\nxyz789\nKid "A"\n1\n192.168.50.0/24\n\n')"
+assert_contains "the installer's wizard refuses a quote in a policy name" \
+    "$SV_POL" 'Policy name cannot contain'
+assert_not_contains "and writes nothing for it" "$(cat "$SV/policy/cfg/ctrld.toml" 2>/dev/null)" 'Kid'
+assert_contains "and the install still completes" "$SV_POL" "Setup Complete!"
+unset SV SV_GOOD SV_BAD SV_POL _sv _svf
 
 describe "prune_stale_redirects() — a rule for a port nothing listens on"
 

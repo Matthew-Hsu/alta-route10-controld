@@ -743,6 +743,13 @@ if [ "$DO_SPLIT" = "y" ] || [ "$DO_SPLIT" = "Y" ]; then
         printf "    Policy name (e.g. Kids, IoT, Guest): "
         read -r POLICY_NAME
         POLICY_NAME="${POLICY_NAME:-Policy-${UPSTREAM_IDX}}"
+        # command -v for the reason step 8 gives: setup.sh can run on an older
+        # lib.sh, and there an undefined function would reject every name.
+        if command -v valid_policy_name >/dev/null 2>&1 \
+           && ! valid_policy_name "$POLICY_NAME"; then
+            print_warn "Policy name cannot contain \" or \\, skipping."
+            continue
+        fi
 
         POLICY_EP="$(get_endpoint "$DNS_TYPE" "$POLICY_RESOLVER")"
 

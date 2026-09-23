@@ -2026,6 +2026,16 @@ valid_cidr() {
     echo "$cidr" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$'
 }
 
+# Validate a split-DNS policy name. It is written into ctrld.toml as
+# name = "<value>", and a double quote or backslash there makes the file
+# invalid TOML, so ctrld refuses the whole config and does not start.
+valid_policy_name() {
+    case "$1" in
+        *\"*|*\\*) return 1 ;;
+    esac
+    return 0
+}
+
 # Validate protocol type
 valid_proto() {
     case "$1" in

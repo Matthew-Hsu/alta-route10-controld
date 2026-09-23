@@ -439,6 +439,10 @@ do_policy() {
                 printf "  Policy name (e.g. Kids, IoT): "
                 read -r policy_name
                 policy_name="${policy_name:-Device}"
+                if command -v valid_policy_name >/dev/null 2>&1 \
+                   && ! valid_policy_name "$policy_name"; then
+                    print_fail "Policy name cannot contain \" or \\"; continue
+                fi
 
                 # Add upstream and MAC rule to existing config
                 local next_idx
@@ -496,6 +500,10 @@ EOF
                 printf "  Policy name (e.g. Guest, IoT-VLAN): "
                 read -r policy_name
                 policy_name="${policy_name:-Network}"
+                if command -v valid_policy_name >/dev/null 2>&1 \
+                   && ! valid_policy_name "$policy_name"; then
+                    print_fail "Policy name cannot contain \" or \\"; continue
+                fi
 
                 local next_up
                 next_up=$(next_toml_index /cfg/ctrld.toml upstream)

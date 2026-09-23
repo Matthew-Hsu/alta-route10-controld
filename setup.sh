@@ -130,6 +130,13 @@ show_help() {
     /cfg/post-cfg.sh          Self-healing boot script
     /cfg/controld-update.sh   Weekly auto-update
     /cfg/watchdog.sh          5-min health check + protocol fallback
+    /cfg/rc.local             Boot hook (sourced by /etc/rc.local)
+    /cfg/lib.sh               Shared function library
+    /cfg/status.sh            Status reporting tool
+    /cfg/benchmark.sh         Protocol benchmark tool
+    /cfg/reconfigure.sh       Quick reconfiguration tool
+    /cfg/audit.sh             Drift and leftover audit
+    /cfg/uninstall.sh         Uninstaller
 
   More info: https://controld.com -> Dashboard -> Endpoint Resolvers
 HELPEOF

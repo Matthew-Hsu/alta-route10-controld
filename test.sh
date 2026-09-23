@@ -5480,6 +5480,15 @@ assert_contains "reports a missing install rather than claiming a version" \
 assert_not_contains "uninstall.sh --help does not claim to flush iptables" \
     "$(sh "$SCRIPT_DIR/uninstall.sh" --help 2>&1 || true)" "flush"
 
+# setup.sh --help is the one place someone reads what an install will put on
+# the router before running it. It listed six of the thirteen files.
+SETUP_HELP="$(sh "$SCRIPT_DIR/setup.sh" --help 2>&1 || true)"
+for _sh_f in controld.env ctrld ctrld.toml post-cfg.sh controld-update.sh \
+             watchdog.sh rc.local lib.sh $(sed -n 's/^UTILITY_SCRIPTS="\(.*\)"$/\1/p' "$SCRIPT_DIR/setup.sh"); do
+    assert_contains "setup.sh --help lists /cfg/${_sh_f}" "$SETUP_HELP" "/cfg/${_sh_f} "
+done
+unset _sh_f SETUP_HELP
+
 # Drift must be reported through the exit status, so it can gate a script
 assert_true "audit.sh --help exits 0" sh -c "sh '$SCRIPT_DIR/audit.sh' --help >/dev/null 2>&1"
 assert_true "audit.sh rejects unknown flags" sh -c "! sh '$SCRIPT_DIR/audit.sh' --nope >/dev/null 2>&1"

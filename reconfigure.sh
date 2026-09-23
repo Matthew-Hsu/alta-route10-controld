@@ -8,6 +8,8 @@
 #   --policy        Manage split DNS policies
 #   --benchmark     Run benchmark and apply fastest
 #   --force-dns     Toggle forced DNS (hijack port 53 + 853 for all clients)
+#   --auto-update   Toggle the weekly ctrld auto-update
+#   --repair        Re-apply DNS redirects to every LAN bridge
 #   --show          Display current config
 
 set -e
@@ -56,6 +58,7 @@ usage() {
     --benchmark     Benchmark all protocols, apply fastest
     --policy        Manage split DNS policies (add/remove/list)
     --force-dns     Toggle forced DNS (hijack all outbound DNS)
+    --auto-update   Toggle the weekly ctrld auto-update
     --repair        Re-apply DNS redirects to every LAN bridge (incl. new VLANs)
     --help          Show this help
 

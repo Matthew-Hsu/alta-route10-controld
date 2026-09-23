@@ -1235,6 +1235,10 @@ assert_true "and turning it on puts the cron back now" \
 # --force has to reach it, or an unattended opt-out blocks on a prompt forever.
 RCF_HELP="$(sh "$SCRIPT_DIR/reconfigure.sh" --help 2>&1 || true)"
 assert_contains "the flag is documented in --help" "$RCF_HELP" "--auto-update"
+# The Actions list is what a reader scans for what the tool can do, and it
+# lacked the flag while the examples below it carried one.
+assert_contains "and listed among its actions" \
+    "$(printf '%s\n' "$RCF_HELP" | sed -n '/Actions:/,/Options:/p')" "--auto-update"
 
 # An unknown option must still be an error: --auto-update is only wired up if
 # the parser knows it, and a typo silently falling through to the menu is how

@@ -104,6 +104,17 @@ failed probes.
   `System DNS working` check read `[OK]` throughout, since the router answered
   it from dnsmasq's cache.
 
+- **The resolver checked before the installer changes anything, after
+  1.11.0.** A re-install with the real ID printed the check and its answer
+  before `Existing ControlD configuration found`. With `zzbad99` it stopped at
+  `ControlD did not answer for resolver ID zzbad99 — nothing was changed`,
+  exit 1, before reaching that step, and neither `ctrld.toml` nor
+  `controld.env` mentioned the ID afterwards. With outbound port 853 rejected,
+  `--protocol doq` stopped at `ControlD answers over DoH but not DoQ (QUIC)`,
+  naming the protocol rather than the ID. A client probing throughout lost no
+  DNS to either, where the same unknown ID had left the LAN without DNS until
+  the installer was run again, and no throwaway `ctrld` was left running.
+
 ## Redirect Coverage
 
 - Redirect coverage on all six bridges, the port-853 DoT hijack, and
@@ -278,6 +289,13 @@ failed probes.
   it came back with nothing run by hand. It printed
   `Resolver changed to zzbad99` before it had checked anything, which the
   rollback then contradicts.
+
+- **A change checked before it is applied, after 1.11.0.** Once
+  `reconfigure.sh` asked a throwaway `ctrld` on the benchmark port first,
+  `--resolver --to zzbad99` and, with outbound port 853 rejected,
+  `--protocol --to doq` were each refused before anything was written, with
+  exit 1, no rollback, and no client DNS lost. Found by the rollback alone,
+  each had cost 19 seconds.
 
 - **A protocol the network blocks, after 1.11.0.** With outbound port 853
   rejected in the router's own `OUTPUT` chain, `--protocol --to doq --force`

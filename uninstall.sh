@@ -71,7 +71,9 @@ usage() {
   ${BOLD}Description:${RESET}
     Completely removes ControlD from this router:
     stops ctrld, deletes config files, removes cron jobs,
-    flushes iptables rules, and restores default DNS.
+    deletes its own iptables rules one at a time (port
+    forwards and UPnP are left alone), and restores
+    default DNS.
 
   ${BOLD}Examples:${RESET}
     uninstall.sh

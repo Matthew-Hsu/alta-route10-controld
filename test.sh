@@ -5474,6 +5474,12 @@ VER_OUT="$(INSTALLED_LIB="$VER_FIX/absent.sh" sh "$SCRIPT_DIR/audit.sh" 2>&1 || 
 assert_contains "reports a missing install rather than claiming a version" \
     "$VER_OUT" "nothing installed"
 
+# uninstall.sh deletes its own rules one at a time, and the docs warn against
+# flushing PREROUTING by name. Its help said it flushed them, which would put
+# anyone with port forwards off running it.
+assert_not_contains "uninstall.sh --help does not claim to flush iptables" \
+    "$(sh "$SCRIPT_DIR/uninstall.sh" --help 2>&1 || true)" "flush"
+
 # Drift must be reported through the exit status, so it can gate a script
 assert_true "audit.sh --help exits 0" sh -c "sh '$SCRIPT_DIR/audit.sh' --help >/dev/null 2>&1"
 assert_true "audit.sh rejects unknown flags" sh -c "! sh '$SCRIPT_DIR/audit.sh' --nope >/dev/null 2>&1"

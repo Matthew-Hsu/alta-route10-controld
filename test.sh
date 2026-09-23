@@ -1236,6 +1236,81 @@ assert_contains "the flag is documented in --help" "$RCF_HELP" "--auto-update"
 RCF_BAD="$(sh "$SCRIPT_DIR/reconfigure.sh" --auto-updates 2>&1 || true)"
 assert_contains "a near miss is rejected rather than ignored" "$RCF_BAD" "Unknown option"
 
+describe "reconfigure.sh — a config that does not answer is rolled back"
+
+# The redirects stay in place while reconfigure.sh restarts ctrld, so a new
+# config that cannot resolve leaves the whole LAN without DNS. DoQ on a network
+# that blocks port 853 is enough. Run the real script in a sandbox where the
+# stub resolver answers on DoH3 and DoH but not DoQ, and not for a resolver ID
+# or policy name marked bad, then check the two files it leaves behind.
+RR_CFG="$TMPDIR/rr-cfg"; RR_BIN="$TMPDIR/rr-bin"
+mkdir -p "$RR_CFG" "$RR_BIN"
+export RR_CFG
+sed -e "s|/cfg/|${RR_CFG}/|g" "$SCRIPT_DIR/reconfigure.sh" > "$RR_CFG/reconfigure.sh"
+sed -e "s|/cfg/|${RR_CFG}/|g" "$SCRIPT_DIR/lib.sh"         > "$RR_CFG/lib.sh"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$RR_CFG/ctrld.calls"\n' > "$RR_CFG/ctrld"
+for _rr in pidof uci; do printf '#!/bin/sh\nexit 1\n' > "$RR_BIN/$_rr"; done
+for _rr in sleep logger; do printf '#!/bin/sh\nexit 0\n' > "$RR_BIN/$_rr"; done
+printf '#!/bin/sh\necho "udp 0 0 0.0.0.0:5354 0.0.0.0:* 1/ctrld"\n' > "$RR_BIN/netstat"
+cat > "$RR_BIN/nslookup" << 'RRNSEOF'
+#!/bin/sh
+grep -qE 'type = "doq"|zzbad|ControlD-Broken' "$RR_CFG/ctrld.toml" && exit 1
+exit 0
+RRNSEOF
+chmod +x "$RR_CFG/ctrld" "$RR_BIN"/*
+unset _rr
+
+rr_reset() {
+    cat > "$RR_CFG/controld.env" << 'RRENVEOF'
+RESOLVER_ID=abc123
+BOOTSTRAP_IP=76.76.2.22
+CTRLD_VERSION=1.5.7
+DNS_TYPE=doh3
+PREFERRED_PROTOCOL=doh3
+DNS_PORT=5354
+RRENVEOF
+    ( DNS_PORT=5354; . "$RR_CFG/lib.sh"
+      write_ctrld_config "$RR_CFG/ctrld.toml" abc123 76.76.2.22 doh3 )
+    cp "$RR_CFG/ctrld.toml" "$RR_CFG/toml.before"
+    cp "$RR_CFG/controld.env" "$RR_CFG/env.before"
+    rm -f "$RR_CFG/ctrld.calls"
+}
+# Exit status is printed as the last line, since the suite runs under set -e.
+rr_run() {
+    ( PATH="$RR_BIN:$PATH"; sh "$RR_CFG/reconfigure.sh" "$@"; echo "rc=$?" ) 2>&1 || true
+}
+
+rr_reset
+RR_OUT="$(rr_run --protocol --to doq --force)"
+assert_contains "a protocol that does not answer is reported" "$RR_OUT" "restoring the previous one"
+assert_contains "and the previous config is restarted" "$RR_OUT" "Previous config restored"
+assert_contains "and the run exits non-zero" "$RR_OUT" "rc=1"
+assert_true "ctrld.toml is back to what it was" cmp -s "$RR_CFG/toml.before" "$RR_CFG/ctrld.toml"
+assert_true "and so is controld.env" cmp -s "$RR_CFG/env.before" "$RR_CFG/controld.env"
+assert_false "and no rollback copy is left behind" [ -f "$RR_CFG/ctrld.toml.bak" ]
+
+rr_reset
+RR_OUT="$(rr_run --resolver --to zzbad99 --force)"
+assert_contains "a resolver ID that does not answer is rolled back too" "$RR_OUT" "rc=1"
+assert_true "leaving the old resolver in controld.env" cmp -s "$RR_CFG/env.before" "$RR_CFG/controld.env"
+assert_true "and in ctrld.toml" cmp -s "$RR_CFG/toml.before" "$RR_CFG/ctrld.toml"
+
+rr_reset
+RR_OUT="$( ( PATH="$RR_BIN:$PATH"; printf '2\naa:bb:cc:dd:ee:01\nxyz789\nBroken\ny\nq\n' \
+    | sh "$RR_CFG/reconfigure.sh" --policy; echo "rc=$?" ) 2>&1 || true )"
+assert_contains "a policy that does not answer is rolled back" "$RR_OUT" "Previous config restored"
+assert_true "leaving ctrld.toml without the new upstream" cmp -s "$RR_CFG/toml.before" "$RR_CFG/ctrld.toml"
+assert_false "and no rollback copy is left behind" [ -f "$RR_CFG/ctrld.toml.bak" ]
+
+# The change that does answer still goes through, or the rollback would be
+# hiding a switch that never happens.
+rr_reset
+RR_OUT="$(rr_run --protocol --to doh --force)"
+assert_contains "a protocol that answers is applied" "$RR_OUT" "rc=0"
+assert_contains "and recorded" "$(cat "$RR_CFG/controld.env")" "DNS_TYPE=doh"
+assert_contains "and written" "$(cat "$RR_CFG/ctrld.toml")" 'type = "doh"'
+assert_false "and its rollback copy is removed" [ -f "$RR_CFG/ctrld.toml.bak" ]
+
 describe "setup.sh — a re-install honours an opt-out made since the last one"
 
 # Re-running setup.sh is this project's documented upgrade path, and
@@ -5212,7 +5287,7 @@ assert_true "setup.sh installs audit.sh" \
     code_grep "$SCRIPT_DIR/setup.sh" 'UTILITY_SCRIPTS=.*audit\.sh'
 assert_true "uninstall.sh removes audit.sh" \
     code_grep "$SCRIPT_DIR/uninstall.sh" '/cfg/audit\.sh'
-# A failed reconfigure leaves this behind, holding the previous resolver ID
+# An interrupted reconfigure leaves this behind, holding the previous resolver ID
 assert_true "uninstall.sh removes a stale ctrld.toml.bak" \
     code_grep "$SCRIPT_DIR/uninstall.sh" '/cfg/ctrld\.toml\.bak'
 # backup.sh stored its backup on the partition it existed to protect, and its

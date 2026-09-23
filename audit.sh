@@ -389,9 +389,9 @@ fi
 print_header "Leftovers"
 
 # /etc/controld is created by the ctrld binary itself on start; uninstall rmdirs
-# it. ctrld.toml.bak is reconfigure.sh's rollback copy, normally removed on
-# success, and one surviving a failed reconfigure still holds the previous
-# resolver ID.
+# it. ctrld.toml.bak is reconfigure.sh's rollback copy, removed whether the
+# change succeeds or is rolled back, so one that survives was left by an
+# interrupted run and still holds the previous resolver ID.
 found=0
 for _p in /etc/controld /etc/ctrld.toml /etc/init.d/ctrld /root/.ctrld \
           /var/log/ctrld.log /cfg/ctrld.toml.bak /cfg/ctrld.prev \

@@ -420,11 +420,14 @@ re-install keeps your forced-DNS setting and any split-DNS policy.
    - DoQ: `type = "doq"` with `endpoint = "<ID>.dns.controld.com"` (no https://)
    - DoH/DoH3: `type = "doh"` or `doh3` with `endpoint = "https://dns.controld.com/<ID>"`
 
-2. Check if UDP port 443 (DoH3) or 853 (DoQ) is blocked outbound:
+2. See which protocols your network lets through:
    ```sh
-   # Test connectivity to ControlD
-   ping -c3 76.76.2.22
+   sh /cfg/benchmark.sh
    ```
+   It tries all four on a side port without touching live DNS. One that reads
+   `FAILED` while others work is being blocked. DoH3 needs outbound UDP 443,
+   DoQ needs UDP 853, DoT needs TCP 853, and DoH needs only TCP 443. `ping`
+   cannot answer this, since it tests ICMP and neither UDP nor TCP.
 
 3. Switch to DoH as a fallback test:
    ```sh
@@ -437,7 +440,9 @@ re-install keeps your forced-DNS setting and any split-DNS policy.
    with nothing failing and nothing logged. `reconfigure.sh` switches each
    upstream's transport while keeping the resolver it points at.
 
-4. If DoH works but QUIC doesn't, your ISP may be blocking UDP. Stick with DoH or DoH3 which can fall back to TCP.
+4. If DoH works but DoH3 and DoQ do not, the network is blocking outbound UDP.
+   Use DoH. DoH3 runs over QUIC only, with no TCP fallback in `ctrld`, so it
+   fails the same way DoQ does.
 
 ## How to switch protocols
 

@@ -3973,7 +3973,7 @@ fw_run() {   # $1 = recorded|bare, $2 = the firewall.user to present
 
 FW_OUT="$(fw_run recorded "$FW_EMPTY")"
 assert_contains "an empty firewall.user is reported when an install is recorded" \
-    "$FW_OUT" "will not survive a firewall reload"
+    "$FW_OUT" "will not survive a firewall restart or reboot"
 # Severity from the count, for the same reason.
 printf '# controld-dns-redirect BEGIN\n# controld-dns-redirect END\n' > "$TMPDIR/fw-ok.user"
 FW_OK="$(fw_run recorded "$TMPDIR/fw-ok.user")"
@@ -3982,7 +3982,7 @@ assert_eq "an empty firewall.user adds exactly one drift item" \
 
 # Nothing installed: an empty firewall.user is simply correct.
 assert_not_contains "but not when nothing is installed" \
-    "$(fw_run bare "$FW_EMPTY")" "will not survive a firewall reload"
+    "$(fw_run bare "$FW_EMPTY")" "will not survive a firewall restart or reboot"
 
 describe "audit.sh — a wiped crontab must not pass as healthy"
 

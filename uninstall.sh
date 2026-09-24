@@ -248,7 +248,8 @@ else
     print_warn "${_left} redirect rule(s) still present — check: iptables -t nat -L PREROUTING -n"
 fi
 
-# The firewall.user block would re-add them on the next firewall reload
+# The firewall.user block would re-add them at the next firewall restart or
+# reboot
 if [ -f "$FW_USER" ]; then
     remove_block "$FW_USER" "$FW_MARKER"
     sed -i -e '/controld-forced-dns-853/d' \
@@ -283,10 +284,10 @@ if [ -f "$FW_USER" ]; then
     _fw_left="$(grep -c -- "REDIRECT --to-port ${DNS_PORT}" "$FW_USER" 2>/dev/null || true)"
     [ -n "$_fw_left" ] || _fw_left=0
     if [ "$_fw_left" -eq 0 ]; then
-        print_ok "${FW_USER} carries no redirect to port ${DNS_PORT} — none will return on reload"
+        print_ok "${FW_USER} carries no redirect to port ${DNS_PORT} — none will return at a restart or reboot"
     else
         print_fail "${_fw_left} line(s) in ${FW_USER} still redirect to port ${DNS_PORT}"
-        print_info "They WILL be applied at the next firewall reload, with nothing listening there."
+        print_info "They WILL be applied at the next firewall restart or reboot, with nothing listening there."
         print_info "Remove them by hand:  sed -i '/REDIRECT --to-port ${DNS_PORT}/d' ${FW_USER}"
     fi
 fi

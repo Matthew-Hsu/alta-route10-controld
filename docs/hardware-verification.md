@@ -257,8 +257,9 @@ failed probes.
 - **The firmware's own line for the hook.** On this router `/etc/rc.local`
   sources the hook as
   `if ! grep -q rescue /proc/cmdline && [ -e /cfg/rc.local ]; then . /cfg/rc.local`,
-  which skips it on a rescue boot. That is not the one-line form
-  `docs/technical-details.md` offers for putting it back.
+  which skips it on a rescue boot, followed by `fi` on its own line. The
+  same three lines were there on 1.5h. `docs/technical-details.md` offers
+  this form for putting the hook back.
 
 - **The log's clock and how far back it reaches.** syslog stamps its lines in
   UTC while `date` on the same router prints local time, seven hours behind
@@ -284,6 +285,23 @@ failed probes.
   firmware's own, with both runs of `post-cfg.sh` logging
   `dnsmasq already forwards to https-dns-proxy — left running`. The failed
   probes spanned 38 seconds and `audit.sh` exited 0.
+
+- **What a firewall reload does to the redirects, on 1.5h.** The include
+  for `/etc/firewall.user` carries no `reload` option, unlike the five scripts
+  Alta's own firmware includes, and a rule inserted by hand into `PREROUTING`
+  survived `/etc/init.d/firewall reload` while a line appended to
+  `/etc/firewall.user` was never run. So the block runs when the firewall
+  starts, at boot or on a restart, and a reload leaves the redirects as they
+  are. With `ctrld` killed and the firewall reloaded, all 24 redirects were
+  still in place, pointing at the stopped `ctrld`, and a client timed out.
+  `post-cfg.sh` put it right; left alone, the watchdog removes them.
+
+- **The firewall block's check that `ctrld` is listening, after 1.11.0, on
+  1.5h.** With `ctrld` running, `netstat -lnu` reported it on 5354. Killed,
+  it stopped listening within 2 seconds. With the redirects cleared and
+  `ctrld` stopped, running the block the way the firewall does added no
+  rules, and a client resolved through dnsmasq. `post-cfg.sh` then restored
+  all 24 rules and `audit.sh` exited 0.
 
 - **Leases handed out before the clock is set, on 1.5h.** After that reboot
   the four access points on `br-lan` kept working at their addresses but were
@@ -337,6 +355,27 @@ failed probes.
   reported the fallback running. The installer's own run left dnsmasq alone
   as well.
 
+- **One server in DoH Servers, after 1.11.0, on 1.5h.** With
+  `https://dns.quad9.net/dns-query` saved in DoH Servers, one https-dns-proxy
+  instance ran, dnsmasq started once, from the firmware, forwarding to
+  `127.0.0.1#5053` alone, and `post-cfg.sh` logged that it left dnsmasq
+  running. The instance's `resolver_url` read back as the ControlD profile,
+  the Quad9 URL replaced, and `audit.sh` exited 0.
+
+- **Use DoH off across a reboot, after 1.11.0, on 1.5h.** Both runs of
+  `post-cfg.sh` at boot, the firmware's and the boot hook's 25 seconds later,
+  logged that Use DoH was off. No https-dns-proxy process ran, `status.sh`
+  warned rather than failed, and the router came back with 24 rules, a clean
+  audit, and a client resolving. A Mac probing once a second saw one gap of 49
+  seconds and 20 failed probes across the reboot, the same count as the 38
+  seconds measured before the firewall block checked for `ctrld`, so that check
+  did not measurably shorten it.
+
+- **What a settings save costs a client, on 1.5h.** Two settings saves, the
+  one before that reboot and the one turning Use DoH back on, each cost the
+  probe a single failed lookup, a gap of one to two seconds. So did the
+  uninstall and the re-install that followed.
+
 ## Protocol Reconciliation
 
 - **Protocol reconciliation, end to end.** `ctrld.toml` was retargeted behind
@@ -385,6 +424,14 @@ failed probes.
   `--policy` was refused with `Policy name cannot contain " or \` before
   anything was written, and `ctrld` was not restarted.
 
+- **`--to on` and `--to off`, after 1.11.0, on 1.5h.** With no input and no
+  `--force`, `--auto-update --to on` over an update already on said so and
+  changed nothing, `--to off` removed the cron, a second `--to off` changed
+  nothing, and `--to on` put the cron back, leaving exactly one line.
+  `--force-dns --to on` over forced DNS already on changed nothing, and after
+  a fresh install had left it off, the same command turned it on and brought
+  the rules from 12 to 24. `--to maybe` was refused.
+
 ## Split DNS
 
 - **Split DNS, end to end.** A device rule keyed on a phone's MAC and a network
@@ -423,6 +470,11 @@ failed probes.
   15 of 15 at 7 to 8 ms, and a client probing throughout saw no failure. It
   recommended moving from DoH3 to DoQ on a 1 ms difference.
 
+- **The margin a switch has to clear, after 1.11.0, on 1.5h.** The same
+  measurement again: DoQ and DoH at 7 ms, DoH3 and DoT at 8. `benchmark.sh`
+  now recommended keeping DoH3 and said DoQ was 1 ms faster, less than the
+  5 ms and 20% worth switching for.
+
 ## Uninstall
 
 - **A full `uninstall.sh` run.** Files, cron, redirect rules, the
@@ -430,3 +482,12 @@ failed probes.
   `https-dns-proxy` instance moved off ControlD and back to the stock resolver,
   the router's own cron jobs and the stock `force_dns_port` list untouched, and
   DNS still resolving afterwards
+
+- **Uninstalling with Use DoH off, after 1.11.0, on 1.5h.** `uninstall.sh
+  --force` removed the redirects, the firewall block and the cron jobs, and
+  said the fallback was pointed at Quad9 and left stopped because Use DoH was
+  off. No https-dns-proxy process ran afterwards, dnsmasq kept the same
+  process ID and the empty server list the firmware had given it, and a
+  client kept resolving through the ISP. Re-installing over that was a fresh
+  install: forced DNS back at its default of off, 12 rules, Use DoH off
+  logged, dnsmasq still not restarted, and a clean audit.

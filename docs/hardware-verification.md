@@ -34,6 +34,10 @@ for that run.
 Entries also marked **on 1.5h** ran after the router took Alta's 1.5h update
 in place, with the same changes installed. `/etc/openwrt_release` then read
 `DISTRIB_REVISION='1.5h'` on the same OpenWrt base, `r16325-88151b8303`.
+On that router `test.sh` itself ran under the router's own BusyBox, as
+`CONTRIBUTING.md` prescribes: 1,061 passed and none failed, its router
+integration tests included, once two tests that had been reading the real
+`/etc/init.d/https-dns-proxy` were given a stub.
 Those entries time DNS from a client. A Mac on VLAN 10 asked the router's LAN
 address for a record once a second with `dig +time=1 +tries=1`, and the
 `br-lan_10` redirect counter rose with the queries, which shows the probe went
@@ -203,6 +207,13 @@ failed probes.
   and a bridge's redirect deleted, `post-cfg.sh` recreated it at `PREROUTING`
   line 1, thirty-one rules above that bridge's own zone chain, using the
   minimal helper copy it carries for exactly this case
+
+- **The same recovery after 1.11.0, on 1.5h**, once `post-cfg.sh` had been
+  rebuilt around Use DoH. With `/cfg/lib.sh` moved aside and `br-lan_40`'s
+  udp port-53 redirect deleted, it recreated the rule, taking the count from
+  23 back to 24, started all three https-dns-proxy instances because Use DoH
+  was on, and logged redirects on all six bridges. `audit.sh` exited 0, which
+  includes its check that no redirect sits below a firewall zone chain.
 
 - Cron installation and survival across a reboot, and that our own cron
   operations leave the router's `wireguard_watchdog` job alone
@@ -432,7 +443,10 @@ failed probes.
   nothing, and `--to on` put the cron back, leaving exactly one line.
   `--force-dns --to on` over forced DNS already on changed nothing, and after
   a fresh install had left it off, the same command turned it on and brought
-  the rules from 12 to 24. `--to maybe` was refused.
+  the rules from 12 to 24. Later, `--force-dns --to off` left the 12 port-53
+  rules with `force_dns` at 0 and https-dns-proxy restarted, and `--to on`
+  brought back 24 with `force_dns` at 1 and a clean audit. `--to maybe` was
+  refused.
 
 ## Split DNS
 

@@ -37,7 +37,7 @@
    /etc/init.d/dnsmasq restart
    ```
    This restores DNS via dnsmasq and https-dns-proxy (encrypted while Use DoH
-   is on in Alta's DNS settings, just no per-device visibility). The watchdog
+   is on in Alta Control's DNS settings, just no per-device visibility). The watchdog
    puts the redirects back automatically once ctrld answers again.
 
    > **Never run `iptables -t nat -F PREROUTING`.** That flushes the entire
@@ -95,8 +95,8 @@ unrecoverable. DNS still works for everyone, but no device appears in ControlD.
 config is broken), the watchdog removes the redirects. Leaving them in place
 would point port 53 at a closed port and take DNS down for every client on
 every bridge. Removing them hands resolution back to dnsmasq → https-dns-proxy,
-which is still encrypted ControlD while Alta's Use DoH is on, just without
-per-device visibility.
+which is still encrypted ControlD while Use DoH is on in Alta Control, just
+without per-device visibility.
 
 Look for `ctrld will not start` in the log below: that means the binary or
 `/cfg/ctrld.toml` is the problem, not the upstream protocol.
@@ -357,10 +357,10 @@ Devices with `*` as their hostname in the lease file will never show a name. The
 
 ## Two devices get the same address after the router reboots
 
-**Symptom:** after a reboot or a firmware update, Alta reports an IP conflict,
-or two devices answer at one address. Access points are the likely victims,
-because they stay up while the router restarts and ask for their addresses
-again as it comes back.
+**Symptom:** after a reboot or a firmware update, Alta Control reports an IP
+conflict, or two devices answer at one address. Access points are the likely
+victims, because they stay up while the router restarts and ask for their
+addresses again as it comes back.
 
 **Cause:** the firmware, not this project. The Route 10 boots with its clock
 set to October 2021 and only corrects it once it reaches a time server.
@@ -393,7 +393,7 @@ cat /tmp/log/messages.1 /tmp/log/messages.0 /tmp/log/messages 2>/dev/null \
 ```
 
 **Fix:** give each device that has to keep its address a DHCP reservation in
-Alta's settings, access points first. dnsmasq never offers a reserved address
+Alta Control, access points first. dnsmasq never offers a reserved address
 to another device, whatever its lease file says. To clear a conflict that has
 already happened, restart the devices sharing the address so they ask again.
 This is worth reporting to Alta Labs, since only the firmware can stop handing
@@ -554,8 +554,8 @@ clean up afterwards. Three things are worth knowing:
 
 - **The `https-dns-proxy` fallback moves with it.** `reconfigure.sh --resolver`
   points it at the new profile and restarts it, so the retired ID stops
-  answering everywhere on the router. With Use DoH off in Alta it is updated
-  but left stopped. (Earlier versions left this to `setup.sh`.)
+  answering everywhere on the router. With Use DoH off in Alta Control it is
+  updated but left stopped. (Earlier versions left this to `setup.sh`.)
 - **A new ID is checked before anything changes.** `reconfigure.sh` asks a
   throwaway `ctrld` on the benchmark port whether ControlD answers for it.
   If ControlD does not, the ID is refused and the command exits non-zero with
@@ -580,7 +580,7 @@ sh /cfg/uninstall.sh          # add --force to skip the confirmation
 
 That is the whole procedure. It removes every file, cron job and firewall rule
 the project installs, turns forced DNS back off, and points https-dns-proxy at
-a public resolver. dnsmasq is left as Alta's DNS settings have it. It deletes only our own iptables rules, one at a time, so
+a public resolver. dnsmasq is left as Alta Control's DNS settings have it. It deletes only our own iptables rules, one at a time, so
 port forwards and UPnP keep working, and it verifies the result. No reboot
 needed.
 

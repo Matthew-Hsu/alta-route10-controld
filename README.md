@@ -111,7 +111,7 @@ During setup, each protocol is presented with detailed information:
 
 Option 5 runs a quick benchmark (10 queries per protocol, about 40 seconds) and automatically configures the winner.
 
-**The port is the tradeoff, not the encryption.** All four encrypt your DNS. DoH3 and DoH ride port 443 and blend with ordinary HTTPS, so they are almost never blocked. DoQ and DoT use port 853, a dedicated DNS port some ISPs and mobile networks block outright — which is why the automatic fallback chain only ever targets 443. If you are unsure, option 1 or option 5.
+**The port is the tradeoff, not the encryption.** All four encrypt your DNS. DoH3 and DoH ride port 443 and blend with ordinary HTTPS, so they are almost never blocked. DoQ and DoT use port 853, a dedicated DNS port some ISPs and mobile networks block outright, which is why the automatic fallback chain only ever targets 443. If you are unsure, option 1 or option 5.
 
 For non-interactive setup:
 
@@ -201,7 +201,8 @@ installer, a few things matter before you hand it off:
   `setup.sh` and `reconfigure.sh` exit non-zero when DNS does not answer at
   the end, which catches the worst case and little else.
 - **Uninstalling is destructive.** `uninstall.sh` removes everything this
-  project installs and resets DNS to defaults. Only run it if asked.
+  project installs, and every device goes back to the router's own DNS. Only
+  run it if asked.
 
 These are the same precautions a careful human should already take before
 changing DNS and firewall rules on a live network. They're written down here
@@ -298,8 +299,8 @@ for which shapes come back.
 ### After a Firmware Update
 
 Expect nothing to break. Updates keep `/cfg/` intact, the boot hook restores
-what lives outside it, and the firmware update an install here has been through
-came out clean.
+what lives outside it, and the firmware updates an install here has been
+through, most recently to 1.5h, came out clean.
 
 The reason to look anyway is that a few pieces of the install rest on firmware
 behaviour this project does not own. The clearest example is the boot hook:
@@ -350,7 +351,7 @@ about it.
 ```sh
 sh /cfg/reconfigure.sh --protocol --to doh3   # or doq, doh, dot
 sh /cfg/benchmark.sh                          # measure first
-sh /cfg/reconfigure.sh --benchmark --force    # measure, then apply the winner
+sh /cfg/reconfigure.sh --benchmark --force    # measure, switch if one is clearly faster
 ```
 
 Use `reconfigure.sh` rather than editing the config by hand. Regenerating
@@ -509,6 +510,7 @@ correct, but no one has run them on a real device:
 | **Keeping a `ctrld` newer than the pin** | A re-install must not roll a newer binary back to `CTRLD_PIN`. Unit-tested; no router has been ahead of the pin to try it on. |
 | **A real auto-update** | `controld-update.sh`'s version comparison, checksum verification and rollback are unit-tested. No router has taken an actual upgrade through it. |
 | **Use DoH off across a reboot, and one custom DoH server** | `post-cfg.sh` follows Alta's Use DoH and leaves dnsmasq's servers to the firmware. Both directions of the toggle are verified on a settings save. A reboot with Use DoH off, and a save with one server in DoH Servers, have not run since that change. |
+| **Uninstall with Use DoH, `--to on\|off`, and the benchmark margin** | `uninstall.sh` follows Alta's Use DoH, `--force-dns` and `--auto-update` take `--to on` or `--to off`, and a benchmark keeps the running protocol unless another is at least 5 ms and 20% faster. Each is tested against the real scripts in a sandbox; none has run on a router yet. |
 | **A quoted `FORCED_DNS` through a real firmware update** | Config rewriting is verified on a Route 10, protocol change included. The one case standing in for the real thing is `uci` being unable to answer, which was a stub rather than a router that had just been updated. |
 | **Reconciliation on the paths that only run while DNS is failing** | The divergence and every repair for it are now verified on hardware, but two paths there are not, because both need DNS to actually fail on the device: the fallback loop seeding its chain from the reconciled protocol rather than the recorded one, and a reboot landing between a retarget and the record of its result, the interruption that produces the divergence in the first place. |
 

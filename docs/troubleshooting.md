@@ -304,14 +304,15 @@ sh /cfg/reconfigure.sh --repair
 ```
 
 This re-applies the redirect to every LAN bridge that exists right now, updates
-`/etc/firewall.user` so the rules survive a firewall reload, and re-applies the
+`/etc/firewall.user` so the rules survive a firewall restart, and re-applies the
 port-853 (DoT) hijack if forced DNS is on. It is safe to run repeatedly.
 
 The same command fixes cause 2: rules are inserted at the head of `PREROUTING`,
 and one found below a zone chain is deleted and re-inserted above it. Because
 `/etc/firewall.user` is rewritten to insert rather than append, the correction
-survives a firewall reload and a reboot. That is the part that matters, since
-`firewall.user` runs after fw3 has rebuilt its zone chains.
+survives a firewall restart and a reboot. That is the part that matters, since
+`firewall.user` runs after fw3 has rebuilt its zone chains. A reload leaves the
+rules where they are.
 
 If `/cfg/reconfigure.sh` predates this fix, update the tooling first. Re-running
 `setup.sh` reinstalls `/cfg/lib.sh` and the helper scripts:

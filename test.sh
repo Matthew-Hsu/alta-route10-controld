@@ -5947,6 +5947,83 @@ _a=$(next_proto doh3); _b=$(next_proto "$_a")
 assert_eq "doh3 -> doh -> doh3 (cycle)" "doh3" "$_b"
 
 # ══════════════════════════════════════════════════════════════════
+# ISSUE REFERENCE CHECK (.github/scripts/check-issue-refs.sh)
+# ══════════════════════════════════════════════════════════════════
+
+describe "check-issue-refs.sh — a link to a closed issue fails CI"
+
+# CI runs this against GitHub with the job's token. Here gh is a stub that
+# answers "open" unless the issue number is listed in IR_CLOSED, and fails the
+# lookup outright for one listed in IR_MISSING.
+IR_CHECK="$SCRIPT_DIR/.github/scripts/check-issue-refs.sh"
+# The on-router run in CONTRIBUTING.md copies the scripts and docs but not
+# .github, and nothing there needs the check.
+if [ -f "$IR_CHECK" ]; then
+    IR_DIR="$TMPDIR/issue-refs"
+    IR_URL="https://github.com/Matthew-Hsu/alta-route10-controld/issues"
+    mkdir -p "$IR_DIR/bin"
+    cat > "$IR_DIR/bin/gh" << 'IRGH'
+#!/bin/sh
+n="${2##*/}"
+case " ${IR_MISSING:-} " in *" $n "*) exit 1 ;; esac
+case " ${IR_CLOSED:-} " in *" $n "*) echo closed; exit 0 ;; esac
+echo open
+IRGH
+    chmod +x "$IR_DIR/bin/gh"
+    printf 'Local records [#57](%s/57), and IPv6 [#60](%s/60).\nNo link here.\nAgain %s/57\n' \
+        "$IR_URL" "$IR_URL" "$IR_URL" > "$IR_DIR/README.md"
+
+    # Runs the check on the fixture; prints its output, then "exit=<status>".
+    # The status is caught rather than left to set -e, which would end the
+    # suite on the failures these tests are here to provoke.
+    ir_run() {
+        ( cd "$IR_DIR" || exit 1
+          _ir_rc=0
+          PATH="$IR_DIR/bin:$PATH" sh "$IR_CHECK" README.md 2>&1 || _ir_rc=$?
+          echo "exit=$_ir_rc" )
+    }
+
+    IR_OUT=$(ir_run)
+    assert_contains "every cited issue open passes" "$IR_OUT" "exit=0"
+
+    IR_OUT=$(IR_CLOSED=60; export IR_CLOSED; ir_run)
+    assert_contains "a cited issue that is closed fails" "$IR_OUT" "exit=1"
+    assert_contains "and says where it is cited" "$IR_OUT" "#60 is closed — still cited at README.md:1"
+
+    IR_OUT=$(IR_MISSING=57; export IR_MISSING; ir_run)
+    assert_contains "a lookup that fails is a failure, not a pass" "$IR_OUT" "exit=1"
+    assert_contains "naming every line that cites it" "$IR_OUT" "could not look up #57 — cited at README.md:1 README.md:3"
+
+    IR_OUT=$(PR_BODY="Summary line.
+    Fixes #57"; export PR_BODY; ir_run)
+    assert_contains "a pull request closing a cited issue fails" "$IR_OUT" "exit=1"
+    assert_contains "and names the issue and the lines" "$IR_OUT" "this pull request closes #57 — still cited at README.md:1 README.md:3"
+
+    IR_OUT=$(PR_BODY="resolved: #60"; export PR_BODY; ir_run)
+    assert_contains "any tense and a colon count as closing" "$IR_OUT" "this pull request closes #60"
+
+    IR_OUT=$(PR_BODY="Fixes #99, and hotfixes #57 is not a keyword"; export PR_BODY; ir_run)
+    assert_contains "closing an uncited issue, or a word that only ends in fixes, passes" "$IR_OUT" "exit=0"
+
+    # The citation form is an interface (AGENTS.md, "Prose"): the check only sees
+    # links written as github.com/<this repo>/issues/<n>. One written any other way
+    # to this repository, relative or with a bare repo path, would be skipped with
+    # nothing failing. So every issues/<n> link in the files CI checks must be one
+    # the checker lists. Links to other repositories' issues are left out.
+    # Each grep can match nothing, which is a count of 0 and not a failure.
+    IR_ALL=$(cd "$SCRIPT_DIR" || exit 1
+        grep -hoiE '[^][ ()<>"]*issues/[0-9]+' README.md docs/*.md 2>/dev/null \
+            | grep -viE 'github\.com/' || true
+        grep -hoiE 'github\.com/[^/ ]+/[^/ ]+/issues/[0-9]+' README.md docs/*.md 2>/dev/null \
+            | grep -iE 'github\.com/Matthew-Hsu/alta-route10-controld/' || true)
+    IR_ALL_N=$(printf '%s\n' "$IR_ALL" | grep -c 'issues/' || true)
+    IR_SEEN_N=$(cd "$SCRIPT_DIR" && sh "$IR_CHECK" --list | grep -c . || true)
+    assert_eq "every link to this repo's issues is one the check sees" "$IR_ALL_N" "$IR_SEEN_N"
+else
+    skip "check-issue-refs.sh not present (no .github beside test.sh)"
+fi
+
+# ══════════════════════════════════════════════════════════════════
 # INTEGRATION TESTS: only run on actual router
 # ══════════════════════════════════════════════════════════════════
 

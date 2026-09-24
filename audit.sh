@@ -157,12 +157,12 @@ case "$blocks" in
            drift "${FW_USER} has REDIRECT lines but no managed block"
        elif [ -n "${CTRLD_VERSION:-}" ]; then
            # No block is correct only when nothing is installed. With an
-           # install recorded, the redirects are gone from the one file that
-           # survives a firewall reload: they hold until the next reload and
-           # then vanish. The watchdog rewrites the block, so this is only
+           # install recorded, the redirects are gone from the file the
+           # firewall runs when it starts: a reload leaves them in place, but
+           # they vanish at the next restart or reboot. The watchdog rewrites the block, so this is only
            # reachable while cron is dead too; a firmware update resetting
            # /etc can take both, which is why it is not left to that.
-           drift "No managed block in ${FW_USER} — redirects will not survive a firewall reload"
+           drift "No managed block in ${FW_USER} — redirects will not survive a firewall restart or reboot"
        else
            print_ok "No managed block in ${FW_USER}, and nothing stray"
        fi ;;
@@ -231,10 +231,11 @@ else
     print_info "Fix:  sh /cfg/reconfigure.sh --repair"
 fi
 
-# A live rule with no firewall.user line vanishes at the next firewall reload.
+# A live rule with no firewall.user line vanishes at the next firewall restart
+# or reboot. A reload leaves it in place.
 for _if in $rule_ifaces; do
     grep -q " -i ${_if} " "$FW_USER" 2>/dev/null \
-        || review "${_if} has a live rule but no ${FW_USER} line — lost on firewall reload"
+        || review "${_if} has a live rule but no ${FW_USER} line — lost at the next firewall restart or reboot"
 done
 
 missing=""

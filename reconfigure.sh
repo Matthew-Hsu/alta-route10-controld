@@ -823,7 +823,7 @@ do_repair() {
     fi
 
     if ensure_firewall_user_rules "$DNS_PORT"; then
-        print_ok "/etc/firewall.user updated (rules survive a firewall reload)"
+        print_ok "/etc/firewall.user updated (rules survive a firewall restart and reboot)"
     else
         print_info "/etc/firewall.user already up to date"
     fi

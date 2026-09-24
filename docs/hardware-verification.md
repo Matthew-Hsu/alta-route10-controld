@@ -201,7 +201,7 @@ failed probes.
 
 - **The recovery path with `/cfg/lib.sh` absent.** With the library moved aside
   and a bridge's redirect deleted, `post-cfg.sh` recreated it at `PREROUTING`
-  line 1 — thirty-one rules above that bridge's own zone chain — using the
+  line 1, thirty-one rules above that bridge's own zone chain, using the
   minimal helper copy it carries for exactly this case
 
 - Cron installation and survival across a reboot, and that our own cron
@@ -231,8 +231,8 @@ failed probes.
   already installed. On the build running at the time it then exited 0 in
   silence, which took reading the source to tell apart from a script that never
   ran, since every other path under `--now` either prints or exits non-zero.
-  After `cad180e` the same command on the same router answered
-  `already on v1.5.7 — nothing to update`.
+  With the fix that shipped in 1.11.0, the same command on the same router
+  answered `already on v1.5.7 — nothing to update`.
 
 - **Where the boot hook's log lines go.** They do reach `/tmp/log/messages`,
   but they carry pre-NTP timestamps, dated `Oct 24 09:02` on this router, and
@@ -391,7 +391,7 @@ failed probes.
   rule keyed on the guest subnet, added in turn against a config that already
   carried a catch-all `[network.0]`, so both allocations had to skip an
   existing table. Each add left the `[upstream.N]` and `[network.N]` indices
-  distinct and ctrld running — two tables of one name make ctrld refuse to
+  distinct and ctrld running. Two tables of one name make ctrld refuse to
   start, which is what this used to produce. The phone resolved through the
   second ControlD profile and reported that resolver on ControlD's own status
   page, while a machine on another VLAN went on reporting the main one.

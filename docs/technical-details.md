@@ -514,17 +514,21 @@ something reloads the firewall, or the next reboot happens without the
 | --- | --- | --- |
 | `watchdog.sh` / `controld-update.sh` cron entries | no health checks, no weekly `ctrld` update | reboot (the boot hook reinstalls both) |
 | managed block in `/etc/firewall.user` | redirects vanish on the next firewall reload | reboot, or `sh /cfg/reconfigure.sh --repair` |
-| `/etc/rc.local` sourcing `/cfg/rc.local` | nothing above is restored at any future boot | add the line by hand (below) |
+| `/etc/rc.local` sourcing `/cfg/rc.local` | nothing above is restored at any future boot | add the hook back by hand (below) |
 
 The third one is the only one a reboot cannot fix, because it is what makes
 reboots fix the others. This project never writes `/etc/rc.local`. The stock
 firmware sources `/cfg/rc.local` from it on its own, which is what makes the
 boot hook work at all. Re-running the installer will not put that back either.
-If an update resets the file, add the line back yourself, above any trailing
-`exit 0`:
+If an update resets the file, add the hook back yourself, above any trailing
+`exit 0`. This is the firmware's own form, as `/etc/rc.local` carries it on 1.5g
+and 1.5h. It skips the hook on a rescue boot, which is the way back in if the
+hook itself is what stops the router booting:
 
 ```sh
-[ -f /cfg/rc.local ] && . /cfg/rc.local
+if ! grep -q rescue /proc/cmdline && [ -e /cfg/rc.local ]; then
+  . /cfg/rc.local
+fi
 ```
 
 Because an orphaned boot hook leaves the install looking healthy right up until

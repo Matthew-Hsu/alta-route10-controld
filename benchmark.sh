@@ -137,6 +137,7 @@ printf "  ${DIM}%-14s %-10s %-12s %-10s${RESET}\n" \
 
 fastest_ms=999999
 fastest_proto=""
+current_ms=""
 results_found=0
 
 for proto in $PROTOCOLS; do
@@ -160,6 +161,7 @@ for proto in $PROTOCOLS; do
             fastest_ms=$BENCH_AVG
             fastest_proto=$proto
         fi
+        [ "$proto" = "$BENCH_CURRENT" ] && current_ms=$BENCH_AVG
         printf "  %-14s ${BOLD}%-10s${RESET} %-12s %-10s\n" \
             "$label" "${BENCH_AVG}ms" "${BENCH_OK}/${QUERIES}" "${BENCH_FAIL}"
     fi
@@ -172,6 +174,17 @@ printf "\n"
 if [ "$results_found" -eq 0 ]; then
     print_fail "All protocols failed. Check network connectivity."
     exit 1
+fi
+
+# Keep the running protocol unless the fastest clearly beats it. See
+# bench_worth_switching in lib.sh for the margin and why.
+if [ "$fastest_proto" != "$BENCH_CURRENT" ] \
+   && ! bench_worth_switching "$current_ms" "$fastest_ms"; then
+    print_ok "Recommended: keep $(proto_label "$BENCH_CURRENT")  (${current_ms}ms avg)"
+    printf "  ${DIM}%s was %dms faster, less than the 5 ms and 20%% worth switching for.${RESET}\n" \
+        "$(proto_label "$fastest_proto")" "$((current_ms - fastest_ms))"
+    printf "\n"
+    exit 0
 fi
 
 rec_label=$(proto_label "$fastest_proto")

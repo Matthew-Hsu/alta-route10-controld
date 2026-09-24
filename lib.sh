@@ -892,6 +892,21 @@ bench_protocol() {
 # Does a resolver answer over a protocol? Asked of a throwaway ctrld on
 # BENCH_PORT, so production DNS on DNS_PORT is never touched.
 #
+# Whether a benchmark's fastest protocol is worth switching to from the one
+# running now. It has to be at least 5 ms and 20% faster. On a Route 10 the
+# benchmark recommended a switch over a 1 ms lead, and reconfigure.sh
+# --benchmark --force acts on its answer, restarting ctrld for a difference no
+# one can notice. A current protocol that failed or was not measured is always
+# worth leaving.
+# Usage: bench_worth_switching <current-ms> <fastest-ms>
+bench_worth_switching() {
+    case "$1" in ''|*[!0-9]*) return 0 ;; esac
+    _bw_gain=$(( $1 - $2 ))
+    [ "$_bw_gain" -ge 5 ] || return 1
+    [ $(( _bw_gain * 100 )) -ge $(( $1 * 20 )) ] || return 1
+    return 0
+}
+
 # This is the check to run before changing anything. A resolver ID ControlD
 # does not know, or a protocol the network blocks, only shows up once ctrld is
 # running on it, and by then the redirects point every client at it. Installing

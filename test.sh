@@ -366,8 +366,8 @@ assert_eq "port 853 doubles the rule count" "16" "$(printf '%s\n' "$both" | wc -
 # Every line inserts at the head. firewall.user runs after fw3 has rebuilt its
 # chains, so an appended rule lands below the zone chains — and one of those
 # carries https-dns-proxy's own port-53 redirect, which then takes the traffic.
-# Appending here would undo on the next firewall reload whatever precedence the
-# live insertion established.
+# Appending here would undo at the next firewall restart or reboot whatever
+# precedence the live insertion established.
 assert_eq "every restored rule inserts at the head" "16" \
     "$(printf '%s\n' "$both" | grep -c -e '-I PREROUTING 1')"
 assert_not_contains "none is appended below the zone chains" "$both" '\-A PREROUTING'
@@ -522,12 +522,12 @@ assert_true "forced DNS adds port 853" ensure_firewall_user_rules 5354
 assert_file_contains "853 rule present" "$FW_USER" "br-lan_10 -p tcp --dport 853"
 FORCED_DNS=0
 
-# The firewall runs this file on every reload, every boot and every settings
-# save in Alta's UI, and the block re-added the redirects whether ctrld was up
-# or not. With ctrld unable to start and no watchdog to tear them down, that
-# sent every client's DNS to a closed port. Run the block the way the firewall
-# does, against a stub netstat and a stub iptables, with ctrld listening and
-# then not.
+# The firewall runs this file when it starts, at every boot and on a restart,
+# and the block added the redirects whether ctrld was up or not. With ctrld
+# unable to start and no watchdog to tear them down, that sent every client's
+# DNS to a closed port from the moment the router came up. Run the block the way
+# the firewall does, against a stub netstat and a stub iptables, with ctrld
+# listening and then not.
 ensure_firewall_user_rules 5354 >/dev/null 2>&1 || true
 FUB_BIN="$TMPDIR/fubbin"; mkdir -p "$FUB_BIN"
 printf '#!/bin/sh\necho "$*" >> "%s/iptables.log"\n' "$FUB_BIN" > "$FUB_BIN/iptables"
@@ -2354,7 +2354,7 @@ assert_false "uninstall does not hardcode the default port" \
 # calls ensure_firewall_user_rules, and that creates a block when none exists.
 # So the block came back, holding twelve port-53 REDIRECTs aimed at a port
 # nothing would listen on once ctrld was gone. Found on a router. The next
-# firewall reload or reboot applies /etc/firewall.user, so it would have taken
+# firewall restart or reboot applies /etc/firewall.user, so it would have taken
 # DNS down on every bridge, permanently, with nothing of this project left
 # on the box to explain it.
 #
@@ -3944,9 +3944,9 @@ audit_review_count() {
 describe "audit.sh — a wiped firewall.user block must not pass as healthy"
 
 # An empty firewall.user with an install recorded means the redirects exist in
-# the live table but nowhere that survives a firewall reload. The watchdog
-# rewrites the block, so this only bites while cron is dead as well, and a
-# firmware update resetting /etc can take both, so it is not left to that.
+# the live table but nowhere that survives a firewall restart or reboot. The
+# watchdog rewrites the block, so this only bites while cron is dead as well,
+# and a firmware update resetting /etc can take both, so it is not left to that.
 FW_BIN="$TMPDIR/fwbin"; mkdir -p "$FW_BIN"
 for _fs in uci iptables ip nslookup logread pidof netstat crontab; do
     printf '#!/bin/sh\nexit 1\n' > "$FW_BIN/$_fs"; chmod +x "$FW_BIN/$_fs"

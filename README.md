@@ -23,6 +23,7 @@ Encrypted DNS with per-device visibility on the Alta Labs Route 10 router using 
 
 ## Table of Contents
 
+- [Do You Need This Project?](#do-you-need-this-project)
 - [Get Started](#get-started)
 - [Not Supported](#not-supported)
 - [Installing via an AI Agent](#installing-via-an-ai-agent)
@@ -35,16 +36,39 @@ Encrypted DNS with per-device visibility on the Alta Labs Route 10 router using 
 - [Credits](#credits)
 - [License](#license)
 
+## Do You Need This Project?
+
+Since firmware 1.5h, the Route 10 can send its DNS to ControlD by itself. Under
+Settings → Networks → DNS, leave Use DoH on and put
+`https://dns.controld.com/<your resolver ID>` in DoH Servers. If you want
+encrypted DNS on one ControlD profile and don't need to know which device asked
+what, that setting is enough, and it needs no scripts on the router.
+
+This project is for what that setting can't do:
+
+| | Alta's DoH Servers | This project |
+|---|---|---|
+| What the ControlD dashboard shows | every query as coming from the router | each device separately, VLANs included |
+| Different profiles for different devices | one profile for the whole network | per device or per subnet, with [split DNS](docs/technical-details.md#split-dns-and-per-device-policy) |
+| Protocol to ControlD | DoH over HTTP/1.1 | DoH3 by default, or DoH, DoQ or DoT |
+| Devices with a hardcoded DNS server | not redirected by this setting | caught on ports 53 and 853 with [forced DNS](#turn-on-forced-dns) |
+| Alta's Local DNS Records | work | do not work, see [Not Supported](#not-supported) |
+
+The two can run together. This project uses Alta's DoH as its fallback while
+`ctrld` is down, and how it treats your DoH settings is under [Not
+Supported](#not-supported).
+
 ## Get Started
 
 **What you get:** encrypted DNS (DoH3 by default) routed through
 [ControlD](https://controld.com). Every device on your network shows up
 individually in the ControlD dashboard, including devices on VLANs, not just
 the router as a whole. It survives reboots and firmware updates without
-help, and falls back to a still-encrypted resolver if something goes wrong.
+help, and falls back to Alta's DoH, still encrypted, if something goes wrong,
+as long as Use DoH is on in Alta's DNS settings.
 
 > This project is developed and exercised on an Alta Route 10 running firmware
-> `1.5g`, across six LAN bridges;
+> `1.5g` and then `1.5h`, across six LAN bridges;
 > [docs/hardware-verification.md](docs/hardware-verification.md) records what
 > was watched happen. A few paths pass the test suite but have not been run on
 > a real router, a real auto-update among them. See [Verification
@@ -128,16 +152,19 @@ redirects over IPv4.
 - **IPv6 sites work normally.** AAAA lookups resolve like any other record.
   This is about DNS *carried over* IPv6, not IPv6 addresses in answers.
 - **A device that asks the router for DNS over IPv6 loses its identity.** Its
-  queries still reach ControlD encrypted and on your profile, but they arrive
-  attributed to the router rather than the device, and they skip any split-DNS
-  rule you set for it. Nothing warns you: `status.sh` and `audit.sh` do not
-  look at IPv6, so a clean report does not rule this out.
+  queries go to dnsmasq rather than `ctrld`, so they reach ControlD through
+  Alta's DoH while Use DoH is on (and your ISP's DNS, unencrypted, while it is
+  off). They arrive attributed to the router rather than the device, and they
+  skip any split-DNS rule you set for it. Nothing warns you: `status.sh` and
+  `audit.sh` do not look at IPv6, so a clean report does not rule this out.
 - **A device hardcoded to an IPv6 resolver bypasses ControlD entirely.**
   Forced DNS cannot catch it. This is the only case here where a query leaves
   your network to somewhere that is not ControlD.
 
 To close it, stop the router handing clients an IPv6 resolver. That is a
-router setting this project does not manage.
+router setting this project does not manage. With IPv6 off in Alta none of
+this applies: the router then gives devices no IPv6 address and no IPv6 DNS
+server.
 
 ### Everything else
 
@@ -147,6 +174,9 @@ router setting this project does not manage.
 | **Catching a device that uses DoH** | Forced DNS catches plain DNS (port 53) and DoT (port 853). DoH is indistinguishable from ordinary HTTPS on port 443 and cannot be redirected without breaking the web. Most TVs and IoT gear use DoT, so this is a minority, but a browser set to DoH is out of reach. |
 | **Encrypted DNS from your devices to the router** | Clients speak plain DNS to the router; encryption starts there, on the way out to ControlD. You cannot point a laptop at the router over DoH or DoT. |
 | **Coverage of something that is not a LAN bridge** | Interception follows the router's LAN and VLAN bridges. A WireGuard tunnel, or anything else the router does not present as a LAN bridge, is not intercepted. |
+| **Alta's Local DNS Records** | Records you add under Settings → Networks → DNS answer on the router but not for your devices. Alta keeps them in dnsmasq, and `ctrld` answers your devices without asking dnsmasq. Your devices' own names still resolve, because `ctrld` answers those from the DHCP leases. |
+| **Your own servers in Alta's DoH Servers** | While this project is installed, every DoH server Alta sets up is pointed at your ControlD profile at each boot and each settings save, so a different provider typed there is replaced. Use DoH itself is followed: with it off, the fallback while `ctrld` is down is your ISP's DNS, unencrypted, and `status.sh` says so. |
+| **Saving a setting in Alta's UI without a gap** | Every save re-applies the router's whole config and runs `post-cfg.sh` again, which restarts `ctrld`. Expect lookups to fail for a few seconds after each save. [Boot Persistence](docs/technical-details.md#boot-persistence) has the detail. |
 | **Hand-tuning `/cfg/ctrld.toml`** | Extra upstreams and your split-DNS policy are preserved, but the rest of the file is regenerated on every protocol change, watchdog fallback and re-install. Edits to cache size, log level or the listener will not survive. |
 
 ## Installing via an AI Agent

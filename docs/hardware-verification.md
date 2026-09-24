@@ -280,7 +280,7 @@ failed probes.
   `post-cfg.sh` compared dnsmasq's servers first, the boot after the update
   started dnsmasq three times: once from the firmware and once from each run
   of `post-cfg.sh`. With the comparison in place, a version since replaced by
-  the one under Alta's DNS Settings below, re-running `setup.sh` left
+  the one under Alta Control's DNS Settings below, re-running `setup.sh` left
   dnsmasq's process ID unchanged, and a reboot showed one start, the
   firmware's own, with both runs of `post-cfg.sh` logging
   `dnsmasq already forwards to https-dns-proxy — left running`. The failed
@@ -313,12 +313,12 @@ failed probes.
   later went to a second access point. This is the firmware's, and
   `docs/troubleshooting.md` has the check and the workaround.
 
-## Alta's DNS Settings
+## Alta Control's DNS Settings
 
 - **A settings save re-runs `post-cfg.sh`, on 1.5h.** Saving any change on
-  Alta's DNS page, a local DNS record included, re-applied the router's whole
-  config: the firmware stopped https-dns-proxy, reloaded the firewall,
-  restarted dnsmasq when its settings differed, and then ran
+  the DNS page in Alta Control, a local DNS record included, re-applied the
+  router's whole config: the firmware stopped https-dns-proxy, reloaded the
+  firewall, restarted dnsmasq when its settings differed, and then ran
   `/cfg/post-cfg.sh`. That run restored forced DNS, restarted `ctrld` and put
   the redirects back on all six bridges within about 3 seconds. Afterwards
   there were 24 rules and `audit.sh` exited 0.

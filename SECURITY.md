@@ -18,7 +18,9 @@ yet), open a regular issue asking for a private channel and it will be set up.
 ## Scope
 
 In scope: `setup.sh`, `reconfigure.sh`, `uninstall.sh`, `lib.sh`, `watchdog.sh`,
-`post-cfg.sh`, and the iptables/uci/cron behavior they configure.
+`post-cfg.sh`, `controld-update.sh` (which downloads, checks and swaps the
+`ctrld` binary), the `/cfg/rc.local` boot hook, and the iptables/uci/cron
+behavior they configure.
 
 Out of scope: the `ctrld` binary itself and ControlD's service. Report those
 upstream to [Control-D-Inc/ctrld](https://github.com/Control-D-Inc/ctrld) or

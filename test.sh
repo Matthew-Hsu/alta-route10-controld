@@ -521,6 +521,33 @@ FORCED_DNS=1
 assert_true "forced DNS adds port 853" ensure_firewall_user_rules 5354
 assert_file_contains "853 rule present" "$FW_USER" "br-lan_10 -p tcp --dport 853"
 FORCED_DNS=0
+
+# The firewall runs this file on every reload, every boot and every settings
+# save in Alta's UI, and the block re-added the redirects whether ctrld was up
+# or not. With ctrld unable to start and no watchdog to tear them down, that
+# sent every client's DNS to a closed port. Run the block the way the firewall
+# does, against a stub netstat and a stub iptables, with ctrld listening and
+# then not.
+ensure_firewall_user_rules 5354 >/dev/null 2>&1 || true
+FUB_BIN="$TMPDIR/fubbin"; mkdir -p "$FUB_BIN"
+printf '#!/bin/sh\necho "$*" >> "%s/iptables.log"\n' "$FUB_BIN" > "$FUB_BIN/iptables"
+chmod +x "$FUB_BIN/iptables"
+read_block "$FW_USER" "$FW_MARKER" > "$FUB_BIN/block.sh"
+fub_run() {
+    rm -f "$FUB_BIN/iptables.log"
+    printf '#!/bin/sh\n%s\n' "$1" > "$FUB_BIN/netstat"; chmod +x "$FUB_BIN/netstat"
+    ( PATH="$FUB_BIN:$PATH"; sh "$FUB_BIN/block.sh" ) >/dev/null 2>&1 || true
+    grep -c 'REDIRECT' "$FUB_BIN/iptables.log" 2>/dev/null || echo 0
+}
+FUB_BRIDGES="$(SYSFS_NET="$FAKE_NET" lan_ifaces | grep -c .)"
+assert_eq "with ctrld listening, the block adds a udp and a tcp rule per bridge" \
+    "$((FUB_BRIDGES * 2))" \
+    "$(fub_run 'echo "udp        0      0 0.0.0.0:5354            0.0.0.0:*"')"
+assert_eq "with nothing on the port, it adds none" "0" "$(fub_run 'exit 0')"
+assert_eq "and something on another port does not count" "0" \
+    "$(fub_run 'echo "udp        0      0 0.0.0.0:53540           0.0.0.0:*"')"
+unset FUB_BIN FUB_BRIDGES
+unset -f fub_run
 unset FW_USER SYSFS_NET
 
 describe "is_our_rc_local() — never clobber someone else's boot hook"

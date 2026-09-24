@@ -1431,6 +1431,29 @@ remove_block() {
     sed -i "/^# $2 BEGIN$/,/^# $2 END$/d" "$1"
 }
 
+# The body of the firewall.user block: the redirects, added only while
+# something listens on the port they send DNS to.
+#
+# The firewall runs /etc/firewall.user when it starts, at every boot and on a
+# restart, but not on a reload: the include carries no reload option, and a
+# reload leaves rules it did not write in place. At boot that is before ctrld
+# is up, and the block added the redirects anyway. After a firmware update that
+# left ctrld unable to start and removed the watchdog's cron, every client's DNS
+# went to a closed port from the moment the router came up, with nothing to
+# take the rules out. Skipping them leaves clients on dnsmasq, and post-cfg.sh
+# and the watchdog add them once ctrld answers.
+#
+# netstat, not a DNS query: a query to a closed local port costs the
+# resolver's full timeout on a Route 10, and this runs while the firewall
+# starts. The block runs on its own under the firewall, so it cannot call
+# anything here.
+# Usage: firewall_user_block <to-port> <dport>...
+firewall_user_block() {
+    printf 'if netstat -lnu 2>/dev/null | grep -q ":%s "; then\n' "$1"
+    dns_redirect_commands "$@" | sed 's/^/    /'
+    printf 'fi\n'
+}
+
 # Keep /etc/firewall.user asserting the DNS redirects for the current LAN
 # bridges, so they are restored instantly on a firewall reload. Rewrites only on
 # drift (a new VLAN, a changed port), so the 5-minute watchdog does not write to
@@ -1440,9 +1463,9 @@ ensure_firewall_user_rules() {
     _efu_port="${1:-$DNS_PORT}"
     _efu_file="$FW_USER"
     if [ "${FORCED_DNS:-0}" = "1" ]; then
-        _efu_want="$(dns_redirect_commands "$_efu_port" 53 853)"
+        _efu_want="$(firewall_user_block "$_efu_port" 53 853)"
     else
-        _efu_want="$(dns_redirect_commands "$_efu_port" 53)"
+        _efu_want="$(firewall_user_block "$_efu_port" 53)"
     fi
     if [ "$(read_block "$_efu_file" "$FW_MARKER")" = "$_efu_want" ]; then
         return 1

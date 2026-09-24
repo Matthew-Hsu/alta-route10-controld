@@ -1283,9 +1283,10 @@ ensure_iptables() {
 # Last resort for the watchdog: with ctrld dead the redirects point port 53 at a
 # closed port, so every client on every bridge loses DNS entirely, which is
 # worse than not intercepting at all. Removing them hands resolution back to
-# dnsmasq ->
-# https-dns-proxy: still encrypted, just without per-device visibility.
-# post-cfg.sh and the watchdog re-add the rules once ctrld answers again.
+# dnsmasq, which forwards to https-dns-proxy while Alta's Use DoH is on (still
+# encrypted, just without per-device visibility) and to the ISP's DNS while it
+# is off. post-cfg.sh and the watchdog re-add the rules once ctrld answers
+# again.
 # Usage: remove_dns_redirects [port]
 remove_dns_redirects() {
     _rdr_port="${1:-$DNS_PORT}"

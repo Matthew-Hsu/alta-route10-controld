@@ -88,7 +88,7 @@ If your router locks up, the only fix is a physical reboot. The lockup won't per
 | `reconfigure.sh` | Change protocol, resolver, or policies without re-running setup | `--help` `--version` `--show` `--protocol` `--resolver` `--benchmark` `--policy` `--force-dns` `--auto-update` `--repair` `--to <value>` `--force` |
 | `benchmark.sh` | Test DNS query latency across DoQ, DoH3, DoH and DoT | `--help` `--version` `--queries N` |
 | `audit.sh` | Read-only drift check: installed versions, duplicates, stale references, leftovers, packets actually intercepted | `--help` `--version` `--raw` |
-| `uninstall.sh` | Removes everything, restores default DNS | `--help` `--version` `--force` |
+| `uninstall.sh` | Removes everything this project installed; devices go back to the router's own DNS | `--help` `--version` `--force` |
 | `test.sh` | Test suite: unit tests anywhere, integration tests on-router | none |
 
 Every script except `test.sh` supports `--help` with full usage documentation, and `--version` (or `-v`), which answers without needing an install.
@@ -153,17 +153,19 @@ sh reconfigure.sh --protocol
 # Change resolver
 sh reconfigure.sh --resolver --to abc123
 
-# Benchmark and auto-apply fastest
+# Benchmark, and switch if another protocol is clearly faster
 sh reconfigure.sh --benchmark --force
 
 # Manage split DNS policies
 sh reconfigure.sh --policy
 
-# Toggle forced DNS hijacking
+# Toggle forced DNS hijacking, or set it by name with --to on|off
 sh reconfigure.sh --force-dns
+sh reconfigure.sh --force-dns --to on
 
-# Toggle the weekly ctrld auto-update
+# Toggle the weekly ctrld auto-update, or set it by name
 sh reconfigure.sh --auto-update
+sh reconfigure.sh --auto-update --to off
 
 # Re-apply DNS redirects to every LAN bridge (picks up new VLANs)
 sh reconfigure.sh --repair
@@ -180,7 +182,7 @@ sh reconfigure.sh
 2. Reinstalls cron jobs: adds watchdog (5-min) and auto-update (weekly) to crontab, since crontab lives in `/etc/` and may be wiped by firmware updates. Jobs are matched by script path, never by keyword: the router ships its own `wireguard_watchdog` entry, and matching the bare word made the reinstall skip our job after every reboot while leaving the health check silently dead
 3. Refreshes `firewall.user` rules, regenerated from the current LAN bridge list, so iptables redirects survive mid-session firewall restarts
 
-After a firmware update or reboot, ControlD is fully operational within ~30 seconds. No manual intervention required.
+After a firmware update or reboot, ControlD is answering again within about a minute of the reboot starting. Timed from a client, DNS answered again 65 seconds after a reboot began on firmware 1.5g, and failed for 38 seconds across one on 1.5h. No manual intervention required.
 
 `post-cfg.sh` is not ours alone to schedule. The filename is an Alta convention: sixteen firmware binaries carry the literal string `/cfg/post-cfg.sh`, `/usr/sbin/cfg` and `/usr/sbin/rc` among them, so the firmware runs it as part of applying its own config. Our `rc.local` runs it as well, which means it executes at least twice per boot on this hardware. On firmware 1.5h it also runs after every settings save in Alta's UI, since a save re-applies the router's whole config, firewall reload included.
 
@@ -196,7 +198,7 @@ That is worth knowing because the two runs can disagree. The firmware's invocati
 4. Starts `ctrld` on port 5354
 5. Health checks before adding iptables redirect rules
 6. Restores forced-DNS state (uci + port-853 rules + firewall.user) if `FORCED_DNS=1`
-7. If `ctrld` fails, keeps `https-dns-proxy` as the DNS backend
+7. If `ctrld` fails, leaves DNS on dnsmasq, which forwards to `https-dns-proxy` while Use DoH is on
 
 `/cfg/rc.local` reinstalls both cron jobs at the same boot, because the crontab lives in `/etc` and a firmware update wipes it. It reinstalls the weekly update only when `AUTO_UPDATE` is not `0`, sourcing `controld.env` in a subshell to read it: nothing set there escapes, so a block that runs alongside `post-cfg.sh` does not adopt the rest of the file, and a missing or malformed file leaves the cron installed. The watchdog is reinstalled either way.
 
@@ -342,7 +344,7 @@ Tests every protocol that can be a primary (DoQ, DoH3, DoH and DoT) with real DN
 `reconfigure.sh --benchmark` and the installer's menu option 5 run the same
 code over the same four protocols. The installer prints no "switch to X"
 recommendation, because nothing is installed yet and there is no running
-protocol to compare against — it simply selects the winner. None of the three
+protocol to compare against, so it simply selects the winner. None of the three
 entry points interrupts DNS for the LAN.
 
 The menu and the benchmark have to offer the same set in both directions: a
@@ -380,7 +382,10 @@ sh test.sh    # works locally and on-router
 - That `start_ctrld`'s timeout is seconds of wall clock, and that it makes no DNS query while the port is closed
 - That the recorded protocol is corrected when it disagrees with what `ctrld.toml` is actually running, on every healthy watchdog cycle and immediately in `reconfigure.sh`, and that `status.sh` reads the truth directly rather than the possibly-stale record
 - That `lib.sh` carries no function without a caller
-- That `benchmark.sh` and `reconfigure.sh --benchmark` really do probe every protocol that can be the running one, run against a stubbed prober, so neither recommends switching away from one it did not time
+- That `benchmark.sh` and `reconfigure.sh --benchmark` really do probe every protocol that can be the running one, run against a stubbed prober, so neither recommends switching away from one it did not time, and that both keep the running protocol unless another is at least 5 ms and 20% faster
+- That the installer and `reconfigure.sh` check a resolver ID and protocol before changing anything, and refuse one ControlD does not answer for
+- That `post-cfg.sh`, `uninstall.sh` and `status.sh` follow Alta's Use DoH as dnsmasq's servers report it, with uci answering each way it was seen to on a Route 10
+- That `--force-dns` and `--auto-update` set the state named with `--to on` or `--to off`, and change nothing when it is already set
 - `--help` and `--version` flags on all scripts, including that each renders its colours rather than printing the escape sequences
 - Invalid input rejection
 

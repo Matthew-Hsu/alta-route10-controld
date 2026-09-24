@@ -321,7 +321,7 @@ When enabled:
 - **Port 53** (plain DNS): redirected to ControlD via iptables
 - **Port 853** (DoT): redirected to ControlD via iptables
 - State is recorded as `FORCED_DNS=1` in `/cfg/controld.env` (the persistent source of truth), and re-running `setup.sh` preserves it, falling back to the live uci state for installs predating the flag
-- **Self-healing persistence**: the uci config, port-853 iptables rules, and `/etc/firewall.user` entries are restored automatically: at boot by `post-cfg.sh`, every 5 minutes by `/cfg/watchdog.sh`, and instantly on firewall reload via `firewall.user`. This survives reboots **and** firmware updates (which can wipe `/etc/config`).
+- **Self-healing persistence**: the uci config, port-853 iptables rules, and `/etc/firewall.user` entries are restored automatically: at boot by `post-cfg.sh`, every 5 minutes by `/cfg/watchdog.sh`, and on a firewall restart via `firewall.user`. A firewall reload leaves them in place. This survives reboots **and** firmware updates (which can wipe `/etc/config`).
 - `status.sh` reports the forced DNS state and active hijack rules
 
 **Note:** DNS-over-HTTPS (DoH, port 443) cannot be redirected without breaking all HTTPS traffic. Most TVs and IoT devices use DoT rather than DoH, so forced DNS catches the majority of bypass attempts.
@@ -477,7 +477,7 @@ If you prefer not to use the automated installer, see `config/ctrld.toml.example
 The example gets `ctrld` running and redirects DNS on every LAN bridge, which
 is the part you can see working. It writes no `/cfg/controld.env`, no
 `/cfg/rc.local`, no cron jobs and no `/etc/firewall.user` block, so nothing
-runs it again: the redirects are gone after a reboot or a firewall reload, and
+runs it again: the redirects are gone after a reboot or a firewall restart, and
 nothing puts them back. You also get no watchdog, so no protocol fallback and
 no teardown if `ctrld` dies, no weekly `ctrld` update, no forced DNS, and none
 of `status.sh`, `audit.sh` or `reconfigure.sh`.
@@ -504,7 +504,7 @@ reboot usually self-heals before you look.
 The quiet failure is the one to watch for. `ctrld` is still running from
 before the update, so DNS resolves and the dashboard looks healthy, while the
 crontab is empty and the firewall block is gone. Nothing is visibly wrong until
-something reloads the firewall, or the next reboot happens without the
+something restarts the firewall, or the next reboot happens without the
 `rc.local` hook to restore things.
 
 `audit.sh` reports each of those as drift and exits non-zero, so a clean
@@ -513,7 +513,7 @@ something reloads the firewall, or the next reboot happens without the
 | Missing after an update | Consequence, if left | Recovery |
 | --- | --- | --- |
 | `watchdog.sh` / `controld-update.sh` cron entries | no health checks, no weekly `ctrld` update | reboot (the boot hook reinstalls both) |
-| managed block in `/etc/firewall.user` | redirects vanish on the next firewall reload | reboot, or `sh /cfg/reconfigure.sh --repair` |
+| managed block in `/etc/firewall.user` | redirects vanish at the next firewall restart or reboot | reboot, or `sh /cfg/reconfigure.sh --repair` |
 | `/etc/rc.local` sourcing `/cfg/rc.local` | nothing above is restored at any future boot | add the hook back by hand (below) |
 
 The third one is the only one a reboot cannot fix, because it is what makes

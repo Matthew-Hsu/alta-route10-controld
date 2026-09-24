@@ -78,14 +78,21 @@ find . -name "*.sh" -exec shellcheck -s sh -S warning -e SC2154,SC3043,SC2034 {}
 find . -name "*.sh" -exec shellcheck -s sh -S info -i SC2086 {} +
 ```
 
-CI runs exactly these, and one more thing you cannot: a `betterleaks` secrets
-scan over the tree. It needs a binary downloaded at job time, so it is not in
-the list above. Nothing in a normal change trips it; it is there to stop a
-resolver ID or a key reaching the history.
+CI runs exactly these, and two more things. One you cannot run: a
+`betterleaks` secrets scan over the tree. It needs a binary downloaded at job
+time, so it is not in the list above. Nothing in a normal change trips it; it
+is there to stop a resolver ID or a key reaching the history.
 
-The third run is not a duplicate of the second. The first two use your
-`/bin/sh`, which on most development machines is dash or bash, and neither is
-what the router runs. dash's `echo` expands backslash escapes where BusyBox
+The other is `.github/scripts/check-issue-refs.sh`, which fails when
+`README.md` or `docs/` links to a closed issue, or when the pull request's own
+description closes an issue they still link to. It asks GitHub, so it needs
+`gh` signed in; with that, `sh .github/scripts/check-issue-refs.sh` runs it
+from the repository root. If your change closes an issue, update or remove the
+sentence that links to it in the same pull request.
+
+The third `test.sh` run is not a duplicate of the second. The first two use
+your `/bin/sh`, which on most development machines is dash or bash, and neither
+is what the router runs. dash's `echo` expands backslash escapes where BusyBox
 ash's does not, which is how an assertion in this suite came to test one thing
 in CI and another on the device. Varying the awk and never the shell left that
 invisible.

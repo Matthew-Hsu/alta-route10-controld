@@ -16,6 +16,11 @@ on:
   push:
     branches: [master]
   pull_request:
+  # Weekly, for the issue-refs job: an issue closed from its own page leaves no
+  # pull request or push behind to run the check. The other jobs run with it,
+  # which costs a few minutes a week and nothing else.
+  schedule:
+    - cron: "17 6 * * 1"
 
 jobs:
   secrets-scan:
@@ -70,3 +75,23 @@ jobs:
         # BusyBox is already installed by the step above, so this costs one
         # more run of a suite that takes well under a minute.
         run: AWK="busybox awk" busybox sh test.sh
+
+  issue-refs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: no links to closed issues
+        # README.md links a known limit to the issue tracking it, and a closed
+        # issue usually means the sentence around the link is no longer true.
+        # .github/scripts/check-issue-refs.sh says what it checks and why.
+        # A body edited after the pull request opened is read again at the
+        # next push, since "edited" is outside the default activity types.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Through the environment, never pasted into the script: anyone who
+          # opens a pull request writes this text.
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: sh .github/scripts/check-issue-refs.sh

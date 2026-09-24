@@ -124,6 +124,12 @@ line numbers drift and a stale pointer aims attention at the wrong line:
 - every shebang, the four inside `setup.sh`'s heredocs included
 - every user-facing message string, not only the ones a test anchors on by
   text such as `uninstall.sh`'s "carries no redirect to port". These are UI
+- the links from `README.md` and `docs/` to this repository's issues, written
+  as `https://github.com/Matthew-Hsu/alta-route10-controld/issues/<number>`.
+  `.github/scripts/check-issue-refs.sh` reads that form to fail CI once a
+  linked issue is closed, and skips a link written any other way, so `test.sh`
+  checks that every link to this repository's issues in those files is one it
+  sees
 
 Every one of those is guarded, so the suite catches a breakage whether or not
 anyone read this section. Each guard was confirmed by mutating the thing it
@@ -145,8 +151,8 @@ and say in the commit what moved. Deleting one to get green is how this project
 ends up back where it started, with a documented rule and nothing enforcing it.
 
 That rule is the only thing covering an interface added later, so treat it as
-load-bearing. The guards above protect these nine and nothing else: add a
-tenth without one and the suite stays green, both when you add it and when
+load-bearing. The guards above protect these ten and nothing else: add an
+eleventh without one and the suite stays green, both when you add it and when
 someone reworks the comment away months later, in a different change, with
 nothing to connect the breakage back to the edit that caused it. Simulating
 exactly that is how this section was checked. Whether a new interface is

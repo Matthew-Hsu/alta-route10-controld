@@ -27,8 +27,9 @@ DEGRADED_FLAG="${DEGRADED_FLAG:-/tmp/controld-degraded}"
 # move off 5354 exports it before sourcing this file); load_env applies the same
 # default for anything that reads /cfg/controld.env.
 DNS_PORT="${DNS_PORT:-5354}"
-# The file fw3 runs on every firewall reload, and the marker for the block this
-# project owns inside it. FW_USER is overridable so tests never touch /etc.
+# The file fw3 runs when the firewall starts, at boot and on a restart but not
+# on a reload, and the marker for the block this project owns inside it.
+# FW_USER is overridable so tests never touch /etc.
 # awk implementation to use. The router runs BusyBox awk, which handles a
 # regex passed through -v differently from GNU awk; overridable so the tests
 # can run the same assertions under both.
@@ -1210,9 +1211,10 @@ dns_redirect_commands() {
         for _drc_dport in "$@"; do
             # -I ... 1, matching ensure_iptables. firewall.user runs after fw3
             # has rebuilt its chains, so appending here would put every rule
-            # back below the zone chains on the next firewall reload and undo
-            # the precedence live insertion just established — including the
-            # 853 hijack, which was inserted live and appended here.
+            # back below the zone chains at the next firewall restart or reboot
+            # and undo the precedence live insertion just established,
+            # including the 853 hijack, which was inserted live and appended
+            # here.
             printf 'iptables -t nat -I PREROUTING 1 -i %s -p udp --dport %s -j REDIRECT --to-port %s\n' \
                 "$_drc_if" "$_drc_dport" "$_drc_to"
             printf 'iptables -t nat -I PREROUTING 1 -i %s -p tcp --dport %s -j REDIRECT --to-port %s\n' \
@@ -1296,7 +1298,8 @@ remove_dns_redirects() {
             del_redirect_rule "$_rdr_if" tcp "$_rdr_dport" "$_rdr_port"
         done
     done
-    # Drop the firewall.user block too, or the next firewall reload re-adds them
+    # Drop the firewall.user block too, or the next firewall restart or reboot
+    # re-adds them
     remove_block "$FW_USER" "$FW_MARKER"
     printf 'ctrld unrecoverable — DNS redirects removed so the LAN keeps resolving\n' \
         > "$DEGRADED_FLAG" 2>/dev/null || true
@@ -1455,9 +1458,10 @@ firewall_user_block() {
 }
 
 # Keep /etc/firewall.user asserting the DNS redirects for the current LAN
-# bridges, so they are restored instantly on a firewall reload. Rewrites only on
-# drift (a new VLAN, a changed port), so the 5-minute watchdog does not write to
-# flash every cycle. Port 853 is included only when forced DNS is on.
+# bridges, so they are restored when the firewall starts, at boot or on a
+# restart. A reload leaves them in place. Rewrites only on drift (a new VLAN,
+# a changed port), so the 5-minute watchdog does not write to flash every
+# cycle. Port 853 is included only when forced DNS is on.
 # Usage: ensure_firewall_user_rules [port]
 ensure_firewall_user_rules() {
     _efu_port="${1:-$DNS_PORT}"
@@ -1943,8 +1947,8 @@ ensure_forced_dns() {
         logger -t forced-dns "restored ${_added} port-853 redirect rule(s)"
     fi
 
-    # 3. firewall.user, persisting the 53 + 853 rules so a firewall reload
-    #    restores them instantly (rewritten only when the bridge list drifts)
+    # 3. firewall.user, persisting the 53 + 853 rules so a firewall restart or
+    #    reboot restores them (rewritten only when the bridge list drifts)
     ensure_firewall_user_rules "$_port" || true
 
     return 0
@@ -1970,7 +1974,7 @@ disable_forced_dns() {
         # ensure_firewall_user_rules creates one when none exists, so it wrote
         # twelve port-53 REDIRECTs back into /etc/firewall.user pointing at a
         # port nothing would ever listen on again. Found on a router: the next
-        # firewall reload or reboot would have taken DNS down on every bridge,
+        # firewall restart or reboot would have taken DNS down on every bridge,
         # permanently, with none of this project left on the box to explain it.
         if grep -q "^# ${FW_MARKER} BEGIN\$" "$FW_USER" 2>/dev/null; then
             ensure_firewall_user_rules "$_port" || true

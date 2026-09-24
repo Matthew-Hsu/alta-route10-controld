@@ -182,7 +182,7 @@ sh reconfigure.sh
 
 After a firmware update or reboot, ControlD is fully operational within ~30 seconds. No manual intervention required.
 
-`post-cfg.sh` is not ours alone to schedule. The filename is an Alta convention: sixteen firmware binaries carry the literal string `/cfg/post-cfg.sh`, `/usr/sbin/cfg` and `/usr/sbin/rc` among them, so the firmware runs it as part of applying its own config. Our `rc.local` runs it as well, which means it executes at least twice per boot on this hardware.
+`post-cfg.sh` is not ours alone to schedule. The filename is an Alta convention: sixteen firmware binaries carry the literal string `/cfg/post-cfg.sh`, `/usr/sbin/cfg` and `/usr/sbin/rc` among them, so the firmware runs it as part of applying its own config. Our `rc.local` runs it as well, which means it executes at least twice per boot on this hardware. On firmware 1.5h it also runs after every settings save in Alta's UI, since a save re-applies the router's whole config, firewall reload included.
 
 That is worth knowing because the two runs can disagree. The firmware's invocation happens early, and on a boot watched here it ran before `ctrld` was up, failed its health check, and fell back to `https-dns-proxy`, logging `ctrld failed health check, using https-dns-proxy fallback`. The hook's invocation a fraction of a second later started `ctrld` and installed all 24 redirects, and the router settled correct. The script is written to be safe to run repeatedly, which is what makes this a transient rather than a fault, but any reasoning about boot ordering that assumes `rc.local` is the only caller is wrong.
 

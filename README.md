@@ -54,6 +54,9 @@ This project is for what that setting can't do:
 | Devices with a hardcoded DNS server | not redirected by this setting | caught on ports 53 and 853 with [forced DNS](#turn-on-forced-dns) |
 | Local DNS Records in Alta Control | work | do not work, see [Not Supported](#not-supported) |
 
+The DoH Servers column was worked out on a router with this project installed.
+Checking it on one without is tracked in [#59](https://github.com/Matthew-Hsu/alta-route10-controld/issues/59).
+
 The two can run together. This project uses the router's built-in DoH as its
 fallback while `ctrld` is down, and how it treats your DoH settings is under
 [Not Supported](#not-supported).
@@ -164,7 +167,8 @@ redirects over IPv4.
 To close it, stop the router handing clients an IPv6 resolver. That is a
 setting in Alta Control, which this project does not manage. With IPv6 off
 there, none of this applies: the router then gives devices no IPv6 address and
-no IPv6 DNS server.
+no IPv6 DNS server. Whether IPv6 can stay on without devices losing their
+identity is an open question in [#60](https://github.com/Matthew-Hsu/alta-route10-controld/issues/60).
 
 ### Everything else
 
@@ -174,7 +178,7 @@ no IPv6 DNS server.
 | **Catching a device that uses DoH** | Forced DNS catches plain DNS (port 53) and DoT (port 853). DoH is indistinguishable from ordinary HTTPS on port 443 and cannot be redirected without breaking the web. Most TVs and IoT gear use DoT, so this is a minority, but a browser set to DoH is out of reach. |
 | **Encrypted DNS from your devices to the router** | Clients speak plain DNS to the router; encryption starts there, on the way out to ControlD. You cannot point a laptop at the router over DoH or DoT. |
 | **Coverage of something that is not a LAN bridge** | Interception follows the router's LAN and VLAN bridges. A WireGuard tunnel, or anything else the router does not present as a LAN bridge, is not intercepted. |
-| **Local DNS Records in Alta Control** | Records you add in Alta Control under Settings → Networks → DNS answer on the router but not for your devices. The firmware keeps them in dnsmasq, and `ctrld` answers your devices without asking dnsmasq. Your devices' own names still resolve, because `ctrld` answers those from the DHCP leases. |
+| **Local DNS Records in Alta Control** | Records you add in Alta Control under Settings → Networks → DNS answer on the router but not for your devices. The firmware keeps them in dnsmasq, and `ctrld` answers your devices without asking dnsmasq. Your devices' own names still resolve, because `ctrld` answers those from the DHCP leases. Making records work is tracked in [#57](https://github.com/Matthew-Hsu/alta-route10-controld/issues/57). |
 | **Your own servers in Alta Control's DoH Servers** | While this project is installed, every DoH server the firmware sets up is pointed at your ControlD profile at each boot and each settings save, so a different provider typed there is replaced. Use DoH itself is followed: with it off, the fallback while `ctrld` is down is your ISP's DNS, unencrypted, and `status.sh` says so. |
 | **Saving a setting in Alta Control without a gap** | Every save re-applies the router's whole config and runs `post-cfg.sh` again, which restarts `ctrld`. Expect lookups to fail for a few seconds after each save. [Boot Persistence](docs/technical-details.md#boot-persistence) has the detail. |
 | **Hand-tuning `/cfg/ctrld.toml`** | Extra upstreams and your split-DNS policy are preserved, but the rest of the file is regenerated on every protocol change, watchdog fallback and re-install. Edits to cache size, log level or the listener will not survive. |

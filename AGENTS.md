@@ -182,8 +182,8 @@ already asking for.
 `README.md` is for someone deciding whether to use this and then installing
 it. `docs/` is for how and why. A change that explains mechanism belongs in
 `docs/`, and the README gets a sentence and a link to it. This is not a
-preference someone applied once: `README.md` was 934 lines before `7ad6c40`
-moved the internals out, and it is worth keeping that way.
+preference someone applied once: `README.md` was 934 lines in 1.10.1, before
+1.11.0 moved the internals out, and it is worth keeping that way.
 
 The test is what a reader does with a paragraph. What the job does, the command
 to run, that a setting survives a reboot, what turning it off costs: that is a

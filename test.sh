@@ -1222,6 +1222,45 @@ sed -i 's/^AUTO_UPDATE=.*/AUTO_UPDATE=1/' "$RA_CFG/controld.env"
 assert_false "menu entry 7 reaches the same action" \
     installed_auto_update "$RA_CFG/controld.env"
 
+# --to on|off names the state wanted instead of flipping whatever is set, so a
+# script or agent can run it twice and get the same result. No --force and no
+# input: --to alone must be enough to act without a prompt.
+ra_to() { ( PATH="$RA_BIN:$PATH"; sh "$RA_CFG/reconfigure.sh" "$@" ) 2>&1 </dev/null || true; }
+printf '*/5 * * * * %s/watchdog.sh\n' "$RA_CFG" > "$RA_TAB"
+RA_TO="$(ra_to --auto-update --to off)"
+assert_contains "--to off when it is already off changes nothing" "$RA_TO" \
+    "Weekly auto-update is already off"
+assert_false "and leaves it off" installed_auto_update "$RA_CFG/controld.env"
+RA_TO="$(ra_to --auto-update --to on)"
+assert_true "--to on turns it on without a prompt" installed_auto_update "$RA_CFG/controld.env"
+assert_contains "and installs the cron" "$(cat "$RA_TAB" 2>/dev/null)" "controld-update.sh"
+RA_TO="$(ra_to --auto-update --to on)"
+assert_contains "running it again changes nothing" "$RA_TO" "Weekly auto-update is already on"
+assert_eq "and adds no second cron line" "1" \
+    "$(grep -c 'controld-update.sh' "$RA_TAB")"
+RA_TO="$(ra_to --auto-update --to off)"
+assert_false "--to off turns it off without a prompt" installed_auto_update "$RA_CFG/controld.env"
+assert_contains "and it says so" "$RA_TO" "Weekly auto-update off"
+RA_TO="$(ra_to --auto-update --to maybe)"
+assert_contains "anything but on or off is refused" "$RA_TO" "--to takes on or off here"
+assert_false "without changing anything" installed_auto_update "$RA_CFG/controld.env"
+
+# Forced DNS. Only the paths that end before iptables and uci are touched run
+# here: the change itself is the same branch --force already takes.
+sed -i 's/^FORCED_DNS=.*/FORCED_DNS=1/' "$RA_CFG/controld.env"
+RA_TO="$(ra_to --force-dns --to on)"
+assert_contains "--force-dns --to on when it is on changes nothing" "$RA_TO" \
+    "Forced DNS is already on"
+assert_not_contains "and asks nothing" "$RA_TO" "Disable forced DNS?"
+RA_TO="$(ra_to --force-dns --to sideways)"
+assert_contains "and a bad value is refused there too" "$RA_TO" "--to takes on or off here"
+sed -i 's/^FORCED_DNS=.*/FORCED_DNS=0/' "$RA_CFG/controld.env"
+RA_TO="$(ra_to --force-dns --to off)"
+assert_contains "--force-dns --to off when it is off changes nothing" "$RA_TO" \
+    "Forced DNS is already off"
+unset RA_TO
+unset -f ra_to
+
 describe "reconfigure.sh --auto-update — the toggle moves the cron too"
 
 # The flag governs the next boot and the next re-install, neither of which has

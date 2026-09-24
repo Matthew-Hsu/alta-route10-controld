@@ -310,6 +310,9 @@ sh reconfigure.sh --force-dns
 
 # The same without a prompt
 sh reconfigure.sh --force-dns --force
+
+# On or off by name, without a prompt, and nothing changes if it is already set
+sh reconfigure.sh --force-dns --to on
 ```
 
 When enabled:

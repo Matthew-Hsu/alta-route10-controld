@@ -57,14 +57,16 @@ usage() {
     --resolver      Change resolver ID (prompts, or use --to <id>)
     --benchmark     Benchmark all protocols, apply fastest
     --policy        Manage split DNS policies (add/remove/list)
-    --force-dns     Toggle forced DNS (hijack all outbound DNS)
-    --auto-update   Toggle the weekly ctrld auto-update
+    --force-dns     Toggle forced DNS (hijack all outbound DNS), or --to on|off
+    --auto-update   Toggle the weekly ctrld auto-update, or --to on|off
     --repair        Re-apply DNS redirects to every LAN bridge (incl. new VLANs)
     --help          Show this help
 
   ${BOLD}Options:${RESET}
     --to <value>    Non-interactive: set value directly
-                    (e.g. --protocol --to doq, --resolver --to abc123)
+                    (e.g. --protocol --to doq, --resolver --to abc123,
+                    --force-dns --to on). With on or off, running it again
+                    changes nothing
     --force         Skip confirmation prompts
     --version       Show version and exit (-v also works)
 
@@ -78,6 +80,7 @@ usage() {
     reconfigure.sh --policy                 # manage split DNS rules
     reconfigure.sh --force-dns              # toggle forced DNS hijacking
     reconfigure.sh --auto-update            # toggle the weekly ctrld update
+    reconfigure.sh --force-dns --to off     # turn forced DNS off, whatever it is now
     reconfigure.sh --repair                 # cover VLANs added since install
 "
     exit 0
@@ -623,6 +626,27 @@ EOF
     done
 }
 
+# --to on|off for the two toggles. A bare --force-dns or --auto-update --force
+# flips whatever is set now, so a script or agent had to read the state first
+# to know which way the command would go. With --to the command names the state
+# it wants: when that is already the state, nothing changes; otherwise the
+# usual branch runs without its prompt.
+# Usage: toggle_to <label> <current 0|1>   (returns 1 when there is nothing to do)
+toggle_to() {
+    [ -n "$TARGET" ] || return 0
+    case "$TARGET" in
+        on)  _tt_want=1 ;;
+        off) _tt_want=0 ;;
+        *)   die "--to takes on or off here, not ${TARGET}" ;;
+    esac
+    if [ "$_tt_want" = "$2" ]; then
+        print_info "$1 is already ${TARGET}. No changes made."
+        return 1
+    fi
+    FORCE=1
+    return 0
+}
+
 # ── Action: Force DNS ──
 
 do_force_dns() {
@@ -635,6 +659,8 @@ do_force_dns() {
     if [ "$current" = "0" ]; then
         current="$(uci -q get https-dns-proxy.config.force_dns 2>/dev/null || echo "0")"
     fi
+    [ "$current" = "1" ] || current=0
+    toggle_to "Forced DNS" "$current" || return 0
 
     if [ "$current" = "1" ]; then
         printf "  Current: ${GREEN}ENABLED${RESET} — all outbound DNS is intercepted\n\n"
@@ -700,6 +726,9 @@ do_auto_update() {
     print_header "Weekly Auto-Update"
     printf "  A cron job at 03:00 every Monday checks for a newer ctrld and\n"
     printf "  installs it, replacing the binary that answers DNS for the LAN.\n\n"
+
+    if [ "${AUTO_UPDATE:-1}" = "0" ]; then _au_now=0; else _au_now=1; fi
+    toggle_to "Weekly auto-update" "$_au_now" || return 0
 
     if [ "${AUTO_UPDATE:-1}" = "0" ]; then
         printf "  Current: ${RED}OFF${RESET} — ctrld is updated only when you do it\n\n"

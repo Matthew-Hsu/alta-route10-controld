@@ -193,8 +193,9 @@ installer, a few things matter before you hand it off:
 - **`--force` skips confirmation prompts.** That's for you to decide, not
   something an agent should use by default to avoid asking a question. On
   `--force-dns` and `--auto-update` it is riskier still, because those two
-  flip whatever is set now. An agent should read `sh status.sh` first rather
-  than assume which way the command will go.
+  flip whatever is set now. An agent should use `--to on` or `--to off`
+  instead, which sets the state asked for and changes nothing when it is
+  already set.
 - **Check the result.** Run `sh status.sh` after any install, reconfigure, or
   protocol change, and look at the output. Don't take "it worked" on faith.
   `setup.sh` and `reconfigure.sh` exit non-zero when DNS does not answer at
@@ -371,12 +372,12 @@ chasing down.
 ```sh
 sh /cfg/status.sh                             # shows forced-DNS status and DoT hijack rules
 sh /cfg/reconfigure.sh --force-dns            # interactive prompt
-sh /cfg/reconfigure.sh --force-dns --force    # no confirmation
+sh /cfg/reconfigure.sh --force-dns --to on    # on, whatever it is now
 ```
 
-The command is a toggle. On a router where forced DNS is already on it turns
-it off, and with `--force` it does that without asking, so check `status.sh`
-first.
+`--to on` and `--to off` set the state you name, and do nothing when it is
+already set. On its own, `--force-dns` is a toggle, and `--force-dns --force`
+turns forced DNS off without asking on a router where it is already on.
 
 See [Forced DNS Hijacking](docs/technical-details.md#forced-dns-hijacking) for exactly what it catches
 and what it can't.
@@ -389,15 +390,15 @@ network, so if you would rather decide when that happens, turn the job off:
 
 ```sh
 sh /cfg/reconfigure.sh --auto-update            # interactive prompt
-sh /cfg/reconfigure.sh --auto-update --force    # no confirmation
+sh /cfg/reconfigure.sh --auto-update --to off   # off, whatever it is now
 sh /cfg/controld-update.sh --now                # update by hand, any time
 ```
 
 It is on by default, and the choice holds across reboots, firmware updates and
 re-running `setup.sh`. Use the command rather than editing `/cfg/controld.env`
-by hand. Like `--force-dns` it is a toggle: with `--force` on a router where
-the update is already off, it turns it back on. `sh /cfg/reconfigure.sh
---show` prints which state you are in.
+by hand. Like `--force-dns`, it is a toggle without `--to`: with `--force` on
+a router where the update is already off, it turns it back on. `sh
+/cfg/reconfigure.sh --show` prints which state you are in.
 
 `--now` runs the identical check, checksum and rollback the weekly job does,
 and is the only way to reach them once the flag is off. Re-running `setup.sh`

@@ -69,7 +69,7 @@ Printed messages are the exception, and they are excluded as a class rather
 than one at a time. They share a deliberate shape, the finding on the left of a
 dash and its consequence on the right, held to one terminal line:
 
-    drift "No managed block in ${FW_USER} — redirects will not survive a firewall reload"
+    drift "No managed block in ${FW_USER} — redirects will not survive a firewall restart or reboot"
 
 A period fragments a readout meant to be scanned, and a colon reads like a list
 header, so the dash is doing work there that it is not doing in a paragraph.

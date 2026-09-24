@@ -370,7 +370,7 @@ do_resolver() {
         if restart_fallback; then
             print_ok "https-dns-proxy fallback moved to the new resolver"
         else
-            print_info "https-dns-proxy fallback moved to the new resolver — Use DoH is off in Alta, so it stays stopped"
+            print_info "https-dns-proxy fallback moved to the new resolver — Use DoH is off in Alta Control, so it stays stopped"
         fi
     else
         print_warn "Could not update the https-dns-proxy fallback — check 'uci show https-dns-proxy'"

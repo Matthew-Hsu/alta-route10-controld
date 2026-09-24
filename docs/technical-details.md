@@ -401,7 +401,7 @@ places it writes:
 | `/cfg/` | every file `setup.sh` installed, including the boot hook |
 | `/etc/firewall.user` | our marker block, and any legacy lines |
 | crontab | our two jobs, matched by script path |
-| uci | forced DNS turned off; dnsmasq and https-dns-proxy pointed back at defaults |
+| uci | forced DNS turned off; https-dns-proxy pointed at a public resolver. dnsmasq is left alone: its servers are the firmware's |
 
 Only our own iptables rules are deleted, one at a time. The firewall's zone
 jumps are left alone, so port forwards and UPnP keep working and no reboot is
@@ -409,7 +409,9 @@ needed.
 
 **What it does not restore:** your original `https-dns-proxy` resolver. Nothing
 records what it was before install, so uninstall points it at a public
-resolver (Quad9) and says so. Set it to whatever you want afterwards.
+resolver (Quad9) and says so, and starts it only while Use DoH is on in Alta.
+On firmware 1.5h the next save in Alta's DNS settings rewrites it from DoH
+Servers anyway.
 
 `force_dns` is set to 0, which is the entire disable: the https-dns-proxy init
 script drops its whole forcing block unless `force_dns` is 1, so the port list

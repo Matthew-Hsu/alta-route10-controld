@@ -131,7 +131,7 @@ All scripts source `lib.sh` which provides:
 - Config reporting (`list_upstreams`, `policy_rule_count`, `policy_rules`, `format_policy_rules`): what `status.sh` and `reconfigure.sh --show` print, and the split-DNS rules `reconfigure.sh --policy` lists, each resolved to the upstream it routes to
 - Env file rewriting (`write_env_file`), which carries keys it does not manage rather than truncating them, writes a value back without any trailing comment, and names on stderr every key it could not carry; and reading back the one key an installer must not lose (`installed_dns_port`), which sources the file in a subshell so it agrees with `load_env` instead of re-deriving the shell's quoting rules
 - Auto-update opt-out: `installed_auto_update` reads whether the weekly update is wanted, from the env file rather than through `load_env`, so `setup.sh` can ask without also adopting the protocol and resolver it is in the middle of prompting for; `set_auto_update_flag` writes the choice back
-- Benchmarking (`bench_protocol`, `bench_stop`), shared by all three entry points and never run against production DNS, and the check that a resolver answers over a protocol before anything is changed (`probe_resolver`), which uses the same throwaway `ctrld` on the benchmark port
+- Benchmarking (`bench_protocol`, `bench_stop`, `bench_worth_switching`), shared by all three entry points and never run against production DNS, and the check that a resolver answers over a protocol before anything is changed (`probe_resolver`), which uses the same throwaway `ctrld` on the benchmark port
 - Version comparison (`version_gt`), so a re-install does not roll `ctrld` back to the pin
 
 ## How It Works
@@ -334,7 +334,7 @@ sh benchmark.sh              # default: 15 queries per protocol
 sh benchmark.sh --queries 30 # more queries for accuracy
 ```
 
-Tests every protocol that can be a primary (DoQ, DoH3, DoH and DoT) with real DNS lookups on a separate port (5360) so production DNS is not disrupted. Outputs a formatted table and recommends the fastest protocol.
+Tests every protocol that can be a primary (DoQ, DoH3, DoH and DoT) with real DNS lookups on a separate port (5360) so production DNS is not disrupted. Outputs a formatted table and recommends the fastest protocol, unless the one already running is within 5 ms or 20% of it. A smaller lead is not worth a `ctrld` restart, so the recommendation is then to keep the current one, and `reconfigure.sh --benchmark` keeps it without asking.
 
 `reconfigure.sh --benchmark` and the installer's menu option 5 run the same
 code over the same four protocols. The installer prints no "switch to X"

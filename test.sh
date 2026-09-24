@@ -3157,6 +3157,67 @@ assert_eq "reconfigure.sh marks no row either" "0" \
     "$(printf '%s\n' "$RW_OUT" | grep -c -e '<--' || true)"
 assert_contains "and still names the winner once" "$RW_OUT" "already fastest"
 
+describe "a benchmark keeps the running protocol unless the fastest clearly wins"
+
+# On a Route 10 the benchmark recommended switching protocol over a 1 ms lead,
+# and reconfigure.sh --benchmark --force acts on that, restarting ctrld for a
+# difference no one can notice. The fastest now has to be at least 5 ms and
+# 20% faster than the protocol running.
+assert_false "a 1 ms lead is not worth switching for" bench_worth_switching 30 29
+assert_false "5 ms that is under 20% is not either" bench_worth_switching 50 45
+assert_false "20% that is under 5 ms is not either" bench_worth_switching 20 16
+assert_true  "5 ms that is also 20% is" bench_worth_switching 25 20
+assert_true  "a current protocol that failed is always worth leaving" \
+    bench_worth_switching FAIL 20
+assert_true  "and so is one that was not measured" bench_worth_switching "" 20
+
+# Both scripts, run for real against a stubbed bench_protocol. DoH3 is running
+# at 30 ms and DoT measures 29.
+BK_DIR="$TMPDIR/benchkeep"
+mkdir -p "$BK_DIR"
+cp "$SCRIPT_DIR/benchmark.sh" "$BK_DIR/benchmark.sh"
+cat > "$BK_DIR/lib.sh" << BKLIBEOF
+. "$SCRIPT_DIR/lib.sh"
+load_env() { RESOLVER_ID=abc123; BOOTSTRAP_IP=76.76.2.22; DNS_TYPE=doh3; CTRLD_VERSION=1.5.7; return 0; }
+running_protocol() { printf 'doh3'; }
+bench_protocol() {
+    case "\$1" in doh3) BENCH_AVG=30 ;; dot) BENCH_AVG=29 ;; *) BENCH_AVG=60 ;; esac
+    BENCH_OK="\$4"; BENCH_FAIL=0; return 0
+}
+BKLIBEOF
+BK_OUT="$( cd "$BK_DIR" && sh ./benchmark.sh --queries 1 2>&1 </dev/null || true )"
+assert_contains "benchmark.sh keeps the running protocol over a 1 ms lead" "$BK_OUT" \
+    "Recommended: keep DoH3"
+assert_not_contains "and prints no command to switch" "$BK_OUT" "--protocol --to dot"
+
+BK_OUT="$( (
+    . "$SCRIPT_DIR/lib.sh"
+    RESOLVER_ID=abc123; BOOTSTRAP_IP=76.76.2.22; DNS_TYPE=doh3; FORCE=1
+    bench_protocol() {
+        case "$1" in doh3) BENCH_AVG=30 ;; dot) BENCH_AVG=29 ;; *) BENCH_AVG=60 ;; esac
+        BENCH_OK=1; BENCH_FAIL=0; return 0
+    }
+    apply_and_restart() { echo "APPLIED:$DNS_TYPE"; }
+    eval "$RW_SRC"
+    do_benchmark
+) 2>&1 </dev/null || true )"
+assert_contains "reconfigure.sh --benchmark --force keeps it too" "$BK_OUT" "Keeping DoH3"
+assert_not_contains "without applying anything" "$BK_OUT" "APPLIED:"
+BK_OUT="$( (
+    . "$SCRIPT_DIR/lib.sh"
+    RESOLVER_ID=abc123; BOOTSTRAP_IP=76.76.2.22; DNS_TYPE=doh3; FORCE=1
+    bench_protocol() {
+        case "$1" in doh3) BENCH_AVG=30 ;; dot) BENCH_AVG=20 ;; *) BENCH_AVG=60 ;; esac
+        BENCH_OK=1; BENCH_FAIL=0; return 0
+    }
+    apply_and_restart() { echo "APPLIED:$DNS_TYPE"; }
+    cp() { :; }
+    eval "$RW_SRC"
+    do_benchmark
+) 2>&1 </dev/null || true )"
+assert_contains "while a clear win is still applied" "$BK_OUT" "APPLIED:dot"
+unset BK_DIR BK_OUT
+
 # setup.sh's inline benchmark prints the same table, and it is the one a new
 # install sees. Its loop is inside a case arm, so it is extracted and run
 # against the same stubs rather than by running the installer.

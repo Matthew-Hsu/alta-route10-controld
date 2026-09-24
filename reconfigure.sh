@@ -382,7 +382,7 @@ do_benchmark() {
     printf "  ${DIM}Production DNS on port %s keeps answering throughout.${RESET}\n\n" "$DNS_PORT"
 
     local bench_queries=10
-    local fastest="" fastest_ms=999999
+    local fastest="" fastest_ms=999999 current_ms=""
 
     # Same set as benchmark.sh, and for the same reason: the protocol the
     # router is running has to be one of the rows, or "switch to X" is advice
@@ -410,6 +410,7 @@ do_benchmark() {
         if [ "$BENCH_AVG" -lt "$fastest_ms" ]; then
             fastest_ms=$BENCH_AVG; fastest=$proto
         fi
+        [ "$proto" = "$DNS_TYPE" ] && current_ms=$BENCH_AVG
         printf "  %-18s ${BOLD}%dms${RESET} avg   %d/%d ok\n" \
             "$label" "$BENCH_AVG" "$BENCH_OK" "$bench_queries"
     done
@@ -423,6 +424,14 @@ do_benchmark() {
 
     if [ "$fastest" = "$DNS_TYPE" ]; then
         printf "\n  ${GREEN}Current protocol $(proto_label "$DNS_TYPE") is already fastest (${fastest_ms}ms).${RESET}\n"
+        return
+    fi
+
+    # Not worth a ctrld restart unless the fastest clearly wins. See
+    # bench_worth_switching in lib.sh for the margin and why.
+    if ! bench_worth_switching "$current_ms" "$fastest_ms"; then
+        printf "\n  ${GREEN}Keeping %s (%dms): %s was %dms faster, less than the 5 ms and 20%% worth switching for.${RESET}\n" \
+            "$(proto_label "$DNS_TYPE")" "$current_ms" "$(proto_label "$fastest")" "$((current_ms - fastest_ms))"
         return
     fi
 

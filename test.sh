@@ -5495,6 +5495,24 @@ assert_contains "the count says only that rules are present" "$RI_ST" \
     "redirect rule(s) present"
 assert_not_contains "and no longer calls rule presence per-device visibility" \
     "$RI_ST" "per-device visibility enabled"
+
+# With Use DoH off in Alta, post-cfg.sh leaves https-dns-proxy stopped on
+# purpose, so status.sh must not report that as a failure. The firmware says
+# DoH is off by giving dnsmasq the ISP's servers alone.
+printf '#!/bin/sh\ncase "$*" in *dnsmasq*server*) echo "75.153.171.68#53 75.153.171.124#53" ;; *) exit 1 ;; esac\n' \
+    > "$RI_BIN/uci"
+RI_ST="$(PATH="$RI_BIN:$PATH" DNS_PORT=5354 CTRLD_VERSION=1.5.7 LAN_IFACES="br-lan_10 br-lan_20" \
+    sh "$SCRIPT_DIR/status.sh" 2>/dev/null || true)"
+assert_contains "status.sh explains a stopped fallback while Use DoH is off" "$RI_ST" \
+    "https-dns-proxy is stopped — Use DoH is off in Alta"
+assert_not_contains "rather than calling it a failure" "$RI_ST" "https-dns-proxy is not running"
+printf '#!/bin/sh\ncase "$*" in *dnsmasq*server*) echo "127.0.0.1#5053" ;; *) exit 1 ;; esac\n' \
+    > "$RI_BIN/uci"
+RI_ST="$(PATH="$RI_BIN:$PATH" DNS_PORT=5354 CTRLD_VERSION=1.5.7 LAN_IFACES="br-lan_10 br-lan_20" \
+    sh "$SCRIPT_DIR/status.sh" 2>/dev/null || true)"
+assert_contains "with Use DoH on, a stopped fallback is still a failure" "$RI_ST" \
+    "https-dns-proxy is not running"
+printf '#!/bin/sh\nexit 1\n' > "$RI_BIN/uci"
 unset RI_CHAIN RI_COUNTS
 
 describe "audit.sh — a redirect pointing at a port nothing listens on"

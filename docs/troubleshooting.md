@@ -37,8 +37,8 @@
    /etc/init.d/dnsmasq restart
    ```
    This restores DNS via dnsmasq and https-dns-proxy (encrypted while Use DoH
-   is on in Alta's DNS settings, just no per-device visibility). The watchdog puts the redirects back automatically once ctrld
-   answers again.
+   is on in Alta's DNS settings, just no per-device visibility). The watchdog
+   puts the redirects back automatically once ctrld answers again.
 
    > **Never run `iptables -t nat -F PREROUTING`.** That flushes the entire
    > chain: your port forwards, UPnP mappings and the firewall's own zone jumps
@@ -65,8 +65,9 @@
 
 - Network not ready when ctrld starts. At boot `post-cfg.sh` waits up to 60
   seconds for the WAN and then starts ctrld anyway. If ctrld is not answering
-  by then, DNS stays on dnsmasq and its fallback, and the watchdog restarts ctrld if it
-  has to and adds the redirects at its first healthy cycle, within 5 minutes.
+  by then, DNS stays on dnsmasq and its fallback, and the watchdog restarts
+  ctrld if it has to and adds the redirects at its first healthy cycle, within
+  5 minutes.
   There is no wait to tune.
 
 **Fix:** Re-download the ctrld binary. Move the damaged one out of `/cfg` and
@@ -115,6 +116,10 @@ Look for `ctrld will not start` in the log below: that means the binary or
 > `/var/log/messages` is the same file via a symlink, and `-b 2` keeps
 > `messages.0` and `messages.1` as rotated history. `status.sh` handles this
 > automatically and shows recent watchdog entries either way.
+>
+> Lines are stamped in UTC, whatever time `date` shows, and on a busy router
+> the three files hold only four to five hours, so read them soon after the
+> event.
 
 ```sh
 sh /cfg/status.sh            # includes the last few watchdog entries
@@ -205,8 +210,8 @@ nslookup google.com 127.0.0.1#5354   # fine
 
 **Cause:** a redirect left over from a port this install no longer uses.
 `PREROUTING` is evaluated in order, so a rule sending port 53 to the old port
-sits above the working ones and takes the traffic first — into a port nothing
-is listening on. Moving the port and moving it back is enough to leave one.
+sits above the working ones and takes the traffic first, sending it to a port
+nothing is listening on. Moving the port and moving it back is enough to leave one.
 
 This was invisible to every check until recently, because each of them selected
 rules by the current port before counting, so a rule on the wrong port was
@@ -254,15 +259,15 @@ There are two causes, and they look identical from a client. Check for the
 second even when the first does not apply: a bridge can have a redirect and
 still be bypassed.
 
-**Cause 1 — the bridge has no redirect.** DNS is intercepted per bridge
+**Cause 1: the bridge has no redirect.** DNS is intercepted per bridge
 interface. Alta names the default LAN bridge `br-lan` and every VLAN
 `br-lan_<vlan-id>` (`br-lan_10`, `br-lan_20`, …). Installs from before VLAN
 discovery existed only ever redirected `br-lan` and `br-lan_2`, so every other
 VLAN resolved around ctrld.
 
-**Cause 2 — the redirect exists but something takes port 53 first.**
+**Cause 2: the redirect exists but something takes port 53 first.**
 `PREROUTING` is evaluated in order, and a firewall zone chain can carry a DNS
-redirect of its own — `https-dns-proxy`'s, if it is configured to hijack DNS. A
+redirect of its own (`https-dns-proxy`'s, if it is configured to hijack DNS). A
 redirect *appended* to `PREROUTING` sits below that zone jump and never sees
 the packet. The bridge is covered, the rule is right, and it is dead.
 
@@ -305,7 +310,7 @@ port-853 (DoT) hijack if forced DNS is on. It is safe to run repeatedly.
 The same command fixes cause 2: rules are inserted at the head of `PREROUTING`,
 and one found below a zone chain is deleted and re-inserted above it. Because
 `/etc/firewall.user` is rewritten to insert rather than append, the correction
-survives a firewall reload and a reboot — which is the part that matters, since
+survives a firewall reload and a reboot. That is the part that matters, since
 `firewall.user` runs after fw3 has rebuilt its zone chains.
 
 If `/cfg/reconfigure.sh` predates this fix, update the tooling first. Re-running
@@ -519,7 +524,7 @@ re-install keeps your forced-DNS setting and any split-DNS policy.
 ```sh
 sh /cfg/reconfigure.sh --protocol --to doh3    # or doq, doh, dot
 sh /cfg/reconfigure.sh --protocol              # interactive menu
-sh /cfg/reconfigure.sh --benchmark --force     # measure, then apply the fastest
+sh /cfg/reconfigure.sh --benchmark --force     # measure, switch if one is clearly faster
 ```
 
 `reconfigure.sh` also records the choice as `PREFERRED_PROTOCOL`, so if the
@@ -550,8 +555,7 @@ clean up afterwards. Three things are worth knowing:
 - **The `https-dns-proxy` fallback moves with it.** `reconfigure.sh --resolver`
   points it at the new profile and restarts it, so the retired ID stops
   answering everywhere on the router. With Use DoH off in Alta it is updated
-  but left stopped. (Earlier versions left this to
-  `setup.sh`; since 2dbfa2a it is part of the resolver change.)
+  but left stopped. (Earlier versions left this to `setup.sh`.)
 - **A new ID is checked before anything changes.** `reconfigure.sh` asks a
   throwaway `ctrld` on the benchmark port whether ControlD answers for it.
   If ControlD does not, the ID is refused and the command exits non-zero with
@@ -575,8 +579,8 @@ sh /cfg/uninstall.sh          # add --force to skip the confirmation
 ```
 
 That is the whole procedure. It removes every file, cron job and firewall rule
-the project installs, turns forced DNS back off, and restores dnsmasq and
-https-dns-proxy. It deletes only our own iptables rules, one at a time, so
+the project installs, turns forced DNS back off, and points https-dns-proxy at
+a public resolver. dnsmasq is left as Alta's DNS settings have it. It deletes only our own iptables rules, one at a time, so
 port forwards and UPnP keep working, and it verifies the result. No reboot
 needed.
 

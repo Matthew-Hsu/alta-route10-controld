@@ -1759,6 +1759,29 @@ set_fallback_resolver() {
     return 0
 }
 
+# Whether Use DoH is on in Alta's DNS settings.
+#
+# The firmware writes the answer into dnsmasq's servers before anything of ours
+# runs: with DoH on they include the local https-dns-proxy ports, with it off
+# they are the ISP's alone. There is no uci option for the toggle itself; Alta
+# keeps it in its own config.
+alta_doh_on() {
+    case " $(uci -q get 'dhcp.@dnsmasq[0].server' 2>/dev/null) " in
+        *" 127.0.0.1#"*) return 0 ;;
+    esac
+    return 1
+}
+
+# Restart https-dns-proxy so a changed setting takes effect, but only while Use
+# DoH is on. Firmware 1.5h stops the service on every settings save and leaves
+# it stopped, so a restart here is also a start, and with DoH off that would
+# override the setting. Returns non-zero, having done nothing, when DoH is off.
+restart_fallback() {
+    alta_doh_on || return 1
+    /etc/init.d/https-dns-proxy restart >/dev/null 2>&1 || true
+    return 0
+}
+
 # Point every https-dns-proxy instance back at a public resolver.
 #
 # The counterpart to set_fallback_resolver, and it loops for the same reason:
@@ -1866,7 +1889,7 @@ ensure_forced_dns() {
     done
     if [ "$_changed" = "1" ]; then
         uci commit https-dns-proxy
-        /etc/init.d/https-dns-proxy restart >/dev/null 2>&1 || true
+        restart_fallback || true
         logger -t forced-dns "restored uci force_dns=1 (ports 53,853)"
     fi
 
@@ -1917,7 +1940,7 @@ disable_forced_dns() {
 
     uci set https-dns-proxy.config.force_dns=0
     uci commit https-dns-proxy
-    /etc/init.d/https-dns-proxy restart >/dev/null 2>&1 || true
+    restart_fallback || true
 
     # force_dns=0 is the entire disable, and force_dns_port is deliberately left
     # alone. The init script unsets the whole forcing block unless force_dns is 1

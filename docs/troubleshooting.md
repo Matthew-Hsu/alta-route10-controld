@@ -36,8 +36,8 @@
    . /cfg/lib.sh && load_env && remove_dns_redirects
    /etc/init.d/dnsmasq restart
    ```
-   This restores DNS via https-dns-proxy (still encrypted, just no per-device
-   visibility). The watchdog puts the redirects back automatically once ctrld
+   This restores DNS via dnsmasq and https-dns-proxy (encrypted while Use DoH
+   is on in Alta's DNS settings, just no per-device visibility). The watchdog puts the redirects back automatically once ctrld
    answers again.
 
    > **Never run `iptables -t nat -F PREROUTING`.** That flushes the entire
@@ -65,7 +65,7 @@
 
 - Network not ready when ctrld starts. At boot `post-cfg.sh` waits up to 60
   seconds for the WAN and then starts ctrld anyway. If ctrld is not answering
-  by then, DNS stays on https-dns-proxy, and the watchdog restarts ctrld if it
+  by then, DNS stays on dnsmasq and its fallback, and the watchdog restarts ctrld if it
   has to and adds the redirects at its first healthy cycle, within 5 minutes.
   There is no wait to tune.
 
@@ -94,7 +94,8 @@ unrecoverable. DNS still works for everyone, but no device appears in ControlD.
 config is broken), the watchdog removes the redirects. Leaving them in place
 would point port 53 at a closed port and take DNS down for every client on
 every bridge. Removing them hands resolution back to dnsmasq → https-dns-proxy,
-which is still encrypted ControlD, just without per-device visibility.
+which is still encrypted ControlD while Alta's Use DoH is on, just without
+per-device visibility.
 
 Look for `ctrld will not start` in the log below: that means the binary or
 `/cfg/ctrld.toml` is the problem, not the upstream protocol.
@@ -504,7 +505,8 @@ clean up afterwards. Three things are worth knowing:
 
 - **The `https-dns-proxy` fallback moves with it.** `reconfigure.sh --resolver`
   points it at the new profile and restarts it, so the retired ID stops
-  answering everywhere on the router. (Earlier versions left this to
+  answering everywhere on the router. With Use DoH off in Alta it is updated
+  but left stopped. (Earlier versions left this to
   `setup.sh`; since 2dbfa2a it is part of the resolver change.)
 - **A new ID is checked before anything changes.** `reconfigure.sh` asks a
   throwaway `ctrld` on the benchmark port whether ControlD answers for it.

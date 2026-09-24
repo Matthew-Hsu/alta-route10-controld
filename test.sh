@@ -2690,6 +2690,20 @@ ensure_forced_dns >/dev/null 2>&1 || true
 assert_eq "a second enable adds no duplicates" "53 8530 853" \
     "$(uci -q get https-dns-proxy.config.force_dns_port)"
 
+# Use DoH, as the firmware leaves it in dnsmasq's servers. Enabling forced DNS
+# restarted https-dns-proxy unconditionally, and on 1.5h that is a start, so it
+# overrode DoH off on every boot and every settings save.
+: > "$UCI_STORE"
+uci add_list 'dhcp.@dnsmasq[0].server=127.0.0.1#5053'
+assert_true "alta_doh_on reads a local https-dns-proxy port as DoH on" alta_doh_on
+: > "$UCI_STORE"
+uci add_list 'dhcp.@dnsmasq[0].server=75.153.171.68#53'
+uci add_list 'dhcp.@dnsmasq[0].server=75.153.171.124#53'
+assert_false "and the ISP's servers alone as DoH off" alta_doh_on
+assert_false "restart_fallback does nothing while DoH is off" restart_fallback
+: > "$UCI_STORE"
+assert_false "no servers at all reads as off" alta_doh_on
+
 PATH="$FD_SAVED_PATH"
 unset UCI_STORE FW_USER SYSFS_NET DNS_PORT FORCED_DNS
 assert_false "setup.sh never hardcodes FORCED_DNS=0" \
@@ -5006,6 +5020,63 @@ assert_not_contains "before the step that stops ctrld" "$SV_RE" "Existing Contro
 assert_contains "leaving the installed ID in place" "$(cat "$SV/reinstall/cfg/controld.env")" "RESOLVER_ID=abc123"
 assert_true "and the running ctrld still running" kill -0 "$(cat "$SV/reinstall/ctrld.pid")"
 kill "$(cat "$SV/reinstall/ctrld.pid" 2>/dev/null)" 2>/dev/null || true
+
+describe "post-cfg.sh — follows Alta's Use DoH, never rewrites dnsmasq's servers"
+
+# post-cfg.sh runs at every boot and on every settings save in Alta's UI, after
+# the firmware has written dnsmasq's servers. On a Route 10 running 1.5h those
+# said what Use DoH was set to: the three local https-dns-proxy ports with it
+# on, one port with one custom DoH server, the ISP's servers alone with it off.
+# post-cfg.sh wrote the three ports back and restarted dnsmasq whenever they
+# differed, which undid DoH off and pointed dnsmasq at ports nothing listened
+# on. Run the post-cfg.sh the sandboxed install wrote with uci answering each
+# of those ways.
+PD="$SV/good"
+for _pdi in dnsmasq https-dns-proxy; do
+    printf '#!/bin/sh\necho "$*" >> "%s/%s.calls"\n' "$PD" "$_pdi" > "$PD/initd/$_pdi"
+done
+cat > "$PD/bin/uci" << PDUCIEOF
+#!/bin/sh
+echo "\$*" >> "$PD/uci.calls"
+case "\$*" in
+    "-q get dhcp.@dnsmasq[0].server") cat "$PD/servers" 2>/dev/null; exit 0 ;;
+    "-q get dhcp.@dnsmasq[0].noresolv") echo 0; exit 0 ;;
+    "get https-dns-proxy.@https-dns-proxy[0]") exit 0 ;;
+esac
+exit 1
+PDUCIEOF
+chmod +x "$PD/initd/dnsmasq" "$PD/initd/https-dns-proxy" "$PD/bin/uci"
+pd_run() {
+    printf '%s\n' "$1" > "$PD/servers"
+    rm -f "$PD/dnsmasq.calls" "$PD/https-dns-proxy.calls" "$PD/uci.calls"
+    ( PATH="$PD/bin:$PATH"; FW_USER="$PD/firewall.user"; SYSFS_NET="$PD/sys"
+      DEGRADED_FLAG="$PD/tmp/degraded"; export FW_USER SYSFS_NET DEGRADED_FLAG
+      sh "$PD/cfg/post-cfg.sh" ) >/dev/null 2>&1 || true
+    kill "$(cat "$PD/ctrld.pid" 2>/dev/null)" 2>/dev/null || true
+}
+
+pd_run "127.0.0.1#5053 127.0.0.1#5054 127.0.0.1#5055"
+assert_true "with Use DoH on, https-dns-proxy is started" \
+    grep -q restart "$PD/https-dns-proxy.calls"
+assert_false "dnsmasq is not restarted" grep -q restart "$PD/dnsmasq.calls"
+assert_false "and its servers are not rewritten" grep -Eq "^(add_list|delete|set) dhcp\." "$PD/uci.calls"
+
+pd_run "127.0.0.1#5053"
+assert_true "with one custom DoH server, https-dns-proxy is still started" \
+    grep -q restart "$PD/https-dns-proxy.calls"
+assert_false "and dnsmasq keeps the one port the firmware gave it" \
+    grep -Eq "^(add_list|delete|set) dhcp\." "$PD/uci.calls"
+assert_false "without a restart" grep -q restart "$PD/dnsmasq.calls"
+
+pd_run "75.153.171.68#53 75.153.171.124#53"
+assert_false "with Use DoH off, https-dns-proxy is left stopped" \
+    grep -q restart "$PD/https-dns-proxy.calls"
+assert_false "dnsmasq keeps the ISP servers the firmware gave it" \
+    grep -Eq "^(add_list|delete|set) dhcp\." "$PD/uci.calls"
+assert_false "without a restart" grep -q restart "$PD/dnsmasq.calls"
+unset _pdi
+unset PD
+unset -f pd_run
 unset SV SV_GOOD SV_BAD SV_POL SV_ID SV_PROTO SV_RE _sv _svf
 
 describe "config/post-cfg.sh.example — bounded waits, redirects at the head"

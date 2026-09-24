@@ -1283,10 +1283,10 @@ ensure_iptables() {
 # Last resort for the watchdog: with ctrld dead the redirects point port 53 at a
 # closed port, so every client on every bridge loses DNS entirely, which is
 # worse than not intercepting at all. Removing them hands resolution back to
-# dnsmasq, which forwards to https-dns-proxy while Alta's Use DoH is on (still
-# encrypted, just without per-device visibility) and to the ISP's DNS while it
-# is off. post-cfg.sh and the watchdog re-add the rules once ctrld answers
-# again.
+# dnsmasq, which forwards to https-dns-proxy while Use DoH is on in Alta
+# Control (still encrypted, just without per-device visibility) and to the
+# ISP's DNS while it is off. post-cfg.sh and the watchdog re-add the rules once
+# ctrld answers again.
 # Usage: remove_dns_redirects [port]
 remove_dns_redirects() {
     _rdr_port="${1:-$DNS_PORT}"
@@ -1798,12 +1798,12 @@ set_fallback_resolver() {
     return 0
 }
 
-# Whether Use DoH is on in Alta's DNS settings.
+# Whether Use DoH is on in Alta Control's DNS settings.
 #
 # The firmware writes the answer into dnsmasq's servers before anything of ours
 # runs: with DoH on they include the local https-dns-proxy ports, with it off
-# they are the ISP's alone. There is no uci option for the toggle itself; Alta
-# keeps it in its own config.
+# they are the ISP's alone. There is no uci option for the toggle itself; the
+# firmware keeps it in its own config.
 alta_doh_on() {
     case " $(uci -q get 'dhcp.@dnsmasq[0].server' 2>/dev/null) " in
         *" 127.0.0.1#"*) return 0 ;;

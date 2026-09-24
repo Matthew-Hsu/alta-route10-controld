@@ -179,8 +179,8 @@ printf "\n  ${BOLD}Summary:${RESET}  %d file(s), %d cron job(s), %d iptables rul
     "$_file_count" "$_cron_count" "$_ipt_count"
 
 printf "\n  After removal, your devices use the router's own DNS (dnsmasq), which\n"
-printf "  keeps the servers Alta's DNS settings give it. https-dns-proxy is\n"
-printf "  pointed at Quad9, and restarted if Use DoH is on in Alta.\n"
+printf "  keeps the servers Alta Control's DNS settings give it. https-dns-proxy\n"
+printf "  is pointed at Quad9, and restarted if Use DoH is on in Alta Control.\n"
 printf "\n  Only this project's DNS redirect rules are removed. Your port\n"
 printf "  forwards, UPnP mappings and other firewall rules are untouched,\n"
 printf "  and no reboot is needed.\n"
@@ -356,14 +356,14 @@ print_step "Restoring default DNS services..."
 # set_fallback_resolver reads from uci rather than assuming: on a router with a
 # fourth instance, that one kept pointing at the user's ControlD profile after
 # an uninstall run to stop being routed through it.
-# Restarted only while Alta's Use DoH is on, the same rule post-cfg.sh follows:
-# on firmware 1.5h a restart is also a start, and with DoH off it would turn
-# the fallback back on against the setting.
+# Restarted only while Use DoH is on in Alta Control, the rule post-cfg.sh
+# follows: on firmware 1.5h a restart is also a start, and with DoH off it
+# would turn the fallback back on against the setting.
 if reset_fallback_resolver "https://dns.quad9.net/dns-query" "9.9.9.9"; then
     if restart_fallback; then
         print_ok "https-dns-proxy restarted (Quad9)"
     else
-        print_info "https-dns-proxy pointed at Quad9 — Use DoH is off in Alta, so it stays stopped"
+        print_info "https-dns-proxy pointed at Quad9 — Use DoH is off in Alta Control, so it stays stopped"
     fi
 else
     print_warn "No https-dns-proxy instances found — check 'uci show https-dns-proxy'"
@@ -387,8 +387,8 @@ if [ -n "$_fdp" ]; then
     print_info "force_dns_port lists ${_fdp} — stock package default, inert with force_dns=0"
 fi
 
-# dnsmasq is left as it is. Its servers are the firmware's, written from Alta's
-# Use DoH setting, and this project no longer changes them, so there is nothing
+# dnsmasq is left as it is. Its servers are the firmware's, written from the
+# Use DoH setting in Alta Control, and this project no longer changes them, so there is nothing
 # to put back. Writing the three https-dns-proxy ports here turned Use DoH back
 # on for dnsmasq until the next settings save.
 

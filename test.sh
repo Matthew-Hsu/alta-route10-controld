@@ -2317,10 +2317,11 @@ assert_false "rc.local is not in the blind removal list" \
     code_grep "$SCRIPT_DIR/uninstall.sh" -E '^\s+/cfg/rc.local '
 assert_true "setup backs up a foreign rc.local" \
     code_grep "$SCRIPT_DIR/setup.sh" 'rc.local.pre-controld'
-# dnsmasq's servers are the firmware's, written from Alta's Use DoH. Writing the
-# three https-dns-proxy ports back on uninstall turned Use DoH on again for
-# dnsmasq, and starting https-dns-proxy unconditionally did the same for the
-# service. restart_fallback carries the Use DoH rule and has its own tests.
+# dnsmasq's servers are the firmware's, written from Use DoH in Alta Control.
+# Writing the three https-dns-proxy ports back on uninstall turned Use DoH on
+# again for dnsmasq, and starting https-dns-proxy unconditionally did the same
+# for the service. restart_fallback carries the Use DoH rule and has its own
+# tests.
 assert_false "uninstall does not rewrite dnsmasq's servers" \
     code_grep "$SCRIPT_DIR/uninstall.sh" -E 'uci (add_list|delete|set) dhcp'
 assert_false "or restart dnsmasq" \
@@ -5160,9 +5161,9 @@ assert_contains "leaving the installed ID in place" "$(cat "$SV/reinstall/cfg/co
 assert_true "and the running ctrld still running" kill -0 "$(cat "$SV/reinstall/ctrld.pid")"
 kill "$(cat "$SV/reinstall/ctrld.pid" 2>/dev/null)" 2>/dev/null || true
 
-describe "post-cfg.sh — follows Alta's Use DoH, never rewrites dnsmasq's servers"
+describe "post-cfg.sh — follows Use DoH in Alta Control, never rewrites dnsmasq's servers"
 
-# post-cfg.sh runs at every boot and on every settings save in Alta's UI, after
+# post-cfg.sh runs at every boot and on every settings save in Alta Control, after
 # the firmware has written dnsmasq's servers. On a Route 10 running 1.5h those
 # said what Use DoH was set to: the three local https-dns-proxy ports with it
 # on, one port with one custom DoH server, the ISP's servers alone with it off.
@@ -5635,7 +5636,7 @@ assert_contains "the count says only that rules are present" "$RI_ST" \
 assert_not_contains "and no longer calls rule presence per-device visibility" \
     "$RI_ST" "per-device visibility enabled"
 
-# With Use DoH off in Alta, post-cfg.sh leaves https-dns-proxy stopped on
+# With Use DoH off in Alta Control, post-cfg.sh leaves https-dns-proxy stopped on
 # purpose, so status.sh must not report that as a failure. The firmware says
 # DoH is off by giving dnsmasq the ISP's servers alone.
 printf '#!/bin/sh\ncase "$*" in *dnsmasq*server*) echo "75.153.171.68#53 75.153.171.124#53" ;; *) exit 1 ;; esac\n' \
@@ -5643,7 +5644,7 @@ printf '#!/bin/sh\ncase "$*" in *dnsmasq*server*) echo "75.153.171.68#53 75.153.
 RI_ST="$(PATH="$RI_BIN:$PATH" DNS_PORT=5354 CTRLD_VERSION=1.5.7 LAN_IFACES="br-lan_10 br-lan_20" \
     sh "$SCRIPT_DIR/status.sh" 2>/dev/null || true)"
 assert_contains "status.sh explains a stopped fallback while Use DoH is off" "$RI_ST" \
-    "https-dns-proxy is stopped — Use DoH is off in Alta"
+    "https-dns-proxy is stopped — Use DoH is off in Alta Control"
 assert_not_contains "rather than calling it a failure" "$RI_ST" "https-dns-proxy is not running"
 printf '#!/bin/sh\ncase "$*" in *dnsmasq*server*) echo "127.0.0.1#5053" ;; *) exit 1 ;; esac\n' \
     > "$RI_BIN/uci"

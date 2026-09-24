@@ -5,8 +5,9 @@
 # Supports DoH, DoH3 (HTTP/3), and DoQ (QUIC) via ctrld.
 
 # Keep https-dns-proxy on ControlD as the fallback, but only while Use DoH is
-# on in Alta's DNS settings. The firmware says which in dnsmasq's servers: the
-# local https-dns-proxy ports when it is on, the ISP's alone when it is off.
+# on in Alta Control's DNS settings. The firmware says which in dnsmasq's
+# servers: the local https-dns-proxy ports when it is on, the ISP's alone when
+# it is off.
 # dnsmasq's servers are the firmware's to set, so they are not touched here.
 case " $(uci -q get 'dhcp.@dnsmasq[0].server' 2>/dev/null) " in
     *" 127.0.0.1#"*)

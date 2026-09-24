@@ -105,9 +105,10 @@ https_status=$(/etc/init.d/https-dns-proxy status 2>&1)
 if [ "$https_status" = "running" ]; then
     print_ok "https-dns-proxy is running (fallback)"
 elif command -v alta_doh_on >/dev/null 2>&1 && ! alta_doh_on; then
-    # Stopped is right here: post-cfg.sh follows Alta's Use DoH rather than
-    # overriding it. Still worth saying, since it changes what the fallback is.
-    print_warn "https-dns-proxy is stopped — Use DoH is off in Alta, so the fallback is your ISP's DNS, unencrypted"
+    # Stopped is right here: post-cfg.sh follows Use DoH in Alta Control rather
+    # than overriding it. Still worth saying, since it changes what the fallback
+    # is.
+    print_warn "https-dns-proxy is stopped — Use DoH is off in Alta Control, so the fallback is your ISP's DNS, unencrypted"
 else
     print_fail "https-dns-proxy is not running"
 fi

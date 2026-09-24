@@ -676,7 +676,7 @@ if [ ! -f /cfg/ctrld.toml ]; then
     logger -t post-cfg 'ctrld.toml generated'
 fi
 
-# Whether https-dns-proxy runs is Alta's call, made with Use DoH in its DNS
+# Whether https-dns-proxy runs is decided by Use DoH in Alta Control's DNS
 # settings, and the firmware writes the answer into dnsmasq's servers before
 # this runs: the local https-dns-proxy ports when DoH is on, the ISP's servers
 # alone when it is off. Follow it rather than override it. This script used to
@@ -713,7 +713,7 @@ if [ "$ALTA_DOH" = "1" ]; then
     /etc/init.d/https-dns-proxy restart 2>/dev/null
     logger -t post-cfg 'dnsmasq already forwards to https-dns-proxy — left running'
 else
-    logger -t post-cfg 'Use DoH is off in Alta — https-dns-proxy left stopped, the fallback is the ISP DNS'
+    logger -t post-cfg 'Use DoH is off in Alta Control — https-dns-proxy left stopped, the fallback is the ISP DNS'
 fi
 
 # Wait for network connectivity. Bounded: this had no limit either, so an
@@ -1216,9 +1216,9 @@ fi
 # Every protocol failed and ctrld is not resolving. The redirects now point
 # port 53 at a closed port, so every client on every bridge has no DNS at all.
 # Removing them hands resolution back to dnsmasq, which forwards to
-# https-dns-proxy while Alta's Use DoH is on (still encrypted, just without
-# per-device visibility) and to the ISP's DNS while it is off. The healthy path
-# above re-adds the rules as soon as ctrld answers again.
+# https-dns-proxy while Use DoH is on in Alta Control (still encrypted, just
+# without per-device visibility) and to the ISP's DNS while it is off. The
+# healthy path above re-adds the rules as soon as ctrld answers again.
 logger -t watchdog "all protocols failed — removing DNS redirects so the LAN keeps resolving"
 remove_dns_redirects "$DNS_PORT"
 /etc/init.d/dnsmasq restart >/dev/null 2>&1 || true

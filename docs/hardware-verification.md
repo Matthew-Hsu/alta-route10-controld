@@ -319,9 +319,11 @@ failed probes.
   the DNS page in Alta Control, a local DNS record included, re-applied the
   router's whole config: the firmware stopped https-dns-proxy, reloaded the
   firewall, restarted dnsmasq when its settings differed, and then ran
-  `/cfg/post-cfg.sh`. That run restored forced DNS, restarted `ctrld` and put
-  the redirects back on all six bridges within about 3 seconds. Afterwards
-  there were 24 rules and `audit.sh` exited 0.
+  `/cfg/post-cfg.sh`. That run restored forced DNS, restarted `ctrld` and
+  logged the redirects in place on all six bridges within about 3 seconds.
+  The reload had left them there, as the entry on firewall reloads under Boot
+  Persistence and Recovery found. Afterwards there were 24 rules and
+  `audit.sh` exited 0.
 
 - **Local DNS Records, on 1.5h.** A record saved in the UI, `r10test` at
   `192.0.2.10`, went into dnsmasq's generated config as

@@ -178,9 +178,9 @@ fi
 printf "\n  ${BOLD}Summary:${RESET}  %d file(s), %d cron job(s), %d iptables rule(s)\n" \
     "$_file_count" "$_cron_count" "$_ipt_count"
 
-printf "\n  After removal, default DNS services will be restored:\n"
-printf "    - https-dns-proxy ( restarted )\n"
-printf "    - dnsmasq         ( restarted )\n"
+printf "\n  After removal, your devices use the router's own DNS (dnsmasq), which\n"
+printf "  keeps the servers Alta's DNS settings give it. https-dns-proxy is\n"
+printf "  pointed at Quad9, and restarted if Use DoH is on in Alta.\n"
 printf "\n  Only this project's DNS redirect rules are removed. Your port\n"
 printf "  forwards, UPnP mappings and other firewall rules are untouched,\n"
 printf "  and no reboot is needed.\n"
@@ -356,9 +356,15 @@ print_step "Restoring default DNS services..."
 # set_fallback_resolver reads from uci rather than assuming: on a router with a
 # fourth instance, that one kept pointing at the user's ControlD profile after
 # an uninstall run to stop being routed through it.
+# Restarted only while Alta's Use DoH is on, the same rule post-cfg.sh follows:
+# on firmware 1.5h a restart is also a start, and with DoH off it would turn
+# the fallback back on against the setting.
 if reset_fallback_resolver "https://dns.quad9.net/dns-query" "9.9.9.9"; then
-    /etc/init.d/https-dns-proxy restart 2>/dev/null || true
-    print_ok "https-dns-proxy restarted (Quad9)"
+    if restart_fallback; then
+        print_ok "https-dns-proxy restarted (Quad9)"
+    else
+        print_info "https-dns-proxy pointed at Quad9 — Use DoH is off in Alta, so it stays stopped"
+    fi
 else
     print_warn "No https-dns-proxy instances found — check 'uci show https-dns-proxy'"
 fi
@@ -381,16 +387,10 @@ if [ -n "$_fdp" ]; then
     print_info "force_dns_port lists ${_fdp} — stock package default, inert with force_dns=0"
 fi
 
-# Reset dnsmasq to use https-dns-proxy defaults
-uci delete dhcp.@dnsmasq[0].server 2>/dev/null || true
-uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5053' 2>/dev/null || true
-uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5054' 2>/dev/null || true
-uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5055' 2>/dev/null || true
-uci set dhcp.@dnsmasq[0].noresolv='0' 2>/dev/null || true
-uci commit dhcp 2>/dev/null || true
-
-/etc/init.d/dnsmasq restart 2>/dev/null || true
-print_ok "dnsmasq restarted"
+# dnsmasq is left as it is. Its servers are the firmware's, written from Alta's
+# Use DoH setting, and this project no longer changes them, so there is nothing
+# to put back. Writing the three https-dns-proxy ports here turned Use DoH back
+# on for dnsmasq until the next settings save.
 
 # ── Verify ──
 

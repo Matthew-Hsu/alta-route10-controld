@@ -2251,6 +2251,18 @@ assert_false "rc.local is not in the blind removal list" \
     code_grep "$SCRIPT_DIR/uninstall.sh" -E '^\s+/cfg/rc.local '
 assert_true "setup backs up a foreign rc.local" \
     code_grep "$SCRIPT_DIR/setup.sh" 'rc.local.pre-controld'
+# dnsmasq's servers are the firmware's, written from Alta's Use DoH. Writing the
+# three https-dns-proxy ports back on uninstall turned Use DoH on again for
+# dnsmasq, and starting https-dns-proxy unconditionally did the same for the
+# service. restart_fallback carries the Use DoH rule and has its own tests.
+assert_false "uninstall does not rewrite dnsmasq's servers" \
+    code_grep "$SCRIPT_DIR/uninstall.sh" -E 'uci (add_list|delete|set) dhcp'
+assert_false "or restart dnsmasq" \
+    code_grep "$SCRIPT_DIR/uninstall.sh" 'init.d/dnsmasq'
+assert_false "and never starts https-dns-proxy directly" \
+    code_grep "$SCRIPT_DIR/uninstall.sh" 'init.d/https-dns-proxy'
+assert_true "it restarts the fallback only through restart_fallback" \
+    code_grep "$SCRIPT_DIR/uninstall.sh" 'restart_fallback'
 
 # The redirect port is per-install (setup.sh moves off 5354 when it is taken),
 # so uninstall must read controld.env before it removes anything. Without it,

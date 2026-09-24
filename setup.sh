@@ -733,7 +733,7 @@ start_ctrld /cfg/ctrld.toml
 # Only redirect DNS if ctrld is confirmed working
 if check_dns "127.0.0.1#${DNS_PORT}"; then
     ensure_iptables "$DNS_PORT" || true
-    # Persist the redirects so a firewall reload restores them instantly
+    # Persist the redirects so a firewall restart or reboot restores them
     command -v ensure_firewall_user_rules >/dev/null 2>&1 && { ensure_firewall_user_rules "$DNS_PORT" || true; }
     # Restore forced-DNS state (port 853 + uci) if enabled. Survives a reboot
     # and a firmware update.

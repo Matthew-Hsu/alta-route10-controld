@@ -120,7 +120,7 @@ All scripts source `lib.sh` which provides:
 - Process management (`start_ctrld`, `stop_ctrld`, `restart_ctrld`)
 - Health checks (`check_dns`, `ensure_iptables`)
 - Release verification (`verify_ctrld_download`, `checksum_for_asset`)
-- LAN bridge discovery (`lan_ifaces`, `lan_cidr`, `lan_net_name`) and redirect rules (`ensure_redirect_rule`, `ensure_firewall_user_rules`)
+- LAN bridge discovery (`lan_ifaces`, `lan_cidr`, `lan_net_name`) and redirect rules (`ensure_redirect_rule`, `ensure_firewall_user_rules`, `firewall_user_block`)
 - Forced DNS (`ensure_forced_dns`, `disable_forced_dns`, `set_forced_dns_flag`)
 - Fallback resolver (`set_fallback_resolver`, `reset_fallback_resolver`, `alta_doh_on`, `restart_fallback`): keeps https-dns-proxy on the same ControlD profile as ctrld, restarts it only while Alta's Use DoH is on, and points every instance back at a public resolver on uninstall
 - Input validation (`valid_resolver`, `valid_mac`, `valid_cidr`, `valid_policy_name`, `valid_proto`)
@@ -180,7 +180,7 @@ sh reconfigure.sh
 
 1. Runs `post-cfg.sh`, which starts ctrld, restores iptables redirect rules, and configures fallback DNS
 2. Reinstalls cron jobs: adds watchdog (5-min) and auto-update (weekly) to crontab, since crontab lives in `/etc/` and may be wiped by firmware updates. Jobs are matched by script path, never by keyword: the router ships its own `wireguard_watchdog` entry, and matching the bare word made the reinstall skip our job after every reboot while leaving the health check silently dead
-3. Refreshes `firewall.user` rules, regenerated from the current LAN bridge list, so iptables redirects survive mid-session firewall restarts
+3. Refreshes `firewall.user` rules, regenerated from the current LAN bridge list, so iptables redirects survive mid-session firewall restarts. The firewall runs that block when it starts, at boot and on a restart, but not on a reload, which leaves the rules in place. The block adds the redirects only while `ctrld` is listening on its port, so at boot clients stay on dnsmasq until `post-cfg.sh` adds them once `ctrld` answers, and a `ctrld` that cannot start never has DNS pointed at it
 
 After a firmware update or reboot, ControlD is answering again within about a minute of the reboot starting. Timed from a client, DNS answered again 65 seconds after a reboot began on firmware 1.5g, and failed for 38 seconds across one on 1.5h. No manual intervention required.
 

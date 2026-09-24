@@ -39,7 +39,7 @@ LAN Devices (router-assigned DNS)
 ```
 
 **Fallback path**: only while `ctrld` is down, and only while Use DoH is on in
-Alta's DNS settings (Settings → Networks → DNS). With it off, dnsmasq forwards
+Alta Control's DNS settings (Settings → Networks → DNS). With it off, dnsmasq forwards
 to your ISP's DNS servers instead, unencrypted, and `post-cfg.sh` leaves
 https-dns-proxy stopped rather than override the setting. The firmware says
 which it is in dnsmasq's servers, and `post-cfg.sh` reads it from there. On
@@ -122,7 +122,7 @@ All scripts source `lib.sh` which provides:
 - Release verification (`verify_ctrld_download`, `checksum_for_asset`)
 - LAN bridge discovery (`lan_ifaces`, `lan_cidr`, `lan_net_name`) and redirect rules (`ensure_redirect_rule`, `ensure_firewall_user_rules`, `firewall_user_block`)
 - Forced DNS (`ensure_forced_dns`, `disable_forced_dns`, `set_forced_dns_flag`)
-- Fallback resolver (`set_fallback_resolver`, `reset_fallback_resolver`, `alta_doh_on`, `restart_fallback`): keeps https-dns-proxy on the same ControlD profile as ctrld, restarts it only while Alta's Use DoH is on, and points every instance back at a public resolver on uninstall
+- Fallback resolver (`set_fallback_resolver`, `reset_fallback_resolver`, `alta_doh_on`, `restart_fallback`): keeps https-dns-proxy on the same ControlD profile as ctrld, restarts it only while Use DoH is on in Alta Control, and points every instance back at a public resolver on uninstall
 - Input validation (`valid_resolver`, `valid_mac`, `valid_cidr`, `valid_policy_name`, `valid_proto`)
 - Protocol utilities (`proto_label`, `next_proto`) and per-upstream protocol switching (`retarget_upstreams`, `resolver_from_endpoint`)
 - Degraded-mode handling (`remove_dns_redirects`) and config editing (`toml_blocks`, `next_toml_index`)
@@ -184,7 +184,7 @@ sh reconfigure.sh
 
 After a firmware update or reboot, ControlD is answering again within about a minute of the reboot starting. Timed from a client, DNS answered again 65 seconds after a reboot began on firmware 1.5g, and failed for 38 seconds across one on 1.5h. No manual intervention required.
 
-`post-cfg.sh` is not ours alone to schedule. The filename is an Alta convention: sixteen firmware binaries carry the literal string `/cfg/post-cfg.sh`, `/usr/sbin/cfg` and `/usr/sbin/rc` among them, so the firmware runs it as part of applying its own config. Our `rc.local` runs it as well, which means it executes at least twice per boot on this hardware. On firmware 1.5h it also runs after every settings save in Alta's UI, since a save re-applies the router's whole config, firewall reload included.
+`post-cfg.sh` is not ours alone to schedule. The filename is an Alta convention: sixteen firmware binaries carry the literal string `/cfg/post-cfg.sh`, `/usr/sbin/cfg` and `/usr/sbin/rc` among them, so the firmware runs it as part of applying its own config. Our `rc.local` runs it as well, which means it executes at least twice per boot on this hardware. On firmware 1.5h it also runs after every settings save in Alta Control, since a save re-applies the router's whole config, firewall reload included.
 
 That is worth knowing because the two runs can disagree. The firmware's invocation happens early, and on a boot watched here it ran before `ctrld` was up, failed its health check, and fell back to `https-dns-proxy`, logging `ctrld failed health check, using https-dns-proxy fallback`. The hook's invocation a fraction of a second later started `ctrld` and installed all 24 redirects, and the router settled correct. The script is written to be safe to run repeatedly, which is what makes this a transient rather than a fault, but any reasoning about boot ordering that assumes `rc.local` is the only caller is wrong.
 
@@ -194,7 +194,7 @@ That is worth knowing because the two runs can disagree. The firmware's invocati
 
 1. Re-downloads the `ctrld` binary if missing
 2. Regenerates `ctrld.toml` from `/cfg/controld.env` if missing
-3. While Use DoH is on in Alta, points every `https-dns-proxy` instance the firmware configured at your ControlD profile and starts it. With Use DoH off it leaves it stopped. It never changes dnsmasq's servers or restarts dnsmasq: those are the firmware's, and they are how it tells which way Use DoH is set
+3. While Use DoH is on in Alta Control, points every `https-dns-proxy` instance the firmware configured at your ControlD profile and starts it. With Use DoH off it leaves it stopped. It never changes dnsmasq's servers or restarts dnsmasq: those are the firmware's, and they are how it tells which way Use DoH is set
 4. Starts `ctrld` on port 5354
 5. Health checks before adding iptables redirect rules
 6. Restores forced-DNS state (uci + port-853 rules + firewall.user) if `FORCED_DNS=1`
@@ -254,7 +254,7 @@ Losing an opt-out that way is recoverable and the readouts show it. That is the 
 4. If DNS is healthy, re-asserts redirect coverage for any LAN bridge added since install (new VLANs), self-heals forced-DNS state, corrects the recorded protocol if it disagrees with what `ctrld.toml` is actually running, warns if `dhcp.leases` is stale, and **self-upgrades back to your preferred protocol** if currently on a fallback
 5. If DNS fails, **waits for a second consecutive failure** before acting (debounce, to avoid restarting ctrld or churning the protocol on a single transient blip). On the second, it reconciles the recorded protocol against `ctrld.toml` before walking the fallback chain, so the chain starts from what the router is really running
 6. Restores iptables redirect rules if they disappeared
-7. As a last resort, if every protocol fails and ctrld cannot be revived, **removes the DNS redirects.** Otherwise port 53 points at a dead port and every client loses DNS entirely. Resolution falls back to dnsmasq → https-dns-proxy (encrypted while Alta's Use DoH is on, no per-device visibility), and the rules go back automatically once ctrld answers again
+7. As a last resort, if every protocol fails and ctrld cannot be revived, **removes the DNS redirects.** Otherwise port 53 points at a dead port and every client loses DNS entirely. Resolution falls back to dnsmasq → https-dns-proxy (encrypted while Use DoH is on in Alta Control, no per-device visibility), and the rules go back automatically once ctrld answers again
 8. Logs all actions to syslog
 
 If no protocol works, `ctrld.toml` is restored to the one `controld.env` still names, so the two never disagree about what the router is running. A full recovery cycle (one restart plus three fallback attempts) takes about a minute; give a manual run time to finish rather than interrupting it.
@@ -358,7 +358,7 @@ pick.
 Two layers of protection:
 
 1. **ctrld health check**: iptables redirect rules are only added if ctrld passes a DNS resolution test
-2. **https-dns-proxy fallback**: even if ctrld fails, dnsmasq still forwards to https-dns-proxy, which routes to ControlD. DNS stays encrypted, just without per-device visibility. This needs Use DoH on in Alta's DNS settings; with it off the fallback is your ISP's DNS, as the fallback path under Architecture describes.
+2. **https-dns-proxy fallback**: even if ctrld fails, dnsmasq still forwards to https-dns-proxy, which routes to ControlD. DNS stays encrypted, just without per-device visibility. This needs Use DoH on in Alta Control's DNS settings; with it off the fallback is your ISP's DNS, as the fallback path under Architecture describes.
 
 ### Test Suite
 
@@ -384,7 +384,7 @@ sh test.sh    # works locally and on-router
 - That `lib.sh` carries no function without a caller
 - That `benchmark.sh` and `reconfigure.sh --benchmark` really do probe every protocol that can be the running one, run against a stubbed prober, so neither recommends switching away from one it did not time, and that both keep the running protocol unless another is at least 5 ms and 20% faster
 - That the installer and `reconfigure.sh` check a resolver ID and protocol before changing anything, and refuse one ControlD does not answer for
-- That `post-cfg.sh`, `uninstall.sh` and `status.sh` follow Alta's Use DoH as dnsmasq's servers report it, with uci answering each way it was seen to on a Route 10
+- That `post-cfg.sh`, `uninstall.sh` and `status.sh` follow Use DoH in Alta Control as dnsmasq's servers report it, with uci answering each way it was seen to on a Route 10
 - That `--force-dns` and `--auto-update` set the state named with `--to on` or `--to off`, and change nothing when it is already set
 - `--help` and `--version` flags on all scripts, including that each renders its colours rather than printing the escape sequences
 - Invalid input rejection
@@ -417,9 +417,9 @@ needed.
 
 **What it does not restore:** your original `https-dns-proxy` resolver. Nothing
 records what it was before install, so uninstall points it at a public
-resolver (Quad9) and says so, and starts it only while Use DoH is on in Alta.
-On firmware 1.5h the next save in Alta's DNS settings rewrites it from DoH
-Servers anyway.
+resolver (Quad9) and says so, and starts it only while Use DoH is on in Alta
+Control. On firmware 1.5h the next save in Alta Control's DNS settings
+rewrites it from DoH Servers anyway.
 
 `force_dns` is set to 0, which is the entire disable: the https-dns-proxy init
 script drops its whole forcing block unless `force_dns` is 1, so the port list

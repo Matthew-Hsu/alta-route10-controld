@@ -676,34 +676,45 @@ if [ ! -f /cfg/ctrld.toml ]; then
     logger -t post-cfg 'ctrld.toml generated'
 fi
 
-# Wait for https-dns-proxy to initialize (kept as fallback). Bounded: this had
-# no limit, so a router whose https-dns-proxy never registered its uci section
-# sat here forever at every boot and never configured DNS at all.
-if ! wait_for 30 1 uci get 'https-dns-proxy.@https-dns-proxy[0]'; then
-    logger -t post-cfg 'https-dns-proxy uci section absent after 30s — continuing without the fallback resolver'
+# Whether https-dns-proxy runs is Alta's call, made with Use DoH in its DNS
+# settings, and the firmware writes the answer into dnsmasq's servers before
+# this runs: the local https-dns-proxy ports when DoH is on, the ISP's servers
+# alone when it is off. Follow it rather than override it. This script used to
+# write three fixed ports back and restart dnsmasq on every run, which undid
+# Use DoH off within a second of it being saved, and with one custom DoH server
+# (one instance, one port) left dnsmasq forwarding to two ports nothing
+# listened on. dnsmasq's servers are now the firmware's alone.
+case " $(uci -q get 'dhcp.@dnsmasq[0].server' 2>/dev/null) " in
+    *" 127.0.0.1#"*) ALTA_DOH=1 ;;
+    *)               ALTA_DOH=0 ;;
+esac
+
+if [ "$ALTA_DOH" = "1" ]; then
+    # Wait for https-dns-proxy to initialize (kept as fallback). Bounded: this
+    # had no limit, so a router whose https-dns-proxy never registered its uci
+    # section sat here forever at every boot and never configured DNS at all.
+    if ! wait_for 30 1 uci get 'https-dns-proxy.@https-dns-proxy[0]'; then
+        logger -t post-cfg 'https-dns-proxy uci section absent after 30s — continuing without the fallback resolver'
+    fi
+
+    # Set https-dns-proxy to ControlD as fallback
+    # Guarded like ensure_firewall_user_rules and ensure_forced_dns below. The
+    # lib.sh-absent block defines a minimal helper set and this is not in it, so
+    # on a router recovering without lib.sh the bare call printed
+    # "set_fallback_resolver: not found" into the boot log. The "|| true" meant
+    # it did no harm, but it reads as a failure in precisely the log someone is
+    # combing through to find out what went wrong.
+    command -v set_fallback_resolver >/dev/null 2>&1 && { set_fallback_resolver "$RESOLVER_ID" "$BOOTSTRAP_IP" || true; }
+    # This is also what starts it. Firmware 1.5h stops https-dns-proxy on every
+    # settings save, with DoH on too, and does not start it again.
+    # stderr dropped: on a router that has not started the service since boot,
+    # restart prints "ubus call service signal ... Not found" before starting
+    # it normally. Step 5 verifies DNS for real, so the noise buys nothing.
+    /etc/init.d/https-dns-proxy restart 2>/dev/null
+    logger -t post-cfg 'dnsmasq already forwards to https-dns-proxy — left running'
+else
+    logger -t post-cfg 'Use DoH is off in Alta — https-dns-proxy left stopped, the fallback is the ISP DNS'
 fi
-
-# Set https-dns-proxy to ControlD as fallback
-# Guarded like ensure_firewall_user_rules and ensure_forced_dns below. The
-# lib.sh-absent block defines a minimal helper set and this is not in it, so on
-# a router recovering without lib.sh the bare call printed
-# "set_fallback_resolver: not found" into the boot log. The "|| true" meant it
-# did no harm, but it reads as a failure in precisely the log someone is
-# combing through to find out what went wrong.
-command -v set_fallback_resolver >/dev/null 2>&1 && { set_fallback_resolver "$RESOLVER_ID" "$BOOTSTRAP_IP" || true; }
-# stderr dropped: on a router that has not started the service since boot,
-# restart prints "ubus call service signal ... Not found" before starting it
-# normally. Step 5 verifies DNS for real, so the noise buys nothing.
-/etc/init.d/https-dns-proxy restart 2>/dev/null
-
-# Restore dnsmasq to use https-dns-proxy (fallback)
-uci delete dhcp.@dnsmasq[0].server 2>/dev/null
-uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5053'
-uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5054'
-uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5055'
-uci set dhcp.@dnsmasq[0].noresolv='0'
-uci commit dhcp
-/etc/init.d/dnsmasq restart
 
 # Wait for network connectivity. Bounded: this had no limit either, so an
 # upstream that filters ICMP — not an exotic condition — stalled the boot here

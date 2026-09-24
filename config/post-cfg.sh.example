@@ -4,33 +4,33 @@
 # This script runs on every boot and re-applies the configuration.
 # Supports DoH, DoH3 (HTTP/3), and DoQ (QUIC) via ctrld.
 
-# Wait for https-dns-proxy to initialize (kept as fallback). Bounded: the
-# firmware runs this file itself while applying its config, so a loop that
-# never ends here stalls the router's own boot.
-n=0
-while ! uci get https-dns-proxy.@https-dns-proxy[0] >/dev/null 2>&1 && [ $n -lt 30 ]; do
-    sleep 1
-    n=$((n + 1))
-done
+# Keep https-dns-proxy on ControlD as the fallback, but only while Use DoH is
+# on in Alta's DNS settings. The firmware says which in dnsmasq's servers: the
+# local https-dns-proxy ports when it is on, the ISP's alone when it is off.
+# dnsmasq's servers are the firmware's to set, so they are not touched here.
+case " $(uci -q get 'dhcp.@dnsmasq[0].server' 2>/dev/null) " in
+    *" 127.0.0.1#"*)
+        # Wait for https-dns-proxy to initialize. Bounded: the firmware runs
+        # this file itself while applying its config, so a loop that never
+        # ends here stalls the router's own boot.
+        n=0
+        while ! uci get https-dns-proxy.@https-dns-proxy[0] >/dev/null 2>&1 && [ $n -lt 30 ]; do
+            sleep 1
+            n=$((n + 1))
+        done
 
-# Set https-dns-proxy to ControlD as fallback
-uci set https-dns-proxy.@https-dns-proxy[0].resolver_url='https://dns.controld.com/<YOUR_RESOLVER_ID>'
-uci set https-dns-proxy.@https-dns-proxy[0].bootstrap_dns='76.76.2.22'
-uci set https-dns-proxy.@https-dns-proxy[1].resolver_url='https://dns.controld.com/<YOUR_RESOLVER_ID>'
-uci set https-dns-proxy.@https-dns-proxy[1].bootstrap_dns='76.76.2.22'
-uci set https-dns-proxy.@https-dns-proxy[2].resolver_url='https://dns.controld.com/<YOUR_RESOLVER_ID>'
-uci set https-dns-proxy.@https-dns-proxy[2].bootstrap_dns='76.76.2.22'
-uci commit https-dns-proxy
-/etc/init.d/https-dns-proxy restart
-
-# Restore dnsmasq to use https-dns-proxy (fallback)
-uci delete dhcp.@dnsmasq[0].server 2>/dev/null
-uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5053'
-uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5054'
-uci add_list dhcp.@dnsmasq[0].server='127.0.0.1#5055'
-uci set dhcp.@dnsmasq[0].noresolv='0'
-uci commit dhcp
-/etc/init.d/dnsmasq restart
+        # Every instance the firmware configured, one per DoH server
+        i=0
+        while uci -q get "https-dns-proxy.@https-dns-proxy[$i]" >/dev/null 2>&1 && [ $i -lt 16 ]; do
+            uci set "https-dns-proxy.@https-dns-proxy[$i].resolver_url=https://dns.controld.com/<YOUR_RESOLVER_ID>"
+            uci set "https-dns-proxy.@https-dns-proxy[$i].bootstrap_dns=76.76.2.22"
+            i=$((i + 1))
+        done
+        uci commit https-dns-proxy
+        # Also what starts it: firmware 1.5h stops it on every settings save
+        /etc/init.d/https-dns-proxy restart
+        ;;
+esac
 
 # Wait up to 60 seconds for the network, then carry on. An upstream that
 # drops ICMP never answers a ping, and the health check below decides whether

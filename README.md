@@ -465,8 +465,8 @@ this document.
 **Verified on hardware.** [docs/hardware-verification.md](docs/hardware-verification.md)
 records what has been watched happen on a real device and on which firmware,
 grouped by area: per-device visibility, install and upgrade, redirect
-coverage, DNS port changes, the watchdog, boot persistence, protocol
-reconciliation, split DNS, the readouts, and uninstall.
+coverage, DNS port changes, the watchdog, boot persistence, Alta's DNS
+settings, protocol reconciliation, split DNS, the readouts, and uninstall.
 
 **Not exercised on hardware.** These pass the test suite and are believed
 correct, but no one has run them on a real device:
@@ -477,6 +477,7 @@ correct, but no one has run them on a real device:
 | **The watchdog lock under contention** | Two cycles overlapping. The fix that makes overlap unlikely also makes it hard to observe: every hardware run took and released the lock cleanly, but no two ever raced. |
 | **Keeping a `ctrld` newer than the pin** | A re-install must not roll a newer binary back to `CTRLD_PIN`. Unit-tested; no router has been ahead of the pin to try it on. |
 | **A real auto-update** | `controld-update.sh`'s version comparison, checksum verification and rollback are unit-tested. No router has taken an actual upgrade through it. |
+| **Use DoH off across a reboot, and one custom DoH server** | `post-cfg.sh` follows Alta's Use DoH and leaves dnsmasq's servers to the firmware. Both directions of the toggle are verified on a settings save. A reboot with Use DoH off, and a save with one server in DoH Servers, have not run since that change. |
 | **A quoted `FORCED_DNS` through a real firmware update** | Config rewriting is verified on a Route 10, protocol change included. The one case standing in for the real thing is `uci` being unable to answer, which was a stub rather than a router that had just been updated. |
 | **Reconciliation on the paths that only run while DNS is failing** | The divergence and every repair for it are now verified on hardware, but two paths there are not, because both need DNS to actually fail on the device: the fallback loop seeding its chain from the reconciled protocol rather than the recorded one, and a reboot landing between a retarget and the record of its result, the interruption that produces the divergence in the first place. |
 

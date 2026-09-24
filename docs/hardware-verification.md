@@ -278,7 +278,8 @@ failed probes.
 - **dnsmasq left running at boot, after 1.11.0, on 1.5h.** Before
   `post-cfg.sh` compared dnsmasq's servers first, the boot after the update
   started dnsmasq three times: once from the firmware and once from each run
-  of `post-cfg.sh`. With the comparison in place, re-running `setup.sh` left
+  of `post-cfg.sh`. With the comparison in place, a version since replaced by
+  the one under Alta's DNS Settings below, re-running `setup.sh` left
   dnsmasq's process ID unchanged, and a reboot showed one start, the
   firmware's own, with both runs of `post-cfg.sh` logging
   `dnsmasq already forwards to https-dns-proxy — left running`. The failed
@@ -293,6 +294,48 @@ failed probes.
   boot after the firmware update did the same, and one of those addresses
   later went to a second access point. This is the firmware's, and
   `docs/troubleshooting.md` has the check and the workaround.
+
+## Alta's DNS Settings
+
+- **A settings save re-runs `post-cfg.sh`, on 1.5h.** Saving any change on
+  Alta's DNS page, a local DNS record included, re-applied the router's whole
+  config: the firmware stopped https-dns-proxy, reloaded the firewall,
+  restarted dnsmasq when its settings differed, and then ran
+  `/cfg/post-cfg.sh`. That run restored forced DNS, restarted `ctrld` and put
+  the redirects back on all six bridges within about 3 seconds. Afterwards
+  there were 24 rules and `audit.sh` exited 0.
+
+- **Local DNS Records, on 1.5h.** A record saved in the UI, `r10test` at
+  `192.0.2.10`, went into dnsmasq's generated config as
+  `host-record=r10test,192.0.2.10,300`, not into uci. dnsmasq answered it on
+  the router. `ctrld` on 5354 did not, and neither did a Mac on the LAN.
+  `ctrld` sends single-label names, and names ending in `.lan`, `.local` or
+  `.domain`, to its OS resolver, which leaves out the router's own addresses
+  to avoid a loop, so dnsmasq is never asked (`isLanHostname` in
+  `cmd/cli/dns_proxy.go` and `availableNameservers` in `resolver.go`, ctrld
+  1.5.7).
+
+- **What Use DoH and DoH Servers do, on 1.5h.** The firmware stopped
+  https-dns-proxy on every save, with Use DoH on as well, and never started it
+  again: with `/cfg/post-cfg.sh` moved aside, a save left it stopped. It wrote
+  dnsmasq's servers to match the setting. With Use DoH on they were the three
+  local ports. With one URL in DoH Servers there was one instance and dnsmasq
+  got `127.0.0.1#5053` alone. With Use DoH off the `server` option was
+  emptied and dnsmasq forwarded to the ISP's servers. The `post-cfg.sh` of the
+  time wrote the three ports back and started https-dns-proxy after every
+  save, which undid Use DoH off within a second and, with one DoH server, left
+  dnsmasq forwarding to two ports nothing listened on.
+
+- **Following Use DoH, after 1.11.0, on 1.5h.** With `post-cfg.sh` reading
+  Use DoH from dnsmasq's servers instead, turning it off left https-dns-proxy
+  stopped, with no processes running. dnsmasq started once, from the firmware.
+  `post-cfg.sh` logged `Use DoH is off in Alta — https-dns-proxy left stopped,
+  the fallback is the ISP DNS`, and `status.sh` warned rather than failed. A
+  Mac on the LAN still resolved through `ctrld`, with 24 rules and a clean
+  audit. Turning it back on, the next save's `post-cfg.sh` started all three
+  instances, dnsmasq again started once, from the firmware, and `status.sh`
+  reported the fallback running. The installer's own run left dnsmasq alone
+  as well.
 
 ## Protocol Reconciliation
 

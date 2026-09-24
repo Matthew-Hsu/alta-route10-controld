@@ -105,6 +105,7 @@ body:
         - label: Forced DNS enabled
         - label: A DNS port other than 5354
         - label: VLANs beyond the default LAN bridge
+        - label: "Alta's DNS settings changed from their defaults (Use DoH off, DoH Servers, or Local DNS Records)"
 
   - type: input
     id: version

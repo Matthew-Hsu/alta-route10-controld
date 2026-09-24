@@ -5639,20 +5639,32 @@ assert_not_contains "and no longer calls rule presence per-device visibility" \
 # With Use DoH off in Alta Control, post-cfg.sh leaves https-dns-proxy stopped on
 # purpose, so status.sh must not report that as a failure. The firmware says
 # DoH is off by giving dnsmasq the ISP's servers alone.
+#
+# status.sh asks /etc/init.d/https-dns-proxy whether the service runs, by
+# absolute path. These ran the real script, so they passed where that file
+# does not exist and failed on a Route 10, where it does and says the service
+# is running. A copy of status.sh with that path pointed at a stub reporting
+# it stopped makes the answer the test's, not the machine's.
+RI_ST_DIR="$TMPDIR/ri-status"; mkdir -p "$RI_ST_DIR/initd"
+sed "s|/etc/init.d/|${RI_ST_DIR}/initd/|g" "$SCRIPT_DIR/status.sh" > "$RI_ST_DIR/status.sh"
+cp "$SCRIPT_DIR/lib.sh" "$RI_ST_DIR/lib.sh"
+printf '#!/bin/sh\necho stopped\n' > "$RI_ST_DIR/initd/https-dns-proxy"
+chmod +x "$RI_ST_DIR/initd/https-dns-proxy"
 printf '#!/bin/sh\ncase "$*" in *dnsmasq*server*) echo "75.153.171.68#53 75.153.171.124#53" ;; *) exit 1 ;; esac\n' \
     > "$RI_BIN/uci"
 RI_ST="$(PATH="$RI_BIN:$PATH" DNS_PORT=5354 CTRLD_VERSION=1.5.7 LAN_IFACES="br-lan_10 br-lan_20" \
-    sh "$SCRIPT_DIR/status.sh" 2>/dev/null || true)"
+    sh "$RI_ST_DIR/status.sh" 2>/dev/null || true)"
 assert_contains "status.sh explains a stopped fallback while Use DoH is off" "$RI_ST" \
     "https-dns-proxy is stopped — Use DoH is off in Alta Control"
 assert_not_contains "rather than calling it a failure" "$RI_ST" "https-dns-proxy is not running"
 printf '#!/bin/sh\ncase "$*" in *dnsmasq*server*) echo "127.0.0.1#5053" ;; *) exit 1 ;; esac\n' \
     > "$RI_BIN/uci"
 RI_ST="$(PATH="$RI_BIN:$PATH" DNS_PORT=5354 CTRLD_VERSION=1.5.7 LAN_IFACES="br-lan_10 br-lan_20" \
-    sh "$SCRIPT_DIR/status.sh" 2>/dev/null || true)"
+    sh "$RI_ST_DIR/status.sh" 2>/dev/null || true)"
 assert_contains "with Use DoH on, a stopped fallback is still a failure" "$RI_ST" \
     "https-dns-proxy is not running"
 printf '#!/bin/sh\nexit 1\n' > "$RI_BIN/uci"
+unset RI_ST_DIR
 unset RI_CHAIN RI_COUNTS
 
 describe "audit.sh — a redirect pointing at a port nothing listens on"

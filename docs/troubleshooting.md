@@ -36,9 +36,10 @@
    . /cfg/lib.sh && load_env && remove_dns_redirects
    /etc/init.d/dnsmasq restart
    ```
-   This restores DNS via dnsmasq and https-dns-proxy (encrypted while Use DoH
-   is on in Alta Control's DNS settings, just no per-device visibility). The watchdog
-   puts the redirects back automatically once ctrld answers again.
+   This restores DNS through dnsmasq, with no per-device visibility and not
+   through ControlD alone: dnsmasq also asks your ISP's DNS in plain text, as
+   [the fallback path](technical-details.md#architecture) explains. The
+   watchdog puts the redirects back automatically once ctrld answers again.
 
    > **Never run `iptables -t nat -F PREROUTING`.** That flushes the entire
    > chain: your port forwards, UPnP mappings and the firewall's own zone jumps
@@ -94,9 +95,10 @@ unrecoverable. DNS still works for everyone, but no device appears in ControlD.
 (whether it died and won't restart, or never started because the binary or its
 config is broken), the watchdog removes the redirects. Leaving them in place
 would point port 53 at a closed port and take DNS down for every client on
-every bridge. Removing them hands resolution back to dnsmasq → https-dns-proxy,
-which is still encrypted ControlD while Use DoH is on in Alta Control, just
-without per-device visibility.
+every bridge. Removing them hands resolution back to dnsmasq, which keeps every
+client resolving without per-device visibility. It asks ControlD through
+https-dns-proxy and your ISP's DNS side by side while Use DoH is on in Alta
+Control, as [the fallback path](technical-details.md#architecture) describes.
 
 Look for `ctrld will not start` in the log below: that means the binary or
 `/cfg/ctrld.toml` is the problem, not the upstream protocol.

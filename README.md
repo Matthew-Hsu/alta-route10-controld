@@ -40,9 +40,16 @@ Encrypted DNS with per-device visibility on the Alta Labs Route 10 router using 
 
 Since firmware 1.5h, the Route 10 can send its DNS to ControlD by itself. In
 Alta Control, under Settings → Networks → DNS, leave Use DoH on and put
-`https://dns.controld.com/<your resolver ID>` in DoH Servers. If you want
-encrypted DNS on one ControlD profile and don't need to know which device asked
-what, that setting is enough, and it needs no scripts on the router.
+`https://dns.controld.com/<your resolver ID>` in DoH Servers. If you want one
+ControlD profile for the whole network and don't need to know which device
+asked what, that setting may be enough, and it needs no scripts on the router.
+
+On 1.5h it does not encrypt everything, though. The router also sends
+queries to your ISP's DNS in plain text, alongside ControlD, so your ISP sees
+what is looked up and an answer from it can skip ControlD's filtering. Alta has
+said a later release lets you turn the plain-text queries off. The details are
+under [the fallback path](docs/technical-details.md#architecture), which this
+setting uses for every query.
 
 This project is for what that setting can't do:
 
@@ -67,8 +74,10 @@ fallback while `ctrld` is down, and how it treats your DoH settings is under
 [ControlD](https://controld.com). Every device on your network shows up
 individually in the ControlD dashboard, including devices on VLANs, not just
 the router as a whole. It survives reboots and firmware updates without
-help, and falls back to the router's built-in DoH, still encrypted, if
-something goes wrong, as long as Use DoH is on in Alta Control's DNS settings.
+help, and falls back to the router's own DNS if something goes wrong. That
+fallback is not ControlD alone: while Use DoH is on in Alta Control's DNS
+settings it also asks your ISP's DNS in plain text, as
+[the fallback path](docs/technical-details.md#architecture) explains.
 
 > This project is developed and exercised on an Alta Route 10 running firmware
 > `1.5g` and then `1.5h`, across six LAN bridges;
@@ -155,14 +164,15 @@ redirects over IPv4.
 - **IPv6 sites work normally.** AAAA lookups resolve like any other record.
   This is about DNS *carried over* IPv6, not IPv6 addresses in answers.
 - **A device that asks the router for DNS over IPv6 loses its identity.** Its
-  queries go to dnsmasq rather than `ctrld`, so they reach ControlD through
-  the router's built-in DoH while Use DoH is on in Alta Control (and your
-  ISP's DNS, unencrypted, while it is off). They arrive attributed to the router rather than the device, and they
-  skip any split-DNS rule you set for it. Nothing warns you: `status.sh` and
-  `audit.sh` do not look at IPv6, so a clean report does not rule this out.
+  queries go to dnsmasq rather than `ctrld`, so they take
+  [the fallback path](docs/technical-details.md#architecture): ControlD over
+  DoH and your ISP's DNS in plain text while Use DoH is on in Alta Control,
+  and your ISP's DNS alone while it is off. Those that reach ControlD arrive
+  attributed to the router rather than the device, and they skip any split-DNS
+  rule you set for it. Nothing warns you: `status.sh` and `audit.sh` do not
+  look at IPv6, so a clean report does not rule this out.
 - **A device hardcoded to an IPv6 resolver bypasses ControlD entirely.**
-  Forced DNS cannot catch it. This is the only case here where a query leaves
-  your network to somewhere that is not ControlD.
+  Forced DNS cannot catch it, and its queries go wherever it was pointed.
 
 To close it, stop the router handing clients an IPv6 resolver. That is a
 setting in Alta Control, which this project does not manage. With IPv6 off

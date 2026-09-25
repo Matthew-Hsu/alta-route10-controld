@@ -40,33 +40,31 @@ Encrypted DNS with per-device visibility on the Alta Labs Route 10 router using 
 
 Since firmware 1.5h, the Route 10 can send its DNS to ControlD by itself. In
 Alta Control, under Settings → Networks → DNS, leave Use DoH on and put
-`https://dns.controld.com/<your resolver ID>` in DoH Servers. If you want one
-ControlD profile for the whole network and don't need to know which device
-asked what, that setting may be enough, and it needs no scripts on the router.
-
-On 1.5h it does not encrypt everything, though. The router also sends
-queries to your ISP's DNS in plain text, alongside ControlD, so your ISP sees
-what is looked up and an answer from it can skip ControlD's filtering. Alta has
-said a later release lets you turn the plain-text queries off. The details are
-under [the fallback path](docs/technical-details.md#architecture), which this
-setting uses for every query.
-
-This project is for what that setting can't do:
+`https://dns.controld.com/<your resolver ID>` in DoH Servers. That needs no
+scripts on the router. Here is how that setting compares with this project:
 
 | | DoH Servers in Alta Control | This project |
 |---|---|---|
+| Your ISP's DNS | also asked, in plain text, so your ISP sees what is looked up and its answer can skip ControlD's filtering. Alta has said a later release lets you turn this off | not asked for your devices' queries while `ctrld` is running, [IPv6](#ipv6) aside |
 | What the ControlD dashboard shows | every query as coming from the router | each device separately, VLANs included |
 | Different profiles for different devices | one profile for the whole network | per device or per subnet, with [split DNS](docs/technical-details.md#split-dns-and-per-device-policy) |
 | Protocol to ControlD | DoH over HTTP/1.1 | DoH3 by default, or DoH, DoQ or DoT |
 | Devices with a hardcoded DNS server | not redirected by this setting | caught on ports 53 and 853 with [forced DNS](#turn-on-forced-dns) |
 | Local DNS Records in Alta Control | work | do not work, see [Not Supported](#not-supported) |
 
+On 1.5h the first row is the one to weigh. If you want your devices' DNS to
+reach ControlD and nothing else, this project does that today. Once Alta ships
+the setting to turn the plain-text queries off, DoH Servers on its own should
+be enough if you want one profile for the whole network and don't need to know
+which device asked what. [The fallback path](docs/technical-details.md#architecture)
+explains how the router's own DNS asks both ControlD and your ISP.
+
 The DoH Servers column was worked out on a router with this project installed.
 Checking it on one without is tracked in [#59](https://github.com/Matthew-Hsu/alta-route10-controld/issues/59).
 
-The two can run together. This project uses the router's built-in DoH as its
-fallback while `ctrld` is down, and how it treats your DoH settings is under
-[Not Supported](#not-supported).
+The two can run together. This project uses the router's own DNS as its
+fallback while `ctrld` is down, which asks your ISP's DNS too, and how it
+treats your DoH settings is under [Not Supported](#not-supported).
 
 ## Get Started
 

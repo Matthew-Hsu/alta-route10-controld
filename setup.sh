@@ -1721,7 +1721,12 @@ printf "    sh /cfg/audit.sh          Check for drift and leftovers\n"
 printf "    sh /cfg/uninstall.sh      Remove ControlD\n\n"
 printf "  ${DIM}Note: Use the scripts above instead of running /cfg/ctrld directly.${RESET}\n"
 printf "  ${DIM}The ctrld 'start'/'status' commands expect a different config format.${RESET}\n\n"
-printf "  ${DIM}Smart TVs or IoT gear bypassing DNS? sh /cfg/reconfigure.sh --force-dns${RESET}\n\n"
+# Only while forced DNS is off. A re-install keeps it on when it was on, and
+# --force-dns alone is a toggle, so the bare command printed there offered to
+# turn off the protection it was advertising. --to on can only turn it on.
+if [ "$(preserved_forced_dns /cfg/controld.env)" != "1" ]; then
+    printf "  ${DIM}Smart TVs or IoT gear bypassing DNS? sh /cfg/reconfigure.sh --force-dns --to on${RESET}\n\n"
+fi
 
 # Last, so the file list and commands above print either way.
 [ "$_setup_ok" = "1" ] || exit 1

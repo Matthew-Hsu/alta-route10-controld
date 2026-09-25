@@ -5036,7 +5036,9 @@ sv_run() {
     # whose config matches it does not answer, which is how a resolver ID
     # ControlD refuses or a protocol the network blocks looks to the check.
     # SV_REUSE=1 runs again over the sandbox a previous run left, and SV_KEEP=1
-    # leaves its ctrld running for that, which is a re-install.
+    # leaves its ctrld running for that, which is a re-install. SV_DOH=1 gives
+    # dnsmasq the three https-dns-proxy ports, which is Use DoH on, and
+    # SV_FALLBACK_BROKEN=1 makes https-dns-proxy stop answering on them.
     _sv="$1"
     if [ -z "${SV_REUSE:-}" ]; then
     rm -rf "$_sv"
@@ -5061,8 +5063,8 @@ sv_run() {
     # from the moment probe_resolver writes it to the moment it removes it.
     printf '#!/bin/sh\n"$(dirname "$0")/pidof" >/dev/null && echo "udp 0 0 0.0.0.0:5354 0.0.0.0:* 1/ctrld"\n[ -f "%s/tmp/ctrld-bench.toml" ] && echo "udp 0 0 127.0.0.1:5360 0.0.0.0:* 1/ctrld"\nexit 0\n' \
         "$_sv" > "$_sv/bin/netstat"
-    printf '#!/bin/sh\ncase "${2:-}" in\n  *#5360) [ -f "%s/tmp/ctrld-bench.toml" ] || exit 1\n          [ -f "%s/bench.fail" ] && grep -qE "$(cat "%s/bench.fail")" "%s/tmp/ctrld-bench.toml" && exit 1\n          exit 0 ;;\nesac\n"$(dirname "$0")/pidof" >/dev/null && [ ! -f "%s/dns.broken" ]\n' \
-        "$_sv" "$_sv" "$_sv" "$_sv" "$_sv" > "$_sv/bin/nslookup"
+    printf '#!/bin/sh\ncase "${2:-}" in\n  *#5360) [ -f "%s/tmp/ctrld-bench.toml" ] || exit 1\n          [ -f "%s/bench.fail" ] && grep -qE "$(cat "%s/bench.fail")" "%s/tmp/ctrld-bench.toml" && exit 1\n          exit 0 ;;\n  *#505[0-9]) [ ! -f "%s/fallback.broken" ]; exit $? ;;\nesac\n"$(dirname "$0")/pidof" >/dev/null && [ ! -f "%s/dns.broken" ]\n' \
+        "$_sv" "$_sv" "$_sv" "$_sv" "$_sv" "$_sv" > "$_sv/bin/nslookup"
     # The ctrld release tarball is the only download that succeeds. Everything
     # else, checksums.txt included, fails the way an unreachable network does.
     printf '#!/bin/sh\n_o=""; _u=""\nwhile [ $# -gt 0 ]; do case "$1" in -O) _o="$2"; shift 2 ;; -*) shift ;; *) _u="$1"; shift ;; esac; done\ncase "$_u" in *ctrld_*_linux_arm64.tar.gz) cp "%s/ctrld.tgz" "$_o"; exit 0 ;; esac\nexit 1\n' \
@@ -5073,13 +5075,18 @@ sv_run() {
         "$_sv" "$_sv" > "$_sv/bin/iptables"
     printf '#!/bin/sh\ncase "$1" in -l) cat "%s/crontab" 2>/dev/null ;; -) cat > "%s/crontab.new" && mv "%s/crontab.new" "%s/crontab" ;; esac\n' \
         "$_sv" "$_sv" "$_sv" "$_sv" > "$_sv/bin/crontab"
-    for _svf in uci iptables-save; do printf '#!/bin/sh\nexit 1\n' > "$_sv/bin/$_svf"; done
+    # uci knows nothing but dnsmasq's servers, and those only while SV_DOH is set.
+    printf '#!/bin/sh\ncase "$*" in *"dhcp.@dnsmasq[0].server"*) [ -f "%s/doh.servers" ] && cat "%s/doh.servers" && exit 0 ;; esac\nexit 1\n' \
+        "$_sv" "$_sv" > "$_sv/bin/uci"
+    printf '#!/bin/sh\nexit 1\n' > "$_sv/bin/iptables-save"
     for _svf in sleep logger ping; do printf '#!/bin/sh\nexit 0\n' > "$_sv/bin/$_svf"; done
     for _svf in dnsmasq https-dns-proxy; do printf '#!/bin/sh\nexit 0\n' > "$_sv/initd/$_svf"; done
     chmod +x "$_sv/bin"/* "$_sv/initd"/*
     fi
-    rm -f "$_sv/dns.broken" "$_sv/bench.fail"
+    rm -f "$_sv/dns.broken" "$_sv/bench.fail" "$_sv/doh.servers" "$_sv/fallback.broken"
     [ "$2" = "broken" ] && : > "$_sv/dns.broken"
+    [ -n "${SV_DOH:-}" ] && printf '127.0.0.1#5053 127.0.0.1#5054 127.0.0.1#5055\n' > "$_sv/doh.servers"
+    [ -n "${SV_FALLBACK_BROKEN:-}" ] && : > "$_sv/fallback.broken"
     [ -n "${SV_BENCH_FAIL:-}" ] && printf '%s' "$SV_BENCH_FAIL" > "$_sv/bench.fail"
 
     ( PATH="$_sv/bin:$PATH"; FW_USER="$_sv/firewall.user"; SYSFS_NET="$_sv/sys"
@@ -5119,6 +5126,22 @@ SV_FD="$(SV_REUSE=1 sv_run "$SV/forced" good)"
 assert_contains "a re-install with forced DNS on still completes" "$SV_FD" "Setup Complete!"
 assert_contains "and keeps it on" "$(cat "$SV/forced/cfg/controld.env")" "FORCED_DNS=1"
 assert_not_contains "and does not offer the forced-DNS command at all" "$SV_FD" "--force-dns"
+
+# The installer's last DNS check used to ask dnsmasq, which answered from its
+# cache: on a Route 10 it read [OK] while the fallback timed out and no client
+# got an answer. With Use DoH on it now asks https-dns-proxy itself, so here
+# dnsmasq keeps answering while https-dns-proxy does not.
+SV_FB="$(SV_DOH=1 sv_run "$SV/fallback" good)"
+assert_contains "with Use DoH on, the installer asks https-dns-proxy directly" \
+    "$SV_FB" "Fallback DNS answering (https-dns-proxy on port 5053)"
+SV_FB="$(SV_DOH=1 SV_FALLBACK_BROKEN=1 sv_run "$SV/fallback-down" good)"
+assert_contains "a fallback that does not answer is reported, however dnsmasq answers" \
+    "$SV_FB" "https-dns-proxy not answering on port 5053"
+assert_contains "as a warning: devices resolve through ctrld, so the install completes" \
+    "$SV_FB" "Setup Complete!"
+assert_contains "and exits 0" "$SV_FB" "rc=0"
+assert_contains "with Use DoH off, it asks the router's own DNS and says what that is" \
+    "$SV_GOOD" "Router DNS answering — with Use DoH off"
 
 # The policy wizard writes a name straight into name = "...". A double quote
 # there makes ctrld.toml invalid TOML, and setup.sh has no rollback, so ctrld

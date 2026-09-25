@@ -1671,11 +1671,32 @@ if [ -n "$_uncovered" ]; then
     _setup_ok=0
 fi
 
-if check_dns; then
-    print_ok "System DNS working"
+# The fallback, asked where it answers. This used to be check_dns with no
+# server, which asks dnsmasq, and dnsmasq answered it from its cache: it read
+# [OK] on a router where the fallback timed out and no client got an answer.
+# On 1.5h dnsmasq also forwards to the ISP's DNS, so even an uncached answer
+# from it says nothing about https-dns-proxy. With Use DoH on, the first local
+# port in dnsmasq's servers is asked directly instead. With it off, dnsmasq and
+# the ISP's DNS are the fallback, so dnsmasq is what gets asked.
+#
+# A warning, not a failed install: devices resolve through ctrld, which the
+# check above has just seen answer. post-cfg.sh restarted https-dns-proxy
+# moments ago, so it gets a few tries before it counts as not answering; each
+# costs a resolver timeout only when it does not answer. command -v because an
+# older lib.sh, which setup.sh can still be run against, has no alta_doh_on.
+if command -v alta_doh_on >/dev/null 2>&1 && alta_doh_on; then
+    _fb_port="$(uci -q get 'dhcp.@dnsmasq[0].server' 2>/dev/null | tr ' ' '\n' \
+        | sed -n 's/^127\.0\.0\.1#\([0-9][0-9]*\)$/\1/p' | head -1)"
+    _fb_port="${_fb_port:-5053}"
+    if wait_for 5 2 check_dns "127.0.0.1#${_fb_port}"; then
+        print_ok "Fallback DNS answering (https-dns-proxy on port ${_fb_port})"
+    else
+        print_warn "https-dns-proxy not answering on port ${_fb_port} — if ctrld stops, only your ISP's DNS will answer"
+    fi
+elif check_dns; then
+    print_ok "Router DNS answering — with Use DoH off, the fallback is your ISP's DNS, unencrypted"
 else
-    print_fail "System DNS not working"
-    _setup_ok=0
+    print_warn "Router DNS not answering — if ctrld stops, devices will have no DNS"
 fi
 
 # ── Done ──

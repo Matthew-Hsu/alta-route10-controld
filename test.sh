@@ -5108,6 +5108,18 @@ assert_contains "it says DNS is not working yet" "$SV_BAD" "DNS is not working y
 assert_contains "and exits non-zero" "$SV_BAD" "rc=1"
 assert_contains "while still listing what it installed" "$SV_BAD" "Installed on router"
 
+# The closing hint offers forced DNS. It printed on every install as a bare
+# --force-dns, which is a toggle, so on a re-install that had kept forced DNS
+# on, the command it offered would have turned it off.
+assert_contains "with forced DNS off, the installer offers to turn it on" \
+    "$SV_GOOD" "reconfigure.sh --force-dns --to on"
+SV_FD="$(SV_KEEP=1 sv_run "$SV/forced" good)"
+sed -i 's/^FORCED_DNS=.*/FORCED_DNS=1/' "$SV/forced/cfg/controld.env"
+SV_FD="$(SV_REUSE=1 sv_run "$SV/forced" good)"
+assert_contains "a re-install with forced DNS on still completes" "$SV_FD" "Setup Complete!"
+assert_contains "and keeps it on" "$(cat "$SV/forced/cfg/controld.env")" "FORCED_DNS=1"
+assert_not_contains "and does not offer the forced-DNS command at all" "$SV_FD" "--force-dns"
+
 # The policy wizard writes a name straight into name = "...". A double quote
 # there makes ctrld.toml invalid TOML, and setup.sh has no rollback, so ctrld
 # would never start. Answers: resolver, default bootstrap, DoH3, yes to split

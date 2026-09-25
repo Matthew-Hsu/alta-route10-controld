@@ -123,6 +123,16 @@ failed probes.
   DNS to either, where the same unknown ID had left the LAN without DNS until
   the installer was run again, and no throwaway `ctrld` was left running.
 
+- **The installer's last two lines, after 1.12.0, on 1.5h.** A re-install
+  from the branch archive, with Use DoH on and forced DNS on, ended its
+  verification on `Fallback DNS answering (https-dns-proxy on port 5053)`.
+  That check now asks https-dns-proxy directly, seconds after `post-cfg.sh`
+  restarted it, and it answered in time: the whole install took 7 seconds.
+  The run ended without the "Smart TVs or IoT gear bypassing DNS?" line,
+  which now prints only while forced DNS is off. It exited 0 and `audit.sh`
+  exited 0. A run with Use DoH off, where the check asks dnsmasq instead, has
+  not been done on a router.
+
 ## Redirect Coverage
 
 - Redirect coverage on all six bridges, the port-853 DoT hijack, and

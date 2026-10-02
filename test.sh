@@ -5296,6 +5296,7 @@ PK1="$(pk_run)"
 assert_contains "the first run starts ctrld" "$(cat "$PD/log" 2>/dev/null)" "ctrld started (doh3)"
 assert_true "and https-dns-proxy, whose settings it has just set" grep -q restart "$PD/https-dns-proxy.calls"
 assert_true "and records what ctrld was started with" grep -q "listener" "$PD/tmp/ctrld.started"
+assert_false "and leaves no lock behind" [ -e "$PD/tmp/post-cfg.lock" ]
 : > "$PD/hdp.running"
 
 PK2="$(pk_run)"
@@ -5334,8 +5335,29 @@ rm -f "$PD/hdp.running"
 pk_run >/dev/null
 assert_true "and when it is not running, as after a settings save on 1.5h" \
     grep -q restart "$PD/https-dns-proxy.calls"
+# Two runs at once each stopped the ctrld the other had just started: on a
+# Route 10 an install landed on the firmware's per-minute run and the
+# installer's check found no ctrld. A run now holds a lock while it works. A
+# lock whose owner has gone, or that never got one, is cleared; one held by a
+# live process is honoured until the wait runs out (sleep is a stub here, so
+# that is at once) and left in place.
+mkdir -p "$PD/tmp/post-cfg.lock"; echo 999999 > "$PD/tmp/post-cfg.lock/pid"
+pk_run >/dev/null
+assert_contains "a lock left by a process that has gone is cleared" \
+    "$(cat "$PD/log" 2>/dev/null)" "ctrld already running"
+assert_false "and released when the run ends" [ -e "$PD/tmp/post-cfg.lock" ]
+mkdir -p "$PD/tmp/post-cfg.lock"
+pk_run >/dev/null
+assert_contains "so is one that never got an owner" "$(cat "$PD/log" 2>/dev/null)" "ctrld already running"
+/bin/sleep 30 & PK_HOLDER=$!
+mkdir -p "$PD/tmp/post-cfg.lock"; echo "$PK_HOLDER" > "$PD/tmp/post-cfg.lock/pid"
+pk_run >/dev/null
+assert_contains "a lock held by a live run is waited on" "$(cat "$PD/log" 2>/dev/null)" \
+    "another post-cfg.sh still running after 120s"
+assert_eq "and left to its owner" "$PK_HOLDER" "$(cat "$PD/tmp/post-cfg.lock/pid" 2>/dev/null)"
+kill "$PK_HOLDER" 2>/dev/null; rm -rf "$PD/tmp/post-cfg.lock"
 kill "$(cat "$PD/ctrld.pid" 2>/dev/null)" 2>/dev/null || true
-unset PK1 PK2 PK3 PK4 PK5 PK6 PK7 _pk_tool
+unset PK1 PK2 PK3 PK4 PK5 PK6 PK7 PK_HOLDER _pk_tool
 unset -f pk_run
 unset _pdi
 unset PD

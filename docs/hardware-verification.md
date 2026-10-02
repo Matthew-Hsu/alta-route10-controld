@@ -38,6 +38,10 @@ On that router `test.sh` itself ran under the router's own BusyBox, as
 `CONTRIBUTING.md` prescribes: 1,061 passed and none failed, its router
 integration tests included, once two tests that had been reading the real
 `/etc/init.d/https-dns-proxy` were given a stub.
+
+Entries marked **on 1.5i** ran after the router took Alta's 1.5i update in
+place, with 1.12.0 and the changes after it installed.
+`/etc/openwrt_release` then read `DISTRIB_REVISION='1.5i'`.
 Those entries time DNS from a client. A Mac on VLAN 10 asked the router's LAN
 address for a record once a second with `dig +time=1 +tries=1`, and the
 `br-lan_10` redirect counter rose with the queries, which shows the probe went
@@ -334,6 +338,30 @@ failed probes.
   later went to a second access point. This is the firmware's, and
   `docs/troubleshooting.md` has the check and the workaround.
 
+- **`post-cfg.sh` every minute, on 1.5i.** After the update the firmware ran
+  `/cfg/post-cfg.sh` every 60 seconds, at about :21 past the minute, each
+  time just after `rc: Re-running dl cfg` and its schedule check. With no
+  schedules configured, `/var/run/schedules` was empty and
+  `/var/run/.schedules` absent, so `diff -qr` between them failed (rc 2),
+  and the firmware stopped its scheduler, deleted `.schedules` and ran the
+  hook. Nothing in this project's cron runs it. Each run restarted `ctrld`:
+  over three minutes its PID changed every minute, and a Mac probing once a
+  second failed one lookup two seconds after each run.
+
+- **Leaving a healthy `ctrld` running, on 1.5i.** A re-install from the
+  branch archive recorded what `ctrld` was started with in `/tmp/ctrld.started`.
+  Over the next three minutes the firmware ran the hook four times, each run
+  logged `ctrld already running (doh3) — left running` about a tenth of a
+  second later, the PID stayed the same throughout, https-dns-proxy was not
+  restarted, and the probe failed no lookups in 200 seconds. `audit.sh`
+  exited 0. An earlier build of this change recorded the config with
+  `cksum`, which the router's BusyBox lacks (`command not found`, rc 127),
+  so it recorded nothing and changed nothing. An earlier re-install also
+  landed on the firmware's run: two runs at once each logged `ctrld
+  started`, the installer found no `ctrld` and exited 1, and devices most
+  likely had no DNS until the firmware's next run about 50 seconds later.
+  The lock added after it has not yet been seen waiting on a router.
+
 ## Alta Control's DNS Settings
 
 - **A settings save re-runs `post-cfg.sh`, on 1.5h.** Saving any change on
@@ -398,6 +426,15 @@ failed probes.
   one before that reboot and the one turning Use DoH back on, each cost the
   probe a single failed lookup, a gap of one to two seconds. So did the
   uninstall and the re-install that followed.
+
+- **A settings save with `ctrld` left running, on 1.5i.** TTL was set to 301
+  and saved, then set back to 300 and saved. Each save stopped
+  https-dns-proxy, restarted dnsmasq and ran the hook, which restarted
+  https-dns-proxy and restored forced DNS's `force_dns` setting that the
+  save had reset, and logged `ctrld already running`. The `ctrld` PID was
+  the same before and after both. The probe failed one lookup during the
+  first save and none during the second. Which part of the firmware's
+  re-apply cost that lookup was not found.
 
 ## Protocol Reconciliation
 

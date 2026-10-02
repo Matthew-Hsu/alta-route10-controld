@@ -5249,6 +5249,94 @@ assert_false "with Use DoH off, https-dns-proxy is left stopped" \
 assert_false "dnsmasq keeps the ISP servers the firmware gave it" \
     grep -Eq "^(add_list|delete|set) dhcp\." "$PD/uci.calls"
 assert_false "without a restart" grep -q restart "$PD/dnsmasq.calls"
+
+describe "post-cfg.sh — leaves a healthy ctrld and https-dns-proxy running"
+
+# Firmware 1.5i runs post-cfg.sh every minute, and each run restarted ctrld and
+# https-dns-proxy: on a Route 10, ctrld got a new PID every minute and a client
+# lost DNS for a second or two each time. Here the script runs again and again
+# with ctrld left up between runs, as the firmware does. uci now keeps the
+# https-dns-proxy settings in a file, so a run can see whether they changed,
+# and the service reports "running" while hdp.running exists.
+cat > "$PD/bin/uci" << PKUCIEOF
+#!/bin/sh
+case "\$*" in
+    "-q get dhcp.@dnsmasq[0].server") echo "127.0.0.1#5053 127.0.0.1#5054 127.0.0.1#5055"; exit 0 ;;
+    "get https-dns-proxy.@https-dns-proxy[0]"|"-q get https-dns-proxy.@https-dns-proxy[0]") exit 0 ;;
+    "-q show https-dns-proxy") cat "$PD/hdp.uci" 2>/dev/null; exit 0 ;;
+    "set https-dns-proxy."*) grep -qxF "\$2" "$PD/hdp.uci" 2>/dev/null || echo "\$2" >> "$PD/hdp.uci"; exit 0 ;;
+    "commit https-dns-proxy") exit 0 ;;
+esac
+exit 1
+PKUCIEOF
+printf '#!/bin/sh\ncase "$1" in status) [ -f "%s/hdp.running" ] && echo running ;; *) echo "$*" >> "%s/https-dns-proxy.calls" ;; esac\n' \
+    "$PD" "$PD" > "$PD/initd/https-dns-proxy"
+printf '#!/bin/sh\nshift 2 2>/dev/null; echo "$*" >> "%s/log"\n' "$PD" > "$PD/bin/logger"
+# A killed ctrld must read as gone. Nothing here reaps orphans, so it stays a
+# zombie that kill -0 still finds; on a router procd reaps it at once.
+printf '#!/bin/sh\n_p="$(cat "%s/ctrld.pid" 2>/dev/null)"\n[ -n "$_p" ] && kill -0 "$_p" 2>/dev/null && ! grep -q "^State:.*Z" "/proc/$_p/status" 2>/dev/null && echo "$_p"\n' \
+    "$PD" > "$PD/bin/pidof"
+# The router's BusyBox has no cksum, and a record made with it came back empty
+# there, so nothing was ever kept. The checksum tools fail here as cksum does
+# on the router.
+for _pk_tool in cksum md5sum; do printf '#!/bin/sh\nexit 127\n' > "$PD/bin/$_pk_tool"; done
+chmod +x "$PD/bin/uci" "$PD/initd/https-dns-proxy" "$PD/bin/logger" "$PD/bin/pidof" \
+    "$PD/bin/cksum" "$PD/bin/md5sum"
+rm -f "$PD/hdp.uci" "$PD/hdp.running" "$PD/dns.broken"
+# Runs post-cfg.sh and leaves ctrld running; prints the ctrld PID afterwards.
+pk_run() {
+    rm -f "$PD/https-dns-proxy.calls" "$PD/log"
+    ( PATH="$PD/bin:$PATH"; FW_USER="$PD/firewall.user"; SYSFS_NET="$PD/sys"
+      DEGRADED_FLAG="$PD/tmp/degraded"; export FW_USER SYSFS_NET DEGRADED_FLAG
+      sh "$PD/cfg/post-cfg.sh" ) >/dev/null 2>&1 || true
+    cat "$PD/ctrld.pid" 2>/dev/null
+}
+
+PK1="$(pk_run)"
+assert_contains "the first run starts ctrld" "$(cat "$PD/log" 2>/dev/null)" "ctrld started (doh3)"
+assert_true "and https-dns-proxy, whose settings it has just set" grep -q restart "$PD/https-dns-proxy.calls"
+assert_true "and records what ctrld was started with" grep -q "listener" "$PD/tmp/ctrld.started"
+: > "$PD/hdp.running"
+
+PK2="$(pk_run)"
+assert_eq "a run with ctrld healthy leaves the same ctrld running" "$PK1" "$PK2"
+assert_contains "and says so" "$(cat "$PD/log" 2>/dev/null)" "ctrld already running (doh3) — left running"
+assert_false "and leaves https-dns-proxy running on unchanged settings" \
+    grep -q restart "$PD/https-dns-proxy.calls"
+assert_contains "while the redirects are still checked" "$(cat "$PD/rules" 2>/dev/null)" "--dport 53 -j REDIRECT --to-port 5354"
+
+printf '# edited\n' >> "$PD/cfg/ctrld.toml"
+PK3="$(pk_run)"
+assert_false "a changed ctrld.toml restarts ctrld" [ "$PK3" = "$PK2" ]
+PK4="$(pk_run)"
+assert_eq "once, after which it is left running again" "$PK3" "$PK4"
+
+kill "$PK4" 2>/dev/null; sleep 1
+PK5="$(pk_run)"
+assert_false "a ctrld that has stopped is started" [ "$PK5" = "$PK4" ]
+assert_contains "and logged as started" "$(cat "$PD/log" 2>/dev/null)" "ctrld started (doh3)"
+
+: > "$PD/dns.broken"
+PK6="$(pk_run)"
+rm -f "$PD/dns.broken"
+assert_false "a ctrld that is running but not answering is restarted" [ "$PK6" = "$PK5" ]
+
+rm -f "$PD/tmp/ctrld.started"
+PK7="$(pk_run)"
+assert_false "with no record of what ctrld was started with, as after a reboot, it is restarted" \
+    [ "$PK7" = "$PK6" ]
+
+: > "$PD/hdp.uci"
+pk_run >/dev/null
+assert_true "https-dns-proxy is restarted when its settings were reset, as a settings save does" \
+    grep -q restart "$PD/https-dns-proxy.calls"
+rm -f "$PD/hdp.running"
+pk_run >/dev/null
+assert_true "and when it is not running, as after a settings save on 1.5h" \
+    grep -q restart "$PD/https-dns-proxy.calls"
+kill "$(cat "$PD/ctrld.pid" 2>/dev/null)" 2>/dev/null || true
+unset PK1 PK2 PK3 PK4 PK5 PK6 PK7 _pk_tool
+unset -f pk_run
 unset _pdi
 unset PD
 unset -f pd_run

@@ -704,31 +704,65 @@ if [ "$ALTA_DOH" = "1" ]; then
     # "set_fallback_resolver: not found" into the boot log. The "|| true" meant
     # it did no harm, but it reads as a failure in precisely the log someone is
     # combing through to find out what went wrong.
+    _hdp_before="$(uci -q show https-dns-proxy 2>/dev/null)"
     command -v set_fallback_resolver >/dev/null 2>&1 && { set_fallback_resolver "$RESOLVER_ID" "$BOOTSTRAP_IP" || true; }
     # This is also what starts it. Firmware 1.5h stops https-dns-proxy on every
     # settings save, with DoH on too, and does not start it again.
+    #
+    # Only when it is stopped or its settings just changed, though. Firmware
+    # 1.5i runs this script every minute, and restarting a service that is
+    # already running on the same settings bought nothing but a gap in the
+    # fallback each time.
+    #
     # stderr dropped: on a router that has not started the service since boot,
     # restart prints "ubus call service signal ... Not found" before starting
     # it normally. Step 5 verifies DNS for real, so the noise buys nothing.
-    /etc/init.d/https-dns-proxy restart 2>/dev/null
+    if [ "$(/etc/init.d/https-dns-proxy status 2>/dev/null)" != "running" ] \
+            || [ "$(uci -q show https-dns-proxy 2>/dev/null)" != "$_hdp_before" ]; then
+        /etc/init.d/https-dns-proxy restart 2>/dev/null
+    fi
     logger -t post-cfg 'dnsmasq already forwards to https-dns-proxy — left running'
 else
     logger -t post-cfg 'Use DoH is off in Alta Control — https-dns-proxy left stopped, the fallback is the ISP DNS'
 fi
 
-# Wait for network connectivity. Bounded: this had no limit either, so an
-# upstream that filters ICMP — not an exotic condition — stalled the boot here
-# indefinitely. Carrying on is safe: ctrld's health check below decides whether
-# the redirects go in, and its else branch already falls back to https-dns-proxy.
-if ! wait_for 30 2 ping -c1 "${BOOTSTRAP_IP}"; then
-    logger -t post-cfg "no ICMP reply from ${BOOTSTRAP_IP} after 60s — starting ctrld anyway"
+# Leave a ctrld alone that is running, answering, and on the config and binary
+# it was started with. This script used to restart it on every run, and the
+# firmware runs it at every boot (twice), after every settings save in Alta
+# Control and, on 1.5i, every minute. Each restart cost every device a second
+# or two of DNS and emptied ctrld's cache, for nothing.
+#
+# What ctrld was started with is recorded in /tmp, so a reboot clears it and the
+# first run after one always starts ctrld. Anything that changes ctrld.toml or
+# the binary without restarting ctrld leaves the record stale, and the next run
+# restarts it. The record is the config itself and the binary's inode, size and
+# time, which a replaced binary changes. It needs nothing beyond cat and
+# BusyBox's ls. The router's BusyBox has no cksum, and a record made with it
+# came back empty there, so nothing was ever kept.
+CTRLD_STARTED=/tmp/ctrld.started
+_ctrld_now="$(ls -li --full-time /cfg/ctrld 2>/dev/null; cat /cfg/ctrld.toml 2>/dev/null)"
+_ctrld_kept=0
+if pidof ctrld >/dev/null 2>&1 && [ -n "$_ctrld_now" ] \
+        && [ "$(cat "$CTRLD_STARTED" 2>/dev/null)" = "$_ctrld_now" ] \
+        && check_dns "127.0.0.1#${DNS_PORT}"; then
+    _ctrld_kept=1
+else
+    # Wait for network connectivity. Bounded: this had no limit either, so an
+    # upstream that filters ICMP — not an exotic condition — stalled the boot
+    # here indefinitely. Carrying on is safe: ctrld's health check below
+    # decides whether the redirects go in, and its else branch already falls
+    # back to https-dns-proxy.
+    if ! wait_for 30 2 ping -c1 "${BOOTSTRAP_IP}"; then
+        logger -t post-cfg "no ICMP reply from ${BOOTSTRAP_IP} after 60s — starting ctrld anyway"
+    fi
+
+    # Kill any orphaned ctrld from previous boot
+    stop_ctrld
+
+    # Start ctrld as daemon with config file
+    rm -f "$CTRLD_STARTED"
+    start_ctrld /cfg/ctrld.toml && printf '%s\n' "$_ctrld_now" > "$CTRLD_STARTED"
 fi
-
-# Kill any orphaned ctrld from previous boot
-stop_ctrld
-
-# Start ctrld as daemon with config file
-start_ctrld /cfg/ctrld.toml
 
 # Only redirect DNS if ctrld is confirmed working
 if check_dns "127.0.0.1#${DNS_PORT}"; then
@@ -738,7 +772,11 @@ if check_dns "127.0.0.1#${DNS_PORT}"; then
     # Restore forced-DNS state (port 853 + uci) if enabled. Survives a reboot
     # and a firmware update.
     command -v ensure_forced_dns >/dev/null 2>&1 && ensure_forced_dns
-    logger -t post-cfg "ctrld started (${DNS_TYPE}), DNS redirected to ${DNS_PORT} on: $(lan_ifaces | tr '\n' ' ')"
+    if [ "$_ctrld_kept" = "1" ]; then
+        logger -t post-cfg "ctrld already running (${DNS_TYPE}) — left running, DNS redirected to ${DNS_PORT} on: $(lan_ifaces | tr '\n' ' ')"
+    else
+        logger -t post-cfg "ctrld started (${DNS_TYPE}), DNS redirected to ${DNS_PORT} on: $(lan_ifaces | tr '\n' ' ')"
+    fi
 else
     logger -t post-cfg 'ctrld failed health check, using https-dns-proxy fallback'
 fi

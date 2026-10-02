@@ -639,6 +639,34 @@ TOMLINNER
     }
 fi
 
+# One run at a time. The firmware runs this script on its own schedule, every
+# minute on 1.5i, and the installer and the boot hook run it too. Two runs at
+# once each stop the ctrld the other has just started: on a Route 10 an
+# install landed on the firmware's run, both logged "ctrld started", and the
+# installer's check found no ctrld at all. A second run waits for the first
+# rather than skipping, since the run after a settings save must not be lost,
+# and the first will usually have left ctrld healthy for it to keep. A lock
+# whose owner has gone, or that never got an owner, is cleared.
+PCFG_LOCK=/tmp/post-cfg.lock
+_pl_empty=0
+_pcfg_take_lock() {
+    mkdir "$PCFG_LOCK" 2>/dev/null && return 0
+    _pl_owner="$(cat "$PCFG_LOCK/pid" 2>/dev/null)"
+    if [ -z "$_pl_owner" ]; then
+        _pl_empty=$((_pl_empty + 1))
+        [ "$_pl_empty" -ge 3 ] && rm -rf "$PCFG_LOCK"
+    elif [ ! -d "/proc/${_pl_owner}" ]; then
+        rm -rf "$PCFG_LOCK"
+    fi
+    return 1
+}
+if wait_for 120 1 _pcfg_take_lock; then
+    printf '%s\n' "$$" > "$PCFG_LOCK/pid" 2>/dev/null || true
+    trap 'rm -rf "$PCFG_LOCK"' EXIT INT TERM
+else
+    logger -t post-cfg "another post-cfg.sh still running after 120s — running anyway"
+fi
+
 # Default to doh3 for legacy installs without DNS_TYPE
 DNS_TYPE="${DNS_TYPE:-doh3}"
 

@@ -3113,7 +3113,8 @@ describe "lib.sh carries no dead code"
 # The file list is built from globs, using no external tool at all: BusyBox
 # grep has no --include, so `grep -r --include` failed on every real router
 # while passing in CI, and CONTRIBUTING.md documents running this suite on the
-# router, from a copy of the repo at /tmp/controld. find would work but is one more implementation to depend on.
+# router, from a copy of the repo unpacked in /tmp. find would work but is one
+# more implementation to depend on.
 LIB_SCAN=""
 for _lp in "$SCRIPT_DIR"/*.sh "$SCRIPT_DIR"/*.md "$SCRIPT_DIR"/docs/*.md \
            "$SCRIPT_DIR"/config/*.example; do
@@ -6732,8 +6733,7 @@ describe "check-issue-refs.sh — a link to a closed issue fails CI"
 # answers "open" unless the issue number is listed in IR_CLOSED, and fails the
 # lookup outright for one listed in IR_MISSING.
 IR_CHECK="$SCRIPT_DIR/.github/scripts/check-issue-refs.sh"
-# The on-router run in CONTRIBUTING.md copies the scripts and docs but not
-# .github, and nothing there needs the check.
+# A copy made without .github has no check to test, so this is skipped there.
 if [ -f "$IR_CHECK" ]; then
     IR_DIR="$TMPDIR/issue-refs"
     IR_URL="https://github.com/Matthew-Hsu/alta-route10-controld/issues"

@@ -495,7 +495,7 @@ re-install keeps your forced-DNS setting and any split-DNS policy.
    ```sh
    grep -E '(endpoint|type)' /cfg/ctrld.toml
    ```
-   - DoQ: `type = "doq"` with `endpoint = "<ID>.dns.controld.com"` (no https://)
+   - DoQ/DoT: `type = "doq"` or `dot` with `endpoint = "<ID>.dns.controld.com"` (no https://)
    - DoH/DoH3: `type = "doh"` or `doh3` with `endpoint = "https://dns.controld.com/<ID>"`
 
 2. See which protocols your network lets through:

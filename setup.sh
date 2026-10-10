@@ -1138,7 +1138,11 @@ if ! mkdir "$WD_LOCK" 2>/dev/null; then
     mkdir "$WD_LOCK" 2>/dev/null || exit 0
 fi
 printf '%s\n' "$$" > "${WD_LOCK}/pid" 2>/dev/null || true
-trap 'rm -rf "$WD_LOCK"' EXIT INT TERM
+# A signal has to end the run as well as release the lock. When INT and TERM
+# shared the EXIT trap, they released it and the run then carried on without it.
+trap 'rm -rf "$WD_LOCK"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 DNS_TYPE="${DNS_TYPE:-doh3}"
 MAX_RESTART_ATTEMPTS=3

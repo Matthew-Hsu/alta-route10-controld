@@ -5239,7 +5239,10 @@ sv_run() {
     ( cd "$_sv/pkg" && tar czf "$_sv/ctrld.tgz" dist )
 
     printf '#!/bin/sh\necho aarch64\n' > "$_sv/bin/uname"
-    printf '#!/bin/sh\n_p="$(cat "%s/ctrld.pid" 2>/dev/null)"\n[ -n "$_p" ] && kill -0 "$_p" 2>/dev/null && echo "$_p"\n' \
+    # A killed ctrld must read as gone, as in the post-cfg.sh fixture below:
+    # until something reaps it, kill -0 still finds the zombie. The uninstaller
+    # reported that as a ctrld still running.
+    printf '#!/bin/sh\n_p="$(cat "%s/ctrld.pid" 2>/dev/null)"\n[ -n "$_p" ] && kill -0 "$_p" 2>/dev/null && ! grep -q "^State:.*Z" "/proc/$_p/status" 2>/dev/null && echo "$_p"\n' \
         "$_sv" > "$_sv/bin/pidof"
     # The benchmark port is taken while its throwaway config exists, which is
     # from the moment probe_resolver writes it to the moment it removes it.
@@ -5447,6 +5450,34 @@ assert_contains "and \"No\" at its [Y/n] prompt is a no" "$RA_ANS" "No changes m
 assert_false "that leaves the setting where it was" installed_auto_update "$RA_CFG/controld.env"
 unset -f ra_ask
 unset SV_ANS RA_ANS
+
+describe "uninstall.sh — the closing line follows its own checks"
+
+# It printed "Uninstall complete." and exited 0 whatever its checks had found,
+# so an uninstall that left a redirect pointing every client at a port nothing
+# listened on ended the same way as a clean one. It then recommended a reboot,
+# which the summary before its prompt had just said was not needed.
+sv_run "$SV/uninstall-clean" good >/dev/null
+SU_OUT="$(su_run "$SV/uninstall-clean" 'y\n')"
+assert_contains "a clean uninstall says it is complete" "$SU_OUT" "Uninstall complete."
+assert_contains "and exits 0" "$SU_OUT" "rc=0"
+assert_not_contains "without recommending the reboot it said was not needed" \
+    "$SU_OUT" "reboot is recommended"
+
+# A redirect that survives the sweep, which is the leftover that costs clients
+# their DNS once ctrld is gone.
+SU_BIN="$SV/uninstall-stuck-bin"; mkdir -p "$SU_BIN"
+printf '#!/bin/sh\necho "-A PREROUTING -i br-lan -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354"\n' \
+    > "$SU_BIN/iptables-save"
+chmod +x "$SU_BIN/iptables-save"
+sv_run "$SV/uninstall-stuck" good >/dev/null
+SU_OUT="$(SU_BIN="$SU_BIN" su_run "$SV/uninstall-stuck" 'y\n')"
+assert_contains "a rule left behind is reported" "$SU_OUT" \
+    "redirect rule(s) still present"
+assert_not_contains "and the uninstall does not call itself complete" "$SU_OUT" "Uninstall complete."
+assert_contains "it says it is incomplete" "$SU_OUT" "Uninstall incomplete"
+assert_contains "with a non-zero exit" "$SU_OUT" "rc=1"
+unset SU_OUT SU_BIN
 
 describe "post-cfg.sh — follows Use DoH in Alta Control, never rewrites dnsmasq's servers"
 

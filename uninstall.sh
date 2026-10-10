@@ -38,6 +38,9 @@ load_env >/dev/null 2>&1 || true
 # ── Defaults ──
 
 FORCE=0
+# Every check below that finds something still in place adds one. The closing
+# line and the exit status both come from it.
+_problems=0
 
 # Files installed by setup.sh
 # rc.local and lib.sh belong here too: the boot hook re-runs the install and the
@@ -246,7 +249,10 @@ _left="$(dns_redirect_rules | grep -c . || true)"
 if [ "$_left" -eq 0 ]; then
     print_ok "ControlD redirect rules removed (other firewall rules untouched)"
 else
-    print_warn "${_left} redirect rule(s) still present — check: iptables -t nat -L PREROUTING -n"
+    # A failure, not a warning: with ctrld gone these send every client's DNS
+    # to a port nothing listens on.
+    print_fail "${_left} redirect rule(s) still present — check: iptables -t nat -L PREROUTING -n"
+    _problems=$((_problems + 1))
 fi
 
 # The firewall.user block would re-add them at the next firewall restart or
@@ -290,6 +296,7 @@ if [ -f "$FW_USER" ]; then
         print_fail "${_fw_left} line(s) in ${FW_USER} still redirect to port ${DNS_PORT}"
         print_info "They WILL be applied at the next firewall restart or reboot, with nothing listening there."
         print_info "Remove them by hand:  sed -i '/REDIRECT --to-port ${DNS_PORT}/d' ${FW_USER}"
+        _problems=$((_problems + 1))
     fi
 fi
 
@@ -413,6 +420,7 @@ fi
 if [ "$_remaining" -eq 0 ]; then
     print_ok "All ControlD components removed"
 fi
+_problems=$((_problems + _remaining))
 
 if nslookup google.com >/dev/null 2>&1; then
     print_ok "System DNS is working"
@@ -422,7 +430,16 @@ fi
 
 # ── Done ──
 
+# The verdict follows the checks above. This printed "Uninstall complete." and
+# exited 0 whatever they had found, and then recommended a reboot, which the
+# summary before the prompt had just said was not needed. Nothing here needs
+# one: the rules are deleted live and the boot hook is gone.
 printf "\n"
-print_ok "Uninstall complete."
-printf "  ${DIM}A reboot is recommended to ensure a clean state.${RESET}\n"
-printf "\n"
+if [ "$_problems" -eq 0 ]; then
+    print_ok "Uninstall complete."
+    printf "\n"
+else
+    print_fail "Uninstall incomplete — see the [!!] lines above"
+    printf "\n"
+    exit 1
+fi

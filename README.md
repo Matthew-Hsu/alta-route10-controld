@@ -571,10 +571,11 @@ scan, shellcheck over every script, and `test.sh` three times: under GNU awk,
 under BusyBox awk, and under BusyBox `ash` as well. The router runs BusyBox
 throughout, and both its awk and its shell differ from the runner's in ways
 that have silently broken on-device behavior while CI was green. Integration
-tests run only on the router. A last check fails when this README or a page in
+tests run only on the router. Another check fails when this README or a page in
 `docs/` links to an issue that has been closed, or when a pull request closes
 one they still link to, and it also runs weekly for issues closed some other
-way.
+way. The last runs on pull requests only, and fails when a commit message in
+the pull request, or its description, carries a URL.
 [CONTRIBUTING.md](CONTRIBUTING.md) has the workflow layout and the commands to
 run the same checks yourself.
 

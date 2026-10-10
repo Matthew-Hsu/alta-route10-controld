@@ -46,6 +46,10 @@ Sections displayed:
   endpoint    Resolver ID, active and preferred protocol, ctrld version
   cron        Auto-update and watchdog cron entries
   activity    Recent log lines from this project's own scripts
+  summary     Failures and warnings counted
+
+Exits 1 when any check failed ([!!]), and 0 otherwise. Warnings ([~~]) alone
+do not change the exit status.
 EOF
 }
 
@@ -69,6 +73,16 @@ for arg in "$@"; do
     esac
 done
 
+# ── Tally ────────────────────────────────────────────────────────────────────
+
+# Every failure and warning below goes through these, so the summary at the end
+# and the exit status count what was printed. audit.sh does the same with
+# drift() and review().
+FAILS=0
+WARNS=0
+fail() { FAILS=$((FAILS + 1)); print_fail "$1"; }
+warn() { WARNS=$((WARNS + 1)); print_warn "$1"; }
+
 # ── Banner ───────────────────────────────────────────────────────────────────
 
 print_banner
@@ -86,7 +100,7 @@ for f in /cfg/controld.env /cfg/ctrld /cfg/ctrld.toml /cfg/post-cfg.sh /cfg/cont
     if [ -f "$f" ]; then
         print_ok "$f exists"
     else
-        print_fail "$f missing"
+        fail "$f missing"
     fi
 done
 
@@ -98,7 +112,7 @@ ctrld_pid=$(pidof ctrld 2>/dev/null)
 if [ -n "$ctrld_pid" ]; then
     print_ok "ctrld is running (PID ${ctrld_pid})"
 else
-    print_fail "ctrld is NOT running"
+    fail "ctrld is NOT running"
 fi
 
 https_status=$(/etc/init.d/https-dns-proxy status 2>&1)
@@ -108,9 +122,9 @@ elif command -v alta_doh_on >/dev/null 2>&1 && ! alta_doh_on; then
     # Stopped is right here: post-cfg.sh follows Use DoH in Alta Control rather
     # than overriding it. Still worth saying, since it changes what the fallback
     # is.
-    print_warn "https-dns-proxy is stopped — Use DoH is off in Alta Control, so the fallback is your ISP's DNS, unencrypted"
+    warn "https-dns-proxy is stopped — Use DoH is off in Alta Control, so the fallback is your ISP's DNS, unencrypted"
 else
-    print_fail "https-dns-proxy is not running"
+    fail "https-dns-proxy is not running"
 fi
 
 # ── DNS Resolution ───────────────────────────────────────────────────────────
@@ -120,13 +134,13 @@ print_header "DNS Resolution"
 if check_dns "127.0.0.1#${DNS_PORT}"; then
     print_ok "ctrld DNS responding on port ${DNS_PORT}"
 else
-    print_fail "ctrld not responding on port ${DNS_PORT}"
+    fail "ctrld not responding on port ${DNS_PORT}"
 fi
 
 if check_dns; then
     print_ok "System DNS working"
 else
-    print_fail "System DNS not working"
+    fail "System DNS not working"
 fi
 
 # ── iptables ─────────────────────────────────────────────────────────────────
@@ -143,7 +157,7 @@ if [ "$rules" -gt 0 ]; then
     # below is what says whether any of them get the traffic.
     print_ok "${rules} redirect rule(s) present"
 else
-    print_fail "No redirect rules (per-device visibility disabled)"
+    fail "No redirect rules (per-device visibility disabled)"
 fi
 
 # Per-bridge coverage. A LAN bridge without a rule is the usual reason devices
@@ -160,17 +174,17 @@ for iface in $(lan_ifaces); do
             # all — devices resolve and never appear in ControlD — and the one
             # this readout used to report as healthy.
             outranked="${outranked} ${iface}"
-            print_fail "${iface} has a redirect, but a firewall zone takes DNS first (${subnet})"
+            fail "${iface} has a redirect, but a firewall zone takes DNS first (${subnet})"
         else
             print_ok "${iface} -> port ${DNS_PORT} (${subnet})"
         fi
     else
         uncovered="${uncovered} ${iface}"
-        print_fail "${iface} has NO redirect — its clients bypass ControlD"
+        fail "${iface} has NO redirect — its clients bypass ControlD"
     fi
 done
 if [ -f "$DEGRADED_FLAG" ]; then
-    print_warn "$(cat "$DEGRADED_FLAG" 2>/dev/null)"
+    warn "$(cat "$DEGRADED_FLAG" 2>/dev/null)"
     print_info "DNS still resolves via dnsmasq -> https-dns-proxy; fix ctrld to restore visibility"
 elif [ -n "$uncovered" ] || [ -n "$outranked" ]; then
     print_info "Fix:  /cfg/reconfigure.sh --repair   (re-applies rules for all bridges)"
@@ -182,7 +196,7 @@ if [ "$force_dns" = "1" ]; then
 elif [ "${FORCED_DNS:-0}" = "1" ]; then
     # Turned on in controld.env but not in force, as after a firmware update
     # wipes /etc/config and before the watchdog puts it back.
-    print_warn "Forced DNS: disabled (devices may bypass ControlD)"
+    warn "Forced DNS: disabled (devices may bypass ControlD)"
 else
     # Off is the default, so it is not a warning. Every install showed two
     # yellow lines here for a setting it was never asked to turn on. The
@@ -197,7 +211,7 @@ dot_rules=$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c 'dpt:853')
 if [ "$dot_rules" -gt 0 ]; then
     print_ok "DoT hijack: ${dot_rules} rule(s) for port 853"
 elif [ "$force_dns" = "1" ] || [ "${FORCED_DNS:-0}" = "1" ]; then
-    print_warn "DoT hijack: no port 853 rules (DoT devices can bypass)"
+    warn "DoT hijack: no port 853 rules (DoT devices can bypass)"
 fi
 
 # ── Upstreams & Policies ────────────────────────────────────────────────────
@@ -221,7 +235,7 @@ if [ -f /cfg/ctrld.toml ]; then
         print_info "No split DNS policy configured"
     fi
 else
-    print_fail "/cfg/ctrld.toml not found"
+    fail "/cfg/ctrld.toml not found"
 fi
 
 # ── ControlD Endpoint (from env) ────────────────────────────────────────────
@@ -237,17 +251,17 @@ if load_env; then
     _st_running="$(running_protocol)" || _st_running="${DNS_TYPE}"
     print_ok "Protocol: $(proto_label "${_st_running}")"
     if [ "${_st_running}" != "${DNS_TYPE}" ]; then
-        print_warn "Recorded protocol (${DNS_TYPE}) does not match what ctrld.toml is running"
+        warn "Recorded protocol (${DNS_TYPE}) does not match what ctrld.toml is running"
         print_info "Fix: sh /cfg/reconfigure.sh --show   (any reconfigure.sh action corrects this)"
     fi
     if [ "${PREFERRED_PROTOCOL:-${_st_running}}" != "${_st_running}" ]; then
-        print_warn "Preferred: $(proto_label "${PREFERRED_PROTOCOL}") — on fallback; watchdog will return to it"
+        warn "Preferred: $(proto_label "${PREFERRED_PROTOCOL}") — on fallback; watchdog will return to it"
     fi
     if [ -n "${CTRLD_VERSION:-}" ]; then
         print_ok "Version: ${CTRLD_VERSION}"
     fi
 else
-    print_fail "/cfg/controld.env not found or unreadable"
+    fail "/cfg/controld.env not found or unreadable"
 fi
 
 # ── Cron Jobs ────────────────────────────────────────────────────────────────
@@ -259,7 +273,7 @@ print_header "Cron Jobs"
 # time its owner ran status.sh, which is the readout they would check first.
 if [ "${AUTO_UPDATE:-1}" = "0" ]; then
     if cron_has /cfg/controld-update.sh; then
-        print_warn "Auto-update is off in controld.env but its cron is installed"
+        warn "Auto-update is off in controld.env but its cron is installed"
     else
         print_info "Weekly auto-update off by choice (AUTO_UPDATE=0 in /cfg/controld.env)"
         print_info "Turn it back on: sh /cfg/reconfigure.sh --auto-update"
@@ -267,13 +281,13 @@ if [ "${AUTO_UPDATE:-1}" = "0" ]; then
 elif cron_has /cfg/controld-update.sh; then
     print_ok "Weekly auto-update cron installed"
 else
-    print_fail "No auto-update cron job"
+    fail "No auto-update cron job"
 fi
 
 if cron_has /cfg/watchdog.sh; then
     print_ok "Watchdog cron installed (5-min health check)"
 else
-    print_fail "No watchdog cron job"
+    fail "No watchdog cron job"
 fi
 
 # ── Recent Activity ──────────────────────────────────────────────────────────
@@ -306,4 +320,21 @@ if [ -f /cfg/watchdog.sh ]; then
     fi
 fi
 
+# ── Summary ──────────────────────────────────────────────────────────────────
+
+# The verdict and the exit status, the way audit.sh ends. Warnings alone exit 0:
+# each one is something to know rather than something broken, like audit.sh's
+# review items. Before this the readout exited 0 whatever it found, so a script
+# or a person checking the result had to read every line to learn the answer.
+print_header "Summary"
+if [ "$FAILS" -eq 0 ] && [ "$WARNS" -eq 0 ]; then
+    print_ok "Healthy — every check passed"
+elif [ "$FAILS" -eq 0 ]; then
+    print_ok "No failures — ${WARNS} warning(s) above"
+else
+    print_fail "${FAILS} failure(s), ${WARNS} warning(s) — see the [!!] lines above"
+fi
 printf "\n"
+
+[ "$FAILS" -eq 0 ] || exit 1
+exit 0

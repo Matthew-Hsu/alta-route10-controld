@@ -25,9 +25,10 @@ environment almost certainly has none of that.
   a wait loop bounded by iterations passed CI and ran six times too slow on
   hardware. Every bug in this project's history that CI could not see surfaced
   on hardware first (see `CONTRIBUTING.md`'s "Testing on hardware").
-- Run the suite under both awks before proposing a change:
-  `sh test.sh` and `AWK="busybox awk" sh test.sh`. They disagree often enough
-  that this has caught real regressions that a GNU-awk-only run missed.
+- Run every command in `CONTRIBUTING.md`'s "Before you push" before proposing
+  a change: three runs of the suite and two shellcheck passes, all of which CI
+  runs too. GNU and BusyBox awk disagree often enough that the BusyBox run has
+  caught real regressions a GNU-awk-only run missed.
 
 - Before saying a feature works, check README.md's "Verification Status"
   section. If it is in the "not exercised on hardware" table, say so rather

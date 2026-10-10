@@ -84,6 +84,11 @@ repository whose em dashes are somebody's style, and treating one as such is
 how a cleanup talks itself into leaving the pattern in place. For prose the
 baseline is none.
 
+One of humanizer's patterns does not apply to code comments. It says to
+mention a previous version only in a change log, but a comment here that names
+the failure a line guards against, as most of `test.sh`'s do, is wanted: it is
+what stops the next person undoing the fix.
+
 **A comment or string that code reads is an interface, not prose. Never reword
 one.** They are listed by what they say rather than where they sit, because
 line numbers drift and a stale pointer aims attention at the wrong line:

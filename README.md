@@ -78,7 +78,7 @@ settings it also asks your ISP's DNS in plain text, as
 [the fallback path](docs/technical-details.md#architecture) explains.
 
 > This project is developed and exercised on an Alta Route 10 running firmware
-> `1.5g` and then `1.5h`, across six LAN bridges;
+> `1.5g` through `1.5j`, across six LAN bridges;
 > [docs/hardware-verification.md](docs/hardware-verification.md) records what
 > was watched happen. A few paths pass the test suite but have not been run on
 > a real router, a real auto-update among them. See [Verification
@@ -310,9 +310,13 @@ for which shapes come back.
 
 ### After a Firmware Update
 
-Expect nothing to break. Updates keep `/cfg/` intact, the boot hook restores
-what lives outside it, and the firmware updates an install here has been
-through, most recently to 1.5h, came out clean.
+Expect nothing to break. Updates keep `/cfg/` intact, and the boot hook
+restores what lives outside it. Of the firmware updates an install here has
+been through, most recently to 1.5j, only 1.5i caused trouble: a firmware bug
+ran `post-cfg.sh` every minute, and each run cost a client lookup until
+`post-cfg.sh` was changed to leave a healthy `ctrld` running. 1.5j fixed the
+bug itself. [Boot Persistence](docs/technical-details.md#boot-persistence) has
+the detail.
 
 The reason to look anyway is that a few pieces of the install rest on firmware
 behaviour this project does not own. The clearest example is the boot hook:

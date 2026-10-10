@@ -24,10 +24,12 @@ what mode is enabled. They're kept separate here instead of combined into one
 diagram, since each is triggered by a different condition and combining them
 was confusing.
 
-**Normal path**: the default for every LAN device, all the time.
+**Normal path**: the default for every LAN device, all the time. The redirect
+matches the port and the bridge a query arrives on, not the server it was sent
+to, so a device with a hardcoded plain-DNS server takes this path too.
 
 ```
-LAN Devices (router-assigned DNS)
+LAN Devices (router-assigned DNS, or a hardcoded server)
         |
         v  port 53
 +--------------------+   port 5354   +----------+  DoH3/DoQ/DoH/DoT  +-----------+
@@ -68,13 +70,13 @@ LAN Devices --port 53--> +----------+  port 5053/5054/5055  +-----------------+ 
                      (your ISP's DNS is asked too, in plain text; no per-device visibility)
 ```
 
-**Forced-DNS path**: only when forced DNS is enabled, for traffic trying to
-bypass the router's assigned DNS entirely.
+**Forced-DNS path**: only when forced DNS is enabled, for DNS-over-TLS, which
+would otherwise go straight to whatever server the device chose.
 
 ```
-Any device hardcoding a DNS server, or using DNS-over-TLS
+Any device using DNS-over-TLS
         |
-        v  port 53 or port 853
+        v  port 853
 +------------------------------+   port 5354   +----------+  DoH3/DoQ/DoH/DoT  +-----------+
 | iptables REDIRECT (forced)   | ------------> |  ctrld   | -----------------> | ControlD  |
 +------------------------------+               +----------+                    +-----------+
@@ -316,7 +318,7 @@ Example config with per-device routing:
 
 ### Forced DNS Hijacking
 
-Smart TVs (Panasonic, Samsung, LG), IoT devices, and some browsers can bypass the router's DHCP DNS setting by using hardcoded DNS servers or DNS-over-TLS (DoT, port 853). Forced DNS intercepts all outbound DNS and redirects it through ControlD.
+Smart TVs (Panasonic, Samsung, LG), IoT devices, and some browsers can bypass the router's DHCP DNS setting by using hardcoded DNS servers or DNS-over-TLS (DoT, port 853). A hardcoded server on port 53 is caught on every install, forced DNS or not, because the port-53 redirect on each LAN bridge matches the port and the bridge rather than the destination. Forced DNS adds the same redirect for port 853, which catches DoT.
 
 ```sh
 # Check current state first: the command below is a toggle
@@ -333,8 +335,8 @@ sh reconfigure.sh --force-dns --to on
 ```
 
 When enabled:
-- **Port 53** (plain DNS): redirected to ControlD via iptables
 - **Port 853** (DoT): redirected to ControlD via iptables
+- **https-dns-proxy's own forcing** is turned on in uci: `force_dns=1`, with 53 and 853 in `force_dns_port`
 - State is recorded as `FORCED_DNS=1` in `/cfg/controld.env` (the persistent source of truth), and re-running `setup.sh` preserves it, falling back to the live uci state for installs predating the flag
 - **Self-healing persistence**: the uci config, port-853 iptables rules, and `/etc/firewall.user` entries are restored automatically: at boot by `post-cfg.sh`, every 5 minutes by `/cfg/watchdog.sh`, and on a firewall restart via `firewall.user`. A firewall reload leaves them in place. This survives reboots **and** firmware updates (which can wipe `/etc/config`).
 - `status.sh` reports the forced DNS state and active hijack rules

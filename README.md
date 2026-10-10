@@ -496,8 +496,10 @@ Each of these has a worked fix in
 - [Two devices get the same address after the router reboots](docs/troubleshooting.md#two-devices-get-the-same-address-after-the-router-reboots)
 - [LAN DNS dies after the port moved, but everything reports healthy](docs/troubleshooting.md#lan-dns-dies-after-the-port-moved-but-everything-reports-healthy)
 - [status.sh says the DNS redirects were removed](docs/troubleshooting.md#statussh-says-the-dns-redirects-were-removed)
+- [The boot log says ctrld failed its health check](docs/troubleshooting.md#the-boot-log-says-ctrld-failed-its-health-check)
 - [ctrld keeps crashing](docs/troubleshooting.md#ctrld-keeps-crashing)
 - [QUIC / DoQ / DoH3 not connecting](docs/troubleshooting.md#quic--doq--doh3-not-connecting)
+- [A hand-edited setting disappeared from controld.env](docs/troubleshooting.md#a-hand-edited-setting-disappeared-from-controldenv)
 - [Changes not persisting after reboot](docs/troubleshooting.md#changes-not-persisting-after-reboot)
 - [Firmware update wiped everything](docs/troubleshooting.md#firmware-update-wiped-everything)
 

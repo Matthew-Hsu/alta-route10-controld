@@ -5763,6 +5763,24 @@ assert_contains "it says it is incomplete" "$SU_OUT" "Uninstall incomplete"
 assert_contains "with a non-zero exit" "$SU_OUT" "rc=1"
 unset SU_OUT SU_BIN
 
+describe "setup.sh — the Bootstrap IP prompt says what it is for"
+
+# Everyone was asked for a Bootstrap IP with nothing on what it does, and for a
+# ControlD resolver ctrld does not use it. Resolver, default bootstrap, DoH3,
+# no split DNS.
+SV_BOOT="$(sv_run "$SV/boot-ask" good 'abc123\n\n1\nn\n')"
+assert_contains "the prompt says what the address is for" "$SV_BOOT" \
+    '\[--\].*Bootstrap IP — plain DNS the https-dns-proxy fallback uses to find ControlD'
+assert_contains "that ctrld does not need it" "$SV_BOOT" "ctrld finds ControlD without it"
+assert_contains "and when to change it" "$SV_BOOT" "unless your network can't reach it"
+assert_contains "Enter still takes the default" \
+    "$(cat "$SV/boot-ask/cfg/controld.env")" "BOOTSTRAP_IP=76.76.2.22"
+# No prompt, no explanation: the flag form never asks.
+SV_BOOT="$(sv_run "$SV/boot-flag" good)"
+assert_contains "the flag form installs" "$SV_BOOT" "Setup Complete!"
+assert_not_contains "without the prompt's explanation" "$SV_BOOT" "ctrld finds ControlD without it"
+unset SV_BOOT
+
 describe "post-cfg.sh — follows Use DoH in Alta Control, never rewrites dnsmasq's servers"
 
 # post-cfg.sh runs at every boot and on every settings save in Alta Control, after

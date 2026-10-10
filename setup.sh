@@ -662,7 +662,12 @@ _pcfg_take_lock() {
 }
 if wait_for 120 1 _pcfg_take_lock; then
     printf '%s\n' "$$" > "$PCFG_LOCK/pid" 2>/dev/null || true
-    trap 'rm -rf "$PCFG_LOCK"' EXIT INT TERM
+    # A signal has to end the run as well as release the lock. When INT and
+    # TERM shared the EXIT trap, they released it and the run then carried on
+    # without it.
+    trap 'rm -rf "$PCFG_LOCK"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
 else
     logger -t post-cfg "another post-cfg.sh still running after 120s — running anyway"
 fi

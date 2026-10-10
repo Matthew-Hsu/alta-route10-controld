@@ -1313,9 +1313,9 @@ fi
 # Every protocol failed and ctrld is not resolving. The redirects now point
 # port 53 at a closed port, so every client on every bridge has no DNS at all.
 # Removing them hands resolution back to dnsmasq, which forwards to
-# https-dns-proxy while Use DoH is on in Alta Control (still encrypted, just
-# without per-device visibility) and to the ISP's DNS while it is off. The
-# healthy path above re-adds the rules as soon as ctrld answers again.
+# https-dns-proxy and the ISP's DNS while Use DoH is on in Alta Control and to
+# the ISP's DNS alone while it is off, with no per-device visibility either
+# way. The healthy path above re-adds the rules as soon as ctrld answers again.
 logger -t watchdog "all protocols failed — removing DNS redirects so the LAN keeps resolving"
 remove_dns_redirects "$DNS_PORT"
 /etc/init.d/dnsmasq restart >/dev/null 2>&1 || true

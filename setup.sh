@@ -230,6 +230,14 @@ if ! valid_resolver "$RESOLVER_ID"; then
 fi
 
 if [ -z "$FLAG_RESOLVER" ]; then
+    # Everyone was asked for this with no word on what it does. ctrld 1.5.7,
+    # run with it set to a word and to an address that never answers, reached
+    # ControlD through 76.76.2.22 both times. For a ControlD resolver it
+    # reaches two things: the https-dns-proxy fallback, as its bootstrap_dns,
+    # and the ping post-cfg.sh makes at boot to wait for the network.
+    print_info "Bootstrap IP — plain DNS the https-dns-proxy fallback uses to find ControlD"
+    print_info "ctrld finds ControlD without it, and boot pings it to wait for the network"
+    print_info "Press Enter for ControlD's 76.76.2.22 unless your network can't reach it"
     printf "  Bootstrap IP [76.76.2.22]: "
     read -r BOOTSTRAP_IP
 fi

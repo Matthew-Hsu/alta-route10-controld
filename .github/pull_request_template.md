@@ -29,7 +29,10 @@ file it changes as its scope, and ci takes none.
       implying `test.sh` covers it, and updated README's Verification Status
       table if this changes what's proven vs. not
 
-<!-- If you did exercise something on hardware, the row comes out of README's
+<!-- A PR carrying several changes can tick both of the last two boxes. Say
+     which changes ran on hardware and which did not.
+
+     If you did exercise something on hardware, the row comes out of README's
      Verification Status table and the entry goes into
      docs/hardware-verification.md, under the heading for its area, saying what
      you ran. See CONTRIBUTING.md's "Testing on hardware". -->

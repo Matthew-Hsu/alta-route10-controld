@@ -5536,8 +5536,30 @@ assert_contains "a lock held by a live run is waited on" "$(cat "$PD/log" 2>/dev
     "another post-cfg.sh still running after 120s"
 assert_eq "and left to its owner" "$PK_HOLDER" "$(cat "$PD/tmp/post-cfg.lock/pid" 2>/dev/null)"
 kill "$PK_HOLDER" 2>/dev/null; rm -rf "$PD/tmp/post-cfg.lock"
+# A run that is interrupted has to stop, not only let go of the lock. The trap
+# that released it caught INT and TERM as well, and a trap that does not exit
+# lets the script carry on, so an interrupted run went on to restart ctrld
+# without the lock. With no record of what ctrld was started with, the run
+# restarts it, and ping holds it on the way until it has been signalled.
+rm -f "$PD/tmp/ctrld.started" "$PD/ping.waiting" "$PD/log"
+: > "$PD/ping.hold"
+printf '#!/bin/sh\n: > "%s/ping.waiting"\nwhile [ -f "%s/ping.hold" ]; do /bin/sleep 1; done\n' \
+    "$PD" "$PD" > "$PD/bin/ping"
+PATH="$PD/bin:$PATH" FW_USER="$PD/firewall.user" SYSFS_NET="$PD/sys" \
+    DEGRADED_FLAG="$PD/tmp/degraded" sh "$PD/cfg/post-cfg.sh" >/dev/null 2>&1 &
+PK_RUN=$!
+_pk_n=0
+while [ ! -f "$PD/ping.waiting" ] && [ "$_pk_n" -lt 10 ]; do /bin/sleep 1; _pk_n=$((_pk_n + 1)); done
+assert_true "a running post-cfg.sh holds the lock" [ -d "$PD/tmp/post-cfg.lock" ]
+kill -TERM "$PK_RUN" 2>/dev/null || true
+rm -f "$PD/ping.hold"
+wait "$PK_RUN" 2>/dev/null || true
+printf '#!/bin/sh\nexit 0\n' > "$PD/bin/ping"
+assert_false "an interrupted run releases it" [ -e "$PD/tmp/post-cfg.lock" ]
+assert_not_contains "and stops there, rather than starting ctrld without it" \
+    "$(cat "$PD/log" 2>/dev/null)" "ctrld started"
 kill "$(cat "$PD/ctrld.pid" 2>/dev/null)" 2>/dev/null || true
-unset PK1 PK2 PK3 PK4 PK5 PK6 PK7 PK_HOLDER _pk_tool
+unset PK1 PK2 PK3 PK4 PK5 PK6 PK7 PK_HOLDER PK_RUN _pk_n _pk_tool
 unset -f pk_run
 unset _pdi
 unset PD

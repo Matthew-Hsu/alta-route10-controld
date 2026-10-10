@@ -2263,6 +2263,95 @@ assert_true "do_upgrade_check actually calls reconcile_dns_type" \
     code_grep "$SCRIPT_DIR/lib.sh" -E \
     '^[[:space:]]*reconcile_dns_type /cfg/controld\.env /cfg/ctrld\.toml &&'
 
+describe "do_upgrade_check() — switches back only on an answer from its own probe"
+
+# The self-upgrade asks a throwaway ctrld on the benchmark port whether the
+# preferred protocol works, then moves production onto it. Its old copy of
+# that check never looked at whether the port was free, so a benchmark
+# answering there passed the test for it, and production was switched to a
+# protocol that could still be blocked. Here something else holds the port and
+# answers, and production has to stay where it is.
+#
+# This path rewrites ctrld.toml and controld.env and restarts ctrld, so it runs
+# on a copy of lib.sh with /cfg and /tmp moved into a sandbox.
+DUP="$TMPDIR/upgrade-probe"
+rm -rf "$DUP"
+mkdir -p "$DUP/cfg" "$DUP/bin" "$DUP/tmp"
+sed -e "s|/tmp/|${DUP}/tmp/|g" -e "s|/cfg/|${DUP}/cfg/|g" "$SCRIPT_DIR/lib.sh" > "$DUP/lib.sh"
+# Every ctrld started here exits at once. Whether a port is open, and whether
+# it answers, comes from the stubs below.
+printf '#!/bin/sh\nexit 0\n' > "$DUP/cfg/ctrld"
+for _dup in pidof ss; do printf '#!/bin/sh\nexit 1\n' > "$DUP/bin/$_dup"; done
+printf '#!/bin/sh\nexit 0\n' > "$DUP/bin/sleep"
+printf '#!/bin/sh\necho "$*" >> "%s/log"\n' "$DUP" > "$DUP/bin/logger"
+# Production always listens. The benchmark port is taken while the probe's
+# config exists, or while something else holds it.
+cat > "$DUP/bin/netstat" << DUPNETEOF
+#!/bin/sh
+echo "udp 0 0 0.0.0.0:5354 0.0.0.0:* 1/ctrld"
+if [ -f "$DUP/tmp/ctrld-upgrade.toml" ] || [ -f "$DUP/port.held" ]; then
+    echo "udp 0 0 127.0.0.1:5360 0.0.0.0:* 2/other"
+fi
+exit 0
+DUPNETEOF
+# Whatever else holds the benchmark port answers. The probe's own ctrld
+# answers unless the network blocks the protocol it was given.
+cat > "$DUP/bin/nslookup" << DUPNSEOF
+#!/bin/sh
+case "\${2:-}" in
+    *#5360)
+        [ -f "$DUP/port.held" ] && exit 0
+        [ -f "$DUP/tmp/ctrld-upgrade.toml" ] || exit 1
+        [ -f "$DUP/doq.blocked" ] && grep -q 'type = "doq"' "$DUP/tmp/ctrld-upgrade.toml" && exit 1
+        exit 0 ;;
+esac
+exit 0
+DUPNSEOF
+chmod +x "$DUP/cfg/ctrld" "$DUP/bin"/*
+unset _dup
+
+# Production on DoH after a fallback, with DoQ preferred and its retest due.
+dup_run() {
+    rm -f "$DUP/log" "$DUP/tmp/controld-upgrade.count"
+    printf 'RESOLVER_ID=abc123\nBOOTSTRAP_IP=76.76.2.22\nDNS_TYPE=doh\nPREFERRED_PROTOCOL=doq\nDNS_PORT=5354\n' \
+        > "$DUP/cfg/controld.env"
+    ( PATH="$DUP/bin:$PATH"
+      unset BENCH_CONF UPGRADE_COUNT_FILE
+      DNS_PORT=5354; . "$DUP/lib.sh"
+      write_ctrld_config "$DUP/cfg/ctrld.toml" abc123 76.76.2.22 doh
+      load_env "$DUP/cfg/controld.env"
+      UPGRADE_INTERVAL=1
+      do_upgrade_check ) >/dev/null 2>&1 || true
+}
+
+: > "$DUP/port.held"
+dup_run
+rm -f "$DUP/port.held"
+assert_not_contains "something else answering on the benchmark port does not move production" \
+    "$(cat "$DUP/cfg/ctrld.toml")" 'type = "doq"'
+assert_contains "and the recorded protocol stays the fallback" \
+    "$(cat "$DUP/cfg/controld.env")" "DNS_TYPE=doh"
+assert_contains "and the log says the preferred protocol could not be tested" \
+    "$(cat "$DUP/log" 2>/dev/null)" "could not test preferred"
+
+# The two outcomes the probe can give, so the case above cannot pass by never
+# switching at all.
+dup_run
+assert_contains "a preferred protocol that answers its own probe is switched back to" \
+    "$(cat "$DUP/cfg/ctrld.toml")" 'type = "doq"'
+assert_contains "and recorded" "$(cat "$DUP/cfg/controld.env")" "DNS_TYPE=doq"
+assert_false "and the probe's config is gone" test -f "$DUP/tmp/ctrld-upgrade.toml"
+
+: > "$DUP/doq.blocked"
+dup_run
+rm -f "$DUP/doq.blocked"
+assert_not_contains "a preferred protocol that does not answer is not switched back to" \
+    "$(cat "$DUP/cfg/ctrld.toml")" 'type = "doq"'
+assert_contains "and the log says it is still failing" \
+    "$(cat "$DUP/log" 2>/dev/null)" "still failing on test"
+unset DUP
+unset -f dup_run
+
 describe "reconfigure.sh and status.sh — wired to the real protocol, not the stale record"
 
 # reconfigure.sh hardcodes /cfg/ctrld.toml and /cfg/controld.env throughout,

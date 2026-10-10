@@ -214,8 +214,9 @@ installer, a few things matter before you hand it off:
   already set.
 - **Check the result.** Run `sh status.sh` after any install, reconfigure, or
   protocol change, and look at the output. Don't take "it worked" on faith.
-  `setup.sh` and `reconfigure.sh` exit non-zero when DNS does not answer at
-  the end, which catches the worst case and little else.
+  `status.sh` exits 1 when any of its checks fails. `setup.sh` and
+  `reconfigure.sh` exit non-zero only when DNS does not answer at the end,
+  which catches the worst case and little else.
 - **Uninstalling is destructive.** `uninstall.sh` removes everything this
   project installs, and every device goes back to the router's own DNS. Only
   run it if asked.
@@ -274,7 +275,9 @@ it sourced against the one installed and says so when they differ. An audit
 that silently describes a version the router is not running is worse than no
 audit.
 
-`audit.sh` exits non-zero when it finds drift, so it can gate a script:
+`audit.sh` exits non-zero when it finds drift, and `status.sh` when a check
+fails. A run with nothing worse than review items or warnings exits 0, so
+either can gate a script:
 
 ```sh
 sh /cfg/audit.sh >/dev/null || echo "drift found, run it again for detail"

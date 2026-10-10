@@ -145,7 +145,7 @@ left as it was.
 
 DNS is running through ControlD within about a minute. For split DNS per
 device, blocking smart-TV DNS bypass, or benchmarking protocols, see
-[Technical Details](docs/technical-details.md). If something isn't working, see
+[Everyday Use](#everyday-use). If something isn't working, see
 [Troubleshooting](#troubleshooting).
 
 ## Not Supported

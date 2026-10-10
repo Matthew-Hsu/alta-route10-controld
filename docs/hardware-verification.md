@@ -43,6 +43,10 @@ Entries marked **on 1.5i** ran after the router took Alta's 1.5i update in
 place, with 1.12.0 and the changes after it installed.
 `/etc/openwrt_release` then read `DISTRIB_REVISION='1.5i'`.
 
+Entries marked **on 1.5j** ran after the router took Alta's 1.5j update in
+place, with the same changes installed. `/etc/openwrt_release` then read
+`DISTRIB_REVISION='1.5j'`.
+
 Entries that time DNS from a client all did it the same way. A Mac on VLAN 10
 asked the router's LAN address for a record once a second with
 `dig +time=1 +tries=1`, and the `br-lan_10` redirect counter rose with the
@@ -362,6 +366,14 @@ dnsmasq. An outage below is the span of failed probes.
   started`, the installer found no `ctrld` and exited 1, and devices most
   likely had no DNS until the firmware's next run about 50 seconds later.
   The lock added after it has not yet been seen waiting on a router.
+
+- **No more per-minute runs, on 1.5j.** Alta confirmed the per-minute runs
+  on its forum and said the next release would fix them. The router took
+  1.5j unattended, and 28 hours later its log held no run of
+  `/cfg/post-cfg.sh` across the nearly four hours it covered, 01:40 to 05:23
+  UTC, where 1.5i would have run it about 220 times. The rotated log held
+  none either. The update itself came through intact: `ctrld` running, 24
+  redirect rules, and `audit.sh` exited 0.
 
 ## Alta Control's DNS Settings
 

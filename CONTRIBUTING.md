@@ -24,8 +24,9 @@ a `Co-Authored-By` trailer or similar tool attribution. Leave it.
 homepages, not anything else. A commit message is read in `git log` on a
 router over SSH, years after the link stops resolving, by someone who cannot
 click it. Attribution is a name, not a link. If your tool appends one by
-default, strip it before committing. Reference commits by hash and files by
-path; both stay meaningful offline and forever.
+default, strip it before committing. CI fails a pull request whose commits or
+description carry one. Reference commits by hash and files by path; both stay
+meaningful offline and forever.
 
 What isn't negotiable: nothing merges on an assistant's say-so alone. Every
 change here is read line-by-line by a human, edited where it's wrong, and run
@@ -88,17 +89,22 @@ find . -name "*.sh" -exec shellcheck -s sh -S warning -e SC2154,SC3043,SC2034 {}
 find . -name "*.sh" -exec shellcheck -s sh -S info -i SC2086 {} +
 ```
 
-CI runs exactly these, and two more things. One you cannot run: a
+CI runs exactly these, and three more things. One you cannot run: a
 `betterleaks` secrets scan over the tree. It needs a binary downloaded at job
 time, so it is not in the list above. Nothing in a normal change trips it; it
 is there to stop a resolver ID or a key reaching the history.
 
-The other is `.github/scripts/check-issue-refs.sh`, which fails when
+Another is `.github/scripts/check-issue-refs.sh`, which fails when
 `README.md` or `docs/` links to a closed issue, or when the pull request's own
 description closes an issue they still link to. It asks GitHub, so it needs
 `gh` signed in; with that, `sh .github/scripts/check-issue-refs.sh` runs it
 from the repository root. If your change closes an issue, update or remove the
 sentence that links to it in the same pull request.
+
+The last is `.github/scripts/check-no-urls.sh`, which fails when a commit
+message in the pull request, or its description, carries a URL. Before you
+push, `sh .github/scripts/check-no-urls.sh origin/master..HEAD` checks your
+commits the same way.
 
 The third `test.sh` run is not a duplicate of the second. The first two use
 your `/bin/sh`, which on most development machines is dash or bash, and neither

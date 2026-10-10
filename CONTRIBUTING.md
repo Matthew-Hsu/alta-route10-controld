@@ -54,6 +54,15 @@ Rules that matter more than the format:
   from now needs the failure, not the diff. The diff is already there.
 - **Every commit builds green.** `sh test.sh` and shellcheck pass at each one,
   so `git bisect` works and any commit can be reverted alone.
+- **A fix to your own pull request goes into the commit it fixes.** Pull
+  requests are rebase-merged, so each commit reaches `master` as written, and
+  the pull request's title and description never reach it at all. A commit
+  that corrects something an earlier commit in the same pull request added
+  describes a mistake `master` never had: squash it into that commit before
+  the merge. A fix to something already on `master` is a commit of its own.
+  The merge also gives every commit a new hash, so refer to another commit in
+  the same pull request by its subject. A hash stays valid once it is on
+  `master`.
 - **Do not describe a fix you have not verified is in the diff.** This has
   happened here: a commit message claimed a change that a failed edit had
   silently dropped, and no test caught it.

@@ -259,6 +259,22 @@ assert_false "empty string"          valid_resolver ""
 assert_false "has uppercase"         valid_resolver "ABC123"
 assert_false "has special chars"     valid_resolver "abc-123"
 
+describe "resolver_from_input() — a pasted ControlD link stands for its ID"
+
+# ControlD shows the resolver ID inside a DoH link and a DoT hostname as well
+# as on its own, and README has people put the DoH link in Alta Control. Pasted
+# in full at a prompt for the ID, it was refused as invalid.
+assert_eq "a bare ID is kept"            "abc123" "$(resolver_from_input "abc123")"
+assert_eq "a DoH link"                   "abc123" "$(resolver_from_input "https://dns.controld.com/abc123")"
+assert_eq "a DoH link naming a device"   "abc123" "$(resolver_from_input "https://dns.controld.com/abc123/laptop")"
+assert_eq "a DoH link with a last slash" "abc123" "$(resolver_from_input "https://dns.controld.com/abc123/")"
+assert_eq "a DoT hostname"               "abc123" "$(resolver_from_input "abc123.dns.controld.com")"
+assert_eq "a DoT hostname with a scheme" "abc123" "$(resolver_from_input "tls://abc123.dns.controld.com")"
+assert_eq "another provider's link is left for valid_resolver to refuse" \
+    "https://dns.quad9.net/dns-query" "$(resolver_from_input "https://dns.quad9.net/dns-query")"
+assert_false "and it is refused" valid_resolver "$(resolver_from_input "https://dns.quad9.net/dns-query")"
+assert_eq "a link with no ID in it gives nothing" "" "$(resolver_from_input "https://dns.controld.com/")"
+
 describe "valid_mac() — MAC address validation"
 assert_true  "valid MAC"      valid_mac "AA:BB:CC:DD:EE:FF"
 assert_true  "lowercase MAC"  valid_mac "aa:bb:cc:dd:ee:ff"
@@ -1570,6 +1586,25 @@ assert_contains "a resolver ID that answers is still applied" "$(cat "$RR_CFG/co
     "RESOLVER_ID=good5678"
 assert_contains "after the check says so" "$RR_OUT" "Checking that ControlD answers for good5678"
 unset -f rr_prod_starts
+
+describe "a pasted DoH link is taken for the resolver ID inside it"
+
+# The prompts asked for the ID and refused the link it appears in. The flags
+# take the same input as the prompts, so these run through --to and the policy
+# menu, and the installer's own prompt is run under sv_run below.
+rr_reset
+RR_OUT="$(rr_run --resolver --to https://dns.controld.com/good5678 --force)"
+assert_contains "reconfigure.sh --resolver takes the ID out of a DoH link" \
+    "$(cat "$RR_CFG/controld.env")" "RESOLVER_ID=good5678"
+assert_contains "and checks that ID, not the link" "$RR_OUT" "Checking that ControlD answers for good5678"
+assert_contains "and the change goes through" "$RR_OUT" "rc=0"
+
+rr_reset
+RR_OUT="$( ( PATH="$RR_BIN:$PATH"; printf '2\naa:bb:cc:dd:ee:01\nxyz789.dns.controld.com\nKids\ny\nq\n' \
+    | sh "$RR_CFG/reconfigure.sh" --policy; echo "rc=$?" ) 2>&1 || true )"
+assert_contains "the policy menu takes a DoT hostname for its ID" \
+    "$(cat "$RR_CFG/ctrld.toml")" "https://dns.controld.com/xyz789"
+assert_contains "and adds the rule" "$RR_OUT" "Device rule added"
 
 # Unset first: that drops the export, so later sandboxes that rewrite lib.sh's
 # default are not overridden from the environment.
@@ -5382,6 +5417,22 @@ assert_not_contains "before the step that stops ctrld" "$SV_RE" "Existing Contro
 assert_contains "leaving the installed ID in place" "$(cat "$SV/reinstall/cfg/controld.env")" "RESOLVER_ID=abc123"
 assert_true "and the running ctrld still running" kill -0 "$(cat "$SV/reinstall/ctrld.pid")"
 kill "$(cat "$SV/reinstall/ctrld.pid" 2>/dev/null)" 2>/dev/null || true
+
+describe "setup.sh — a pasted DoH link is taken for the resolver ID"
+
+SV_LINK="$(SV_RESOLVER=https://dns.controld.com/abc123/router sv_run "$SV/link" good)"
+assert_contains "the installer takes the ID out of a DoH link" "$SV_LINK" "Setup Complete!"
+assert_contains "and records the ID alone" "$(cat "$SV/link/cfg/controld.env")" "RESOLVER_ID=abc123"
+assert_contains "which is what ctrld.toml asks ControlD for" \
+    "$(cat "$SV/link/cfg/ctrld.toml")" 'endpoint = "https://dns.controld.com/abc123"'
+# The wizard's prompt: resolver, default bootstrap, DoH3, yes to split DNS, a
+# policy resolver as a DoH link, a name, route by network, a CIDR, then an
+# empty resolver to finish.
+SV_LINK="$(sv_run "$SV/link-policy" good 'abc123\n\n1\ny\nhttps://dns.controld.com/xyz789\nKids\n1\n192.168.50.0/24\n\n')"
+assert_contains "and so does its split-DNS wizard" \
+    "$(cat "$SV/link-policy/cfg/ctrld.toml")" 'endpoint = "https://dns.controld.com/xyz789"'
+assert_not_contains "without calling it invalid" "$SV_LINK" "Invalid resolver ID"
+unset SV_LINK
 
 describe "yes and no — read however they are typed"
 

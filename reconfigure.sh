@@ -343,6 +343,10 @@ do_resolver() {
     fi
 
     [ -z "$new_id" ] && die "Cancelled"
+    # A pasted DoH link or DoT hostname stands for the ID inside it. Guarded,
+    # since this can run on an older /cfg/lib.sh that lacks the function.
+    command -v resolver_from_input >/dev/null 2>&1 \
+        && new_id="$(resolver_from_input "$new_id")"
     valid_resolver "$new_id" || die "Invalid resolver ID (must be 5+ lowercase alphanumeric)"
 
     if [ "$new_id" = "$RESOLVER_ID" ]; then
@@ -491,6 +495,8 @@ do_policy() {
 
                 printf "  Resolver ID for this device: "
                 read -r policy_resolver
+                command -v resolver_from_input >/dev/null 2>&1 \
+                    && policy_resolver="$(resolver_from_input "$policy_resolver")"
                 valid_resolver "$policy_resolver" || { print_fail "Invalid resolver ID"; continue; }
 
                 printf "  Policy name (e.g. Kids, IoT): "
@@ -556,6 +562,8 @@ EOF
 
                 printf "  Resolver ID for this network: "
                 read -r policy_resolver
+                command -v resolver_from_input >/dev/null 2>&1 \
+                    && policy_resolver="$(resolver_from_input "$policy_resolver")"
                 valid_resolver "$policy_resolver" || { print_fail "Invalid resolver ID"; continue; }
 
                 printf "  Policy name (e.g. Guest, IoT-VLAN): "

@@ -106,7 +106,17 @@ while [ $# -gt 0 ]; do
         --repair)        ACTION="repair" ;;
         --to)            [ -z "${2:-}" ] && die "--to requires a value"; TARGET="$2"; shift ;;
         --force|-f)      FORCE=1 ;;
-        *)               die "Unknown option: $1 (try --help)" ;;
+        -*)              die "Unknown option: $1 (try --help)" ;;
+        *)
+            # setup.sh takes its values straight after the flag, --protocol
+            # doh3, and that form was refused here as "Unknown option: doh3".
+            # A bare value is read as --to for the actions that take one, and
+            # refused as before anywhere else.
+            case "$ACTION" in
+                protocol|resolver|force_dns|auto_update) [ -z "$TARGET" ] ;;
+                *) false ;;
+            esac || die "Unknown option: $1 (try --help)"
+            TARGET="$1" ;;
     esac
     shift
 done

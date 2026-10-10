@@ -40,8 +40,9 @@ or files leaves the scope out.
 
 ## Scope and commits
 
-- [ ] One concern. If the summary above needs the word "also," this is
-      probably two PRs
+- [ ] Each commit is one concern. If a commit's message needs the word
+      "also," it is probably two commits. A PR can carry several related
+      ones, since only the commits reach `master`
 - [ ] Every commit builds green and says what was broken, not just what
       changed
 - [ ] A fix to an earlier commit in this PR is squashed into that commit.

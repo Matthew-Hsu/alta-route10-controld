@@ -7,17 +7,17 @@ body:
     attributes:
       value: |
         **Security issue?** A way to bypass, disable, or spoof DNS routing,
-        or any other security issue, should not go through a public issue —
-        see SECURITY.md, or pick "Report a security vulnerability" from the
+        or any other security issue, should not go through a public issue.
+        See SECURITY.md, or pick "Report a security vulnerability" from the
         issue-type list instead of this template.
 
         This project runs on one router in one person's spare time, and
         every defect CI could not see has appeared on hardware first. Only
         "Where did this happen?" and "What did you run, and what happened?"
-        are required beyond the checkboxes below — if this happened on a real
+        are required beyond the checkboxes below. If this happened on a real
         router, pasting `status.sh`/`audit.sh` output too is the difference
-        between one round and three rounds of "can you also paste...", but a
-        bug you found by reading the code, or one that only shows up in
+        between one round and three rounds of "can you also paste...". A bug
+        you found by reading the code, or one that only shows up in
         `test.sh`, won't have any of that to paste, and shouldn't need to
         invent something just to submit this.
 
@@ -27,11 +27,11 @@ body:
       label: Before filing
       description: A couple of minutes here can save a round trip.
       options:
-        - label: I checked the Verification Status section of README.md — this isn't already flagged there as unproven on hardware
+        - label: I checked the Verification Status section of README.md, and this isn't already flagged there as unproven on hardware
           required: true
-        - label: I checked the Not Supported section of README.md — this isn't a documented limitation rather than a bug
+        - label: I checked the Not Supported section of README.md, and this is a bug rather than a documented limitation
           required: true
-        - label: This is not a security issue (a way to bypass, disable, or spoof DNS routing) — I'd use private reporting instead if it were
+        - label: This is not a security issue (a way to bypass, disable, or spoof DNS routing). I'd use private reporting instead if it were
           required: true
 
   - type: dropdown
@@ -51,8 +51,9 @@ body:
       label: What did you run, and what happened?
       description: >-
         Exact commands, what you expected, what happened instead. Say
-        whether a reboot or firmware update was involved — several bugs
-        in this project's history only ever showed up across one of those.
+        whether a reboot or firmware update was involved, since several
+        bugs in this project's history only ever showed up across one of
+        those.
       placeholder: |
         1. sh /cfg/reconfigure.sh --protocol --to doq
         2. rebooted the router
@@ -89,7 +90,7 @@ body:
       label: Anything relevant status.sh's "Recent Activity" section didn't show
       description: >-
         Recent lines matching this project's tags from /tmp/log/messages (or
-        /var/log/messages) — see docs/troubleshooting.md if you're not sure
+        /var/log/messages). See docs/troubleshooting.md if you're not sure
         which file your firmware uses. Leave blank if status.sh's own log
         section already covers it.
       render: shell

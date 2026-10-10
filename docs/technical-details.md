@@ -506,15 +506,20 @@ which gives you the install that maintains itself.
 
 ### Firmware Updates
 
-**Automatic recovery:** Firmware updates typically preserve `/cfg/` (persistent ext4 partition). The boot persistence layer (`/cfg/rc.local`) automatically restores all services, cron jobs, and iptables rules on reboot. No manual intervention needed.
+**Automatic recovery:** Firmware updates typically preserve `/cfg/`, the
+persistent ext4 partition. While `/etc/rc.local` still sources
+`/cfg/rc.local`, the boot hook restores the services, cron jobs and iptables
+rules at the next reboot, and nothing needs doing by hand. An update that
+removes that line is the exception, and the table below says what to do.
 
 **What an update can actually take with it.** Everything the install owns lives
-in `/cfg/`, which survives. What does not survive is the state this project
-writes outside `/cfg/`: the root crontab, the managed block in
-`/etc/firewall.user`, the uci forced-DNS entries, and `/etc/rc.local`'s line
-sourcing `/cfg/rc.local`. An update may reset any of them. `/cfg/rc.local`
-re-establishes all of it at the next boot, so a firmware update that ends in a
-reboot usually self-heals before you look.
+in `/cfg/`, which survives. What does not survive is the state outside
+`/cfg/`: the root crontab, the managed block in `/etc/firewall.user` and the
+uci forced-DNS entries, which this project writes, and the line in
+`/etc/rc.local` sourcing `/cfg/rc.local`, which the firmware writes. An update
+may reset any of them. `/cfg/rc.local` re-establishes the first three at the
+next boot, so a firmware update that ends in a reboot usually self-heals before
+you look.
 
 The quiet failure is the one to watch for. `ctrld` is still running from
 before the update, so DNS resolves and the dashboard looks healthy, while the

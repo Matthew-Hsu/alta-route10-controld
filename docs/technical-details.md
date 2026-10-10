@@ -30,12 +30,12 @@ was confusing.
 LAN Devices (router-assigned DNS)
         |
         v  port 53
-+--------------------+   port 5354   +----------+   DoH3/DoQ/DoH   +-----------+
-| iptables REDIRECT  | -------------> |  ctrld   | ----------------> | ControlD  |
-+--------------------+                | :5354    |   (QUIC/TLS)      |  DoH API  |
-                                       +----------+                  +-----------+
-                                            |
-                                            +-- reports client IP/hostname/MAC
++--------------------+   port 5354   +----------+  DoH3/DoQ/DoH/DoT  +-----------+
+| iptables REDIRECT  | ------------> |  ctrld   | -----------------> | ControlD  |
++--------------------+               | :5354    |     (QUIC/TLS)     | resolver  |
+                                     +----------+                    +-----------+
+                                          |
+                                          +-- reports client IP/hostname/MAC
 ```
 
 **Fallback path**: only while `ctrld` is down, and only while Use DoH is on in
@@ -75,9 +75,9 @@ bypass the router's assigned DNS entirely.
 Any device hardcoding a DNS server, or using DNS-over-TLS
         |
         v  port 53 or port 853
-+------------------------------+   port 5354   +----------+   DoH3/DoQ/DoH   +-----------+
-| iptables REDIRECT (forced)   | -------------> |  ctrld   | ----------------> | ControlD  |
-+------------------------------+                +----------+                  +-----------+
++------------------------------+   port 5354   +----------+  DoH3/DoQ/DoH/DoT  +-----------+
+| iptables REDIRECT (forced)   | ------------> |  ctrld   | -----------------> | ControlD  |
++------------------------------+               +----------+                    +-----------+
 ```
 
 See [Forced DNS Hijacking](#forced-dns-hijacking) for when and why you'd

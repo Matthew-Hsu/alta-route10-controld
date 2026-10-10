@@ -459,15 +459,17 @@ Compare the first against the latest tag on
 To upgrade, re-run the installer, which is the same command that installed it:
 
 ```sh
+grep -E '^(RESOLVER_ID|PREFERRED_PROTOCOL)=' /cfg/controld.env
 wget -O /tmp/setup.sh https://raw.githubusercontent.com/Matthew-Hsu/alta-route10-controld/master/setup.sh
-sh /tmp/setup.sh --resolver YOUR_ID --protocol doh3
+sh /tmp/setup.sh --resolver YOUR_ID --protocol YOUR_PROTOCOL
 ```
 
 It keeps your forced-DNS choice, your split-DNS policy, your auto-update
 setting and any optional keys in `/cfg/controld.env`, and it leaves a `ctrld`
-newer than the pinned release alone. Pass `--resolver` and `--protocol` as
-above to skip the prompts; without them you will be asked for your resolver ID
-again, since it is not read back from the existing install.
+newer than the pinned release alone. It does not read back your resolver ID or
+your protocol, so pass both, using the values the `grep` prints. The protocol
+you pass is the one you end up on, whatever the install ran before. Without the
+two flags you are asked for both again, and the protocol menu defaults to DoH3.
 
 `sh /cfg/audit.sh` afterwards tells you whether the router and the checkout
 agree on the version.

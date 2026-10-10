@@ -29,7 +29,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: betterleaks
         run: |
-          curl -sL https://github.com/betterleaks/betterleaks/releases/download/v1.1.2/betterleaks_1.1.2_linux_x64.tar.gz | sudo tar xz -C /usr/local/bin
+          # Checked against the SHA-256 in the release's checksums.txt before
+          # anything is extracted as root. Moving to a new release means
+          # updating both the URL and this hash.
+          _bl="$RUNNER_TEMP/betterleaks.tar.gz"
+          curl -sSfL -o "$_bl" https://github.com/betterleaks/betterleaks/releases/download/v1.1.2/betterleaks_1.1.2_linux_x64.tar.gz
+          echo "648c20617178065072ff1791d383192a62c911d9b4427f0426a8c504a6d9ddad  $_bl" | sha256sum -c -
+          sudo tar xzf "$_bl" -C /usr/local/bin betterleaks
           betterleaks dir . --exit-code 1 --redact
 
   shellcheck:

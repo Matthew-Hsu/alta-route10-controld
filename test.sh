@@ -6475,14 +6475,16 @@ else
     # Integration: self-healing (delete toml, regenerate from env).
     #
     # Opt-in, because this is surgery on a live router, not a test. It deletes
-    # /cfg/ctrld.toml and runs the whole boot sequence: post-cfg.sh restarts
-    # https-dns-proxy, rewrites dhcp uci and restarts dnsmasq, then stops and
-    # starts ctrld, so the LAN loses DNS for the duration. Worse, post-cfg.sh
-    # waits on `while ! ping -c1 "$BOOTSTRAP_IP"` with no attempt limit, so if
-    # the bootstrap host does not answer ICMP this never returns; interrupting
-    # it then skips the restore below and leaves the config as post-cfg
-    # regenerated it. CONTRIBUTING.md documents running this suite on the
-    # router as a routine step, and a routine step must not do any of that.
+    # /cfg/ctrld.toml and runs the whole boot sequence. post-cfg.sh writes a
+    # new one from controld.env, which carries no split-DNS policy, and
+    # restarts ctrld on it if it differs from the config ctrld was started
+    # with, so the LAN loses DNS while ctrld restarts. Putting the original
+    # back below does not restart ctrld, so a policy stays off until something
+    # next does. When the bootstrap host does not answer ICMP, post-cfg.sh also
+    # waits about a minute before the restart, and interrupting it then skips
+    # the restore and leaves the config as post-cfg.sh regenerated it.
+    # CONTRIBUTING.md documents running this suite on the router as a routine
+    # step, and a routine step must not do any of that.
     if [ "${CONTROLD_TEST_DESTRUCTIVE:-0}" = "1" ]; then
         BACKUP_TOML=$(cat /cfg/ctrld.toml)
         rm /cfg/ctrld.toml

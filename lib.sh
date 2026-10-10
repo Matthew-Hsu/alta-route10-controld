@@ -918,17 +918,21 @@ bench_worth_switching() {
 # Bounded by start_ctrld's wall clock, not by a count of probes.
 #   0 = answers, 1 = does not answer,
 #   2 = could not ask (no ctrld binary, or something else holds BENCH_PORT)
-# Usage: probe_resolver <proto> <resolver> <bootstrap>
+#
+# `config` is where the throwaway config is written, BENCH_CONF unless given.
+# The daemon is found and stopped by that path, so a caller that can run while
+# a benchmark does passes its own.
+# Usage: probe_resolver <proto> <resolver> <bootstrap> [config]
 probe_resolver() {
-    _pr_proto="$1"; _pr_res="$2"; _pr_boot="$3"
+    _pr_proto="$1"; _pr_res="$2"; _pr_boot="$3"; _pr_conf="${4:-$BENCH_CONF}"
     [ -x /cfg/ctrld ] || return 2
-    bench_stop "$BENCH_CONF" >/dev/null
+    bench_stop "$_pr_conf" >/dev/null
     port_in_use "$BENCH_PORT" && return 2
-    bench_write_config "$BENCH_CONF" "$_pr_proto" "$_pr_res" "$_pr_boot" "$BENCH_PORT"
+    bench_write_config "$_pr_conf" "$_pr_proto" "$_pr_res" "$_pr_boot" "$BENCH_PORT"
     _pr_rc=0
-    ( DNS_PORT="$BENCH_PORT"; start_ctrld "$BENCH_CONF" 15 ) || _pr_rc=1
-    bench_stop "$BENCH_CONF" >/dev/null
-    rm -f "$BENCH_CONF"
+    ( DNS_PORT="$BENCH_PORT"; start_ctrld "$_pr_conf" 15 ) || _pr_rc=1
+    bench_stop "$_pr_conf" >/dev/null
+    rm -f "$_pr_conf"
     return "$_pr_rc"
 }
 
@@ -2013,7 +2017,6 @@ do_upgrade_check() {
     # how the watchdog behaves changes.
     _ucf="${UPGRADE_COUNT_FILE:-/tmp/controld-upgrade.count}"
     _uint="${UPGRADE_INTERVAL:-6}"   # ~30 min at 5-min cron
-    _uport=5360
 
     # True DNS_TYPE up before deciding anything from it. This runs only from
     # the watchdog's healthy branch, so DNS is confirmed answering on
@@ -2045,42 +2048,20 @@ do_upgrade_check() {
         return 0
     fi
 
-    # Probe the preferred protocol on a throwaway ctrld on the loopback test port
-    _ep="$(get_endpoint "$PREFERRED_PROTOCOL" "$RESOLVER_ID")"
-    cat > /tmp/ctrld-upgrade.toml << EOF
-[service]
-    log_level = "error"
-    cache_enable = false
-[network.0]
-    cidrs = ["0.0.0.0/0"]
-    name = "upgrade-test"
-[upstream.0]
-    bootstrap_ip = "${BOOTSTRAP_IP}"
-    endpoint = "${_ep}"
-    name = "upgrade-test"
-    timeout = 5000
-    type = "${PREFERRED_PROTOCOL}"
-    send_client_info = false
-[listener.0]
-    ip = "127.0.0.1"
-    port = ${_uport}
-EOF
-    /cfg/ctrld run -c /tmp/ctrld-upgrade.toml -d >/dev/null 2>&1 &
-    _tpid=$!
-    _un=0
-    while [ "$_un" -lt 8 ]; do
-        nslookup google.com "127.0.0.1#${_uport}" >/dev/null 2>&1 && break
-        sleep 1; _un=$((_un + 1))
-    done
-    # Kill ONLY the test ctrld (matched by its config path), never production
-    _killed=0
-    for _p in $(ps w 2>/dev/null | grep '[c]trld run -c /tmp/ctrld-upgrade.toml' | awk '{print $1}'); do
-        kill "$_p" 2>/dev/null; _killed=1
-    done
-    [ "$_killed" = "1" ] || kill "$_tpid" 2>/dev/null
-    rm -f /tmp/ctrld-upgrade.toml
-
-    if [ "$_un" -ge 8 ]; then
+    # Probe the preferred protocol on a throwaway ctrld on the benchmark port.
+    # This used to carry its own copy of that check, which never looked at
+    # whether the port was free. Anything else answering there, such as a
+    # benchmark that was running or had been left behind, passed the test for
+    # the preferred protocol, and production was switched onto it whether it
+    # worked or not. The probe gets its own config path, because the daemon is
+    # stopped by that path and this must never stop a benchmark's.
+    _urc=0
+    probe_resolver "$PREFERRED_PROTOCOL" "$RESOLVER_ID" "$BOOTSTRAP_IP" /tmp/ctrld-upgrade.toml || _urc=$?
+    if [ "$_urc" = "2" ]; then
+        logger -t watchdog "could not test preferred $(proto_label "$PREFERRED_PROTOCOL") on port ${BENCH_PORT} — staying on $(proto_label "$DNS_TYPE")"
+        return 1
+    fi
+    if [ "$_urc" != "0" ]; then
         logger -t watchdog "preferred $(proto_label "$PREFERRED_PROTOCOL") still failing on test — staying on $(proto_label "$DNS_TYPE")"
         return 1
     fi

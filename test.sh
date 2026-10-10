@@ -1837,7 +1837,10 @@ assert_false    "a completed run releases the lock"    test -d "$WD_LOCKDIR"
 
 # An interrupted run must release it too. Not hypothetical: a manual run was
 # Ctrl-C'd mid-fallback during hardware verification, which under the old code
-# left nothing behind only because there was no lock to leave.
+# left nothing behind only because there was no lock to leave. It must also
+# stop. INT and TERM shared the trap that releases the lock, and a trap that
+# does not exit lets the script carry on, so the interrupted run finished its
+# cycle without the lock, beside whichever run took it next.
 #
 # The stub blocks in one-second steps rather than a single long sleep: a trap is
 # handled between commands, so a shell sitting in `sleep 20` would not run it
@@ -1853,6 +1856,7 @@ restart_ctrld()              { _i=0; while [ "\$_i" -lt 20 ]; do sleep 1; _i=\$(
 remove_dns_redirects()       { :; }
 WDLIBEOF4
 rm -rf "$WD_LOCKDIR"
+: > "$WD_LOG"
 PATH="$WD_BIN:$PATH" WD_LOCK="$WD_LOCKDIR" sh "$WDGEN" >/dev/null 2>&1 &
 WD_BGPID=$!
 sleep 2
@@ -1860,6 +1864,8 @@ assert_true "a running instance holds the lock" test -d "$WD_LOCKDIR"
 kill -TERM "$WD_BGPID" 2>/dev/null || true
 wait "$WD_BGPID" 2>/dev/null || true
 assert_false "an interrupted run releases it" test -d "$WD_LOCKDIR"
+assert_not_contains "and stops there, rather than carrying on without it" \
+    "$(cat "$WD_LOG" 2>/dev/null)" "ctrld restarted"
 
 describe "watchdog — a failed fallback must not leave the config diverged"
 

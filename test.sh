@@ -1,7 +1,8 @@
 #!/bin/sh
 # test.sh: comprehensive test suite for Alta Route 10 + ControlD
 # Run locally: sh test.sh
-# Run on router: sh /tmp/controld/test.sh   (a copy of the repo, not /cfg)
+# Run on router: from a copy of the repo unpacked in /tmp, not from /cfg
+#   (CONTRIBUTING.md, "Testing on hardware", has the commands)
 
 set -e
 
@@ -179,8 +180,9 @@ done
 if [ -n "$_ts_missing" ]; then
     echo "test.sh needs the project's sources beside it. Missing:${_ts_missing}" >&2
     echo "An install does not put them all in /cfg. Run from a copy of the repo:" >&2
-    echo "  scp -r *.sh README.md docs route10:/tmp/controld/" >&2
-    echo "  ssh route10 'sh /tmp/controld/test.sh'" >&2
+    echo "  cd /tmp && wget -O controld.tar.gz https://github.com/Matthew-Hsu/alta-route10-controld/archive/refs/heads/master.tar.gz" >&2
+    echo "  tar xzf controld.tar.gz && sh alta-route10-controld-master/test.sh" >&2
+    echo "For a branch, see \"Testing on hardware\" in CONTRIBUTING.md." >&2
     exit 1
 fi
 
@@ -6285,7 +6287,8 @@ PF_OUT="$( cd "$PF_DIR" && sh ./test.sh 2>&1 </dev/null )" && PF_RC=0 || PF_RC=$
 
 assert_eq "a missing source is refused, not stumbled over" "1" "$PF_RC"
 assert_contains "it names the file that is missing" "$PF_OUT" "setup.sh"
-assert_contains "and says where the suite is meant to run" "$PF_OUT" "/tmp/controld"
+assert_contains "and says where the suite is meant to run" "$PF_OUT" "sh alta-route10-controld-master/test.sh"
+assert_contains "and how to get it there" "$PF_OUT" "archive/refs/heads/master.tar.gz"
 assert_not_contains "no assertion runs at all" "$PF_OUT" "PASS"
 assert_not_contains "so nothing fails for the wrong reason" "$PF_OUT" "FAIL"
 

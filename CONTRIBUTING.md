@@ -40,11 +40,12 @@ agent picking up work in this repo.
 `cron`, `uninstall`, `setup`, `version`, `repair`, `test`, `bootstrap`,
 `readouts`.
 
-Three kinds of commit carry no scope, because there is no area narrower than
-the file they change: `ci` for the workflows, and `docs(<file>)` for a change
-confined to one markdown file, where the filename is more use to a reader than
-an area would be. `master` already carries `docs(readme)` and `fix(status)`, so
-this records what the project does rather than tightening it.
+Two types take something other than an area. `ci` takes no scope, since the
+CI is all it changes. `docs` takes the name of the one file it changes, because
+a reader scanning `git log` is better served by the filename than by an area:
+`docs(readme)`, `docs(hardware-verification)`, `docs(bug-report)` for the issue
+form, or `docs(lib)` for comments in `lib.sh`. A commit that spans several
+areas or files leaves the scope out.
 
 Rules that matter more than the format:
 

@@ -57,7 +57,7 @@ usage() {
     --resolver      Change resolver ID (prompts, or use --to <id>)
     --benchmark     Benchmark all protocols, apply fastest
     --policy        Manage split DNS policies (add/remove/list)
-    --force-dns     Toggle forced DNS (hijack all outbound DNS), or --to on|off
+    --force-dns     Toggle forced DNS (also redirects DoT, port 853), or --to on|off
     --auto-update   Toggle the weekly ctrld auto-update, or --to on|off
     --repair        Re-apply DNS redirects to every LAN bridge (incl. new VLANs)
     --help          Show this help
@@ -671,8 +671,15 @@ toggle_to() {
 
 do_force_dns() {
     print_header "Forced DNS Hijacking"
-    printf "  Ensures all LAN clients use ControlD DNS by intercepting\n"
-    printf "  outbound DNS on port 53 (plain) and port 853 (DoT).\n\n"
+    # What this adds over a default install is the port-853 redirect. The
+    # port-53 redirects every install puts on each bridge match the port
+    # alone, not where a query was headed, so a device with a hardcoded server
+    # already reaches ctrld. On a Route 10 with this off, a query to an address
+    # where nothing answers DNS still got an answer, and the bridge's port-53
+    # counter rose by one per query.
+    printf "  Plain DNS on port 53 reaches ControlD with or without it. Forced DNS\n"
+    printf "  also redirects DNS-over-TLS (DoT, port 853), which some devices use\n"
+    printf "  to skip the router's DNS.\n\n"
 
     # Source of truth is the FORCED_DNS flag; fall back to live uci state for legacy installs
     local current="${FORCED_DNS:-0}"
@@ -683,7 +690,7 @@ do_force_dns() {
     toggle_to "Forced DNS" "$current" || return 0
 
     if [ "$current" = "1" ]; then
-        printf "  Current: ${GREEN}ENABLED${RESET} — all outbound DNS is intercepted\n\n"
+        printf "  Current: ${GREEN}ENABLED${RESET} — DoT on port 853 is redirected along with port 53\n\n"
         if [ "$FORCE" -eq 1 ]; then
             confirm="y"
         else
@@ -694,14 +701,14 @@ do_force_dns() {
             [Yy]|[Yy][Ee][Ss])
                 set_forced_dns_flag 0
                 disable_forced_dns
-                print_ok "Forced DNS disabled. Devices may use their own DNS."
+                print_ok "Forced DNS disabled. Port 53 is still redirected, and DoT on port 853 is not."
                 ;;
             *)
                 print_info "No changes made."
                 ;;
         esac
     else
-        printf "  Current: ${RED}DISABLED${RESET} — devices can bypass ControlD DNS\n\n"
+        printf "  Current: ${RED}DISABLED${RESET} — DoT on port 853 can bypass ControlD\n\n"
         printf "  Smart TVs (Panasonic, Samsung), IoT devices, and browsers\n"
         printf "  with DoH/DoT can ignore the DHCP DNS setting.\n\n"
         if [ "$FORCE" -eq 1 ]; then
@@ -719,7 +726,7 @@ do_force_dns() {
                 set_forced_dns_flag 1
                 FORCED_DNS=1
                 ensure_forced_dns
-                print_ok "Forced DNS enabled. All outbound DNS is now hijacked."
+                print_ok "Forced DNS enabled. DoT on port 853 is now redirected too."
                 print_info "Note: DNS-over-HTTPS (port 443) cannot be redirected without"
                 print_info "breaking HTTPS. Most TVs and IoT devices use DoT, not DoH."
                 ;;

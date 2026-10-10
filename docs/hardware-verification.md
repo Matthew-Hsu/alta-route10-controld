@@ -47,6 +47,12 @@ Entries marked **on 1.5j** ran after the router took Alta's 1.5j update in
 place, with the same changes installed. `/etc/openwrt_release` then read
 `DISTRIB_REVISION='1.5j'`.
 
+Entries marked **after 1.12.0, on 1.5j** ran later on the same firmware, with
+every change since 1.12.0 merged onto one branch and installed from its
+archive. Before the install, `test.sh` from that archive ran under the
+router's own BusyBox: 1,197 passed and none failed, with the three
+destructive tests skipped, as they are unless asked for.
+
 Entries that time DNS from a client all did it the same way. A Mac on VLAN 10
 asked the router's LAN address for a record once a second with
 `dig +time=1 +tries=1`, and the `br-lan_10` redirect counter rose with the
@@ -142,6 +148,18 @@ dnsmasq. An outage below is the span of failed probes.
   exited 0. A run with Use DoH off, where the check asks dnsmasq instead, has
   not been done on a router.
 
+- **The installer's prompts, answered as typed, after 1.12.0, on 1.5j.** At
+  `Resolver ID:` the installer took the whole `https://dns.controld.com/<id>`
+  link pasted from the dashboard, took the ID out of it, and checked that
+  ControlD answered for that ID over DoH3 before going further. The Bootstrap
+  IP prompt printed its three lines of explanation first, and Enter took
+  `76.76.2.22`. Typing `no` at `Overwrite? [Y/n]` printed `Aborting.`, and
+  `ctrld` kept its PID. Run again with `yes`, the installer used the archive's
+  own files, printing no `Downloading lib.sh from repository` line and no
+  `[!!]`, took `no` at the split-DNS question, and restarted `ctrld` with the
+  redirect on all six bridges. `controld.env` came back with the bare ID,
+  DoH3 as both the running and the preferred protocol, and `FORCED_DNS=1`.
+
 ## Redirect Coverage
 
 - Redirect coverage on all six bridges, the port-853 DoT hijack, and
@@ -164,6 +182,23 @@ dnsmasq. An outage below is the span of failed probes.
   sweeping one planted as `--dport 53 -j REDIRECT --to-ports 5399`, a port this
   install had never recorded, while leaving a planted non-DNS rule (`--dport 80
   --to-ports 3128`) untouched
+
+- **A hardcoded port-53 server reaching `ctrld` with forced DNS off, after
+  1.12.0, on 1.5j.** None of the changes installed touches the redirect
+  rules. After `reconfigure.sh --force-dns --to off`,
+  `iptables -t nat -S PREROUTING` listed twelve port-53 redirects and no
+  port-853 rules. Each had the shape
+  `-i br-lan_10 -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354`, with
+  no destination match. The Mac on VLAN 10 then ran
+  `dig +time=2 +tries=1 @192.0.2.1 example.com`, an address where nothing
+  answers DNS, and got both of `example.com`'s addresses back in 10 ms. It
+  also ran `nslookup route10-port53-test.example.com 8.8.8.8`, and the
+  `br-lan_10` UDP redirect counter rose from 131,542 to 131,544 across the
+  two queries. `status.sh` still ended on `Healthy — every check passed` and
+  exit 0. Turning forced DNS back on put the twelve port-853 rules back, and
+  `192.0.2.1` gave the same two addresses. So a hardcoded plain-DNS server
+  reaches `ctrld` with forced DNS off, and the redirect forced DNS adds is the
+  one for port 853, which catches DNS-over-TLS.
 
 ## DNS Port Changes
 
@@ -375,6 +410,19 @@ dnsmasq. An outage below is the span of failed probes.
   none either. The update itself came through intact: `ctrld` running, 24
   redirect rules, and `audit.sh` exited 0.
 
+- **A reboot with the bounded network wait, after 1.12.0, on 1.5j.** The
+  router's BusyBox `ping` accepts `-W`: `ping -c1 -W 1 192.0.2.1` gave up
+  after one second with rc 1, and `76.76.2.22` answered. After a reboot the
+  firmware's own early run of `post-cfg.sh` logged `ctrld failed health
+  check, using https-dns-proxy fallback`, and the boot hook's run 0.6 seconds
+  later logged `starting` and then `ctrld started (doh3)` with the redirect
+  on all six bridges, the order `docs/troubleshooting.md` describes as
+  benign. Neither `no ICMP reply` nor `still running after 120s` was logged.
+  Forced DNS was restored with its twelve port-853 rules, `status.sh` read 24
+  redirect rules and ended Healthy with exit 0, and `audit.sh` reported no
+  drift. The install before it, which waits on the same ping, took 2.5
+  seconds from `starting` to `ctrld started`.
+
 ## Alta Control's DNS Settings
 
 - **A settings save re-runs `post-cfg.sh`, on 1.5h.** Saving any change on
@@ -464,6 +512,19 @@ dnsmasq. An outage below is the span of failed probes.
   no-op. A reboot afterwards came back with the two files in agreement and no
   spurious correction logged.
 
+- **The switch back with its test port taken, after 1.12.0, on 1.5j.**
+  Production was retargeted to DoH behind `controld.env`'s back, and a second
+  `ctrld` was started on 5360, the port the switch-back tests on, as a
+  running benchmark would hold it. The watchdog was then run by hand with the
+  self-upgrade's count one short of the six healthy cycles it waits for. It
+  logged `DNS_TYPE corrected to doh (ctrld.toml disagreed)`, then 17 ms later
+  `could not test preferred DoH3 (HTTP/3) on port 5360 — staying on DoH
+  (HTTP/2)`, and left the other `ctrld` running. With that one stopped, the
+  next run logged `preferred DoH3 (HTTP/3) healthy — upgrading back` and,
+  2.4 seconds later, `upgraded to DoH3 (HTTP/3)`. `controld.env` read
+  `DNS_TYPE=doh3`, the one `ctrld` left was running `/cfg/ctrld.toml`, and
+  `status.sh` ended Healthy with exit 0.
+
 ## Reconfiguration
 
 - **A resolver ID that does not answer is rolled back, after 1.11.0.**
@@ -550,6 +611,12 @@ dnsmasq. An outage below is the span of failed probes.
   measurement again: DoQ and DoH at 7 ms, DoH3 and DoT at 8. `benchmark.sh`
   now recommended keeping DoH3 and said DoQ was 1 ms faster, less than the
   5 ms and 20% worth switching for.
+
+- **`status.sh`'s verdict, after 1.12.0, on 1.5j.** After the install it
+  ended on `Healthy — every check passed` and exited 0, and it did the same
+  after the reboot and after each forced-DNS change. With forced DNS off it
+  showed that as two `[--]` lines rather than warnings. A run with a failing
+  check, which should exit 1, has not been done on a router.
 
 ## Uninstall
 

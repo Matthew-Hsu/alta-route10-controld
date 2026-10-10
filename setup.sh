@@ -7,8 +7,8 @@
 # lib.sh is auto-downloaded if not present, so there is no need to wget it
 # separately.
 #
-# Supports: DoH (HTTP/2), DoH3 (HTTP/3), DoQ (QUIC)
-# All prompts have defaults in [brackets] -- press Enter to accept.
+# Supports: DoH3 (HTTP/3), DoQ (QUIC), DoH (HTTP/2) and DoT (TLS)
+# A prompt with a default shows it in [brackets]; press Enter to accept it.
 
 set -e
 

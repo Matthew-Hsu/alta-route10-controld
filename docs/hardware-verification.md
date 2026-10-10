@@ -42,11 +42,12 @@ integration tests included, once two tests that had been reading the real
 Entries marked **on 1.5i** ran after the router took Alta's 1.5i update in
 place, with 1.12.0 and the changes after it installed.
 `/etc/openwrt_release` then read `DISTRIB_REVISION='1.5i'`.
-Those entries time DNS from a client. A Mac on VLAN 10 asked the router's LAN
-address for a record once a second with `dig +time=1 +tries=1`, and the
-`br-lan_10` redirect counter rose with the queries, which shows the probe went
-through `ctrld` and not straight to dnsmasq. An outage below is the span of
-failed probes.
+
+Entries that time DNS from a client all did it the same way. A Mac on VLAN 10
+asked the router's LAN address for a record once a second with
+`dig +time=1 +tries=1`, and the `br-lan_10` redirect counter rose with the
+queries, which shows the probe went through `ctrld` and not straight to
+dnsmasq. An outage below is the span of failed probes.
 
 ## Per-Device Visibility
 

@@ -14,12 +14,13 @@ file it changes as its scope, and ci takes none.
 
 ## Hardware
 
-<!-- CI already runs `sh test.sh` under both awks and shellcheck on every PR
-     automatically, and that result is on this page below, so there is no
-     need to repeat it here. What CI cannot see is this section: iptables,
-     cron, /etc/firewall.user, and boot persistence (rc.local, post-cfg.sh)
-     can only be proven on a real Route 10, including a reboot. See
-     AGENTS.md's "Your sandbox is not the target." -->
+<!-- CI already runs `sh test.sh` under GNU awk, BusyBox awk and BusyBox
+     ash, two shellcheck passes, a secrets scan, the closed-issue check and
+     the no-URL check on every PR, and the results are on this page below,
+     so there is no need to repeat them here. What CI cannot see is this
+     section: iptables, cron, /etc/firewall.user, and boot persistence
+     (rc.local, post-cfg.sh) can only be proven on a real Route 10,
+     including a reboot. See AGENTS.md's "Your sandbox is not the target." -->
 
 - [ ] Not applicable: this doesn't touch iptables, cron, firewall.user, or
       boot persistence

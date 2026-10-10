@@ -43,6 +43,8 @@ file it changes as its scope, and ci takes none.
       probably two PRs
 - [ ] Every commit builds green and says what was broken, not just what
       changed
+- [ ] A fix to an earlier commit in this PR is squashed into that commit.
+      This is rebase-merged, so each commit lands on `master` as written
 - [ ] No URLs anywhere in this PR: not in the description, not in any commit
       message, not a session link a tool appended automatically. Cite commits
       by hash and files by path instead; see CONTRIBUTING.md for why

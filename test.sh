@@ -1606,6 +1606,30 @@ assert_contains "the policy menu takes a DoT hostname for its ID" \
     "$(cat "$RR_CFG/ctrld.toml")" "https://dns.controld.com/xyz789"
 assert_contains "and adds the rule" "$RR_OUT" "Device rule added"
 
+describe "reconfigure.sh — the installer's flag form is read as --to"
+
+# setup.sh takes --protocol doh3 and --resolver abc123, while reconfigure.sh
+# wanted --to in between and called the value an unknown option, so the form
+# the installer had just taught failed on the next tool.
+rr_reset
+RR_OUT="$(rr_run --protocol doh --force)"
+assert_true "--protocol doh switches like --protocol --to doh" \
+    grep -qx "DNS_TYPE=doh" "$RR_CFG/controld.env"
+assert_contains "and succeeds" "$RR_OUT" "rc=0"
+rr_reset
+RR_OUT="$(rr_run --resolver good5678 --force)"
+assert_contains "--resolver <id> changes the ID" "$(cat "$RR_CFG/controld.env")" "RESOLVER_ID=good5678"
+RR_OUT="$(rr_run --force-dns off)"
+assert_contains "--force-dns off reads as --to off" "$RR_OUT" "Forced DNS is already off"
+# Everything else stays an error, or a typo could pass as a value.
+RR_OUT="$(rr_run --show doh)"
+assert_contains "a word after an action that takes no value is still refused" "$RR_OUT" \
+    "Unknown option: doh"
+rr_reset
+RR_OUT="$(rr_run --protocol --to doh dot --force)"
+assert_contains "and so is a second value" "$RR_OUT" "Unknown option: dot"
+assert_true "without changing anything" cmp -s "$RR_CFG/env.before" "$RR_CFG/controld.env"
+
 # Unset first: that drops the export, so later sandboxes that rewrite lib.sh's
 # default are not overridden from the environment.
 unset BENCH_CONF

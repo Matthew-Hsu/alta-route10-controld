@@ -1,8 +1,9 @@
-# blank_issues_enabled: false forces every issue through bug_report.yml. The
-# point of that form is that what's pasted in is enough on its own to
-# reproduce the problem — a blank issue can't be required to include any of
-# that, so leaving it enabled would give every reporter a way around asking
-# for it.
+# blank_issues_enabled: false sends every issue through one of the two
+# templates. The point of bug_report.yml is that what's pasted in is enough on
+# its own to reproduce the problem. A blank issue can't be required to include
+# any of that, so leaving it enabled would give every reporter a way around
+# asking for it. question_or_feature.md is free text as well, but it sends a
+# bug back to the form.
 blank_issues_enabled: false
 contact_links:
   - name: Report a security vulnerability

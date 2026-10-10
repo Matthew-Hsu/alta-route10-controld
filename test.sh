@@ -4464,11 +4464,12 @@ st_install() {  # $1 = FORCED_DNS in controld.env, $2 = uci force_dns, $3 = dot|
     if [ "$3" = "dot" ]; then : > "$ST_DIR/dot"; else rm -f "$ST_DIR/dot"; fi
     rm -f "$ST_DIR/ctrld.dead"
 }
-st_run() {
+st_run() {  # $1 = the status.sh to run, default the sandboxed install's
+    _str=0
     env -i PATH="$ST_BIN:$PATH" AWK="${AWK:-awk}" LAN_IFACES=br-lan \
         DEGRADED_FLAG="$ST_DIR/degraded" LOG_FILES="$ST_DIR/no-log" \
-        sh "$ST_CFG/status.sh" 2>&1
-    echo "rc=$?"
+        sh "${1:-$ST_CFG/status.sh}" 2>&1 || _str=$?
+    echo "rc=$_str"
 }
 
 # What every install looks like until someone turns forced DNS on.
@@ -4502,6 +4503,60 @@ ST_OUT="$(st_run)"
 assert_contains "recorded on but not applied still warns" "$ST_OUT" '\[~~\].*Forced DNS: disabled'
 assert_contains "and so do its missing port 853 rules" "$ST_OUT" '\[~~\].*no port 853 rules'
 assert_not_contains "rather than reading as the default" "$ST_OUT" "Forced DNS: off (default)"
+
+describe "status.sh — ends on a verdict and an exit status"
+
+# The same sandbox. It exited 0 whatever it had just printed, so a script, or
+# a person skimming, had to read every line to learn whether anything failed.
+st_count() {  # $1 = output, $2 = marker regex: lines carrying it above Summary
+    printf '%s\n' "$1" | sed '/Summary/,$d' | grep -c "$2"
+}
+st_said() {   # $1 = output, $2 = failure|warning: the count the summary gives
+    _sts="$(printf '%s\n' "$1" | sed -n "s/.*[^0-9]\([0-9][0-9]*\) $2(s).*/\1/p" | head -1)"
+    printf '%s' "${_sts:-0}"
+}
+
+st_install 0 0 nodot
+ST_OUT="$(st_run)"
+assert_contains "a healthy install says so" "$ST_OUT" '\[OK\].*Healthy — every check passed'
+assert_contains "and exits 0" "$ST_OUT" '^rc=0$'
+
+# Warnings are something to know, not something broken.
+st_install 1 0 nodot
+ST_OUT="$(st_run)"
+assert_contains "warnings alone are counted" "$ST_OUT" '\[OK\].*No failures — 2 warning(s) above'
+assert_contains "and still exit 0" "$ST_OUT" '^rc=0$'
+
+st_install 0 0 nodot
+: > "$ST_DIR/ctrld.dead"
+ST_OUT="$(st_run)"
+assert_contains "one failure is named in the verdict" "$ST_OUT" '\[!!\].*1 failure(s), 0 warning(s)'
+assert_contains "and exits 1" "$ST_OUT" '^rc=1$'
+assert_not_contains "and is not called healthy" "$ST_OUT" "Healthy"
+
+# Nothing installed and every probe failing, with the degraded flag up for a
+# warning. The counts must match the lines, so a failure printed without going
+# through the tally shows up here as a difference.
+ST_BROKEN="$ST_DIR/bin-broken"; mkdir -p "$ST_BROKEN"
+for _stb in uci iptables ip nslookup logread pidof crontab; do
+    printf '#!/bin/sh\nexit 1\n' > "$ST_BROKEN/$_stb"; chmod +x "$ST_BROKEN/$_stb"
+done
+mkdir -p "$ST_DIR/bare"
+for _sts in status.sh lib.sh; do
+    sed -e "s|/cfg/|${ST_DIR}/bare/|g" -e "s|/etc/init.d/|${ST_DIR}/initd/|g" \
+        "$SCRIPT_DIR/$_sts" > "$ST_DIR/bare/$_sts"
+done
+echo "ctrld unrecoverable — DNS redirects removed so the LAN keeps resolving" \
+    > "$ST_DIR/degraded"
+ST_OUT="$(ST_BIN="$ST_BROKEN" st_run "$ST_DIR/bare/status.sh")"
+rm -f "$ST_DIR/degraded"
+assert_true "a bare router fails many checks" test "$(st_count "$ST_OUT" '\[!!\]')" -ge 10
+assert_eq "every failure printed is counted" \
+    "$(st_count "$ST_OUT" '\[!!\]')" "$(st_said "$ST_OUT" failure)"
+assert_eq "and every warning" \
+    "$(st_count "$ST_OUT" '\[~~\]')" "$(st_said "$ST_OUT" warning)"
+assert_contains "the bare router exits 1" "$ST_OUT" '^rc=1$'
+unset ST_OUT ST_BROKEN
 
 describe "reconfigure.sh --force-dns — says what it adds over port 53"
 

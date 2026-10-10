@@ -2088,6 +2088,29 @@ valid_resolver() {
     [ ${#id} -ge 5 ] && echo "$id" | grep -qE '^[a-z0-9]+$'
 }
 
+# The resolver ID out of what someone pastes at a prompt for one.
+#
+# ControlD shows the ID inside a DoH link and a DoT hostname as well as on its
+# own, and README has people put the DoH link in Alta Control's DoH Servers,
+# so the link is often what someone has to hand. Pasted in full, it used to be
+# refused as an invalid ID. The ID is the first path segment rather than the
+# last, because a ControlD DoH link can carry a device name after it. Anything
+# that is not a ControlD link comes back unchanged, for valid_resolver to judge.
+# Usage: resolver_from_input https://dns.controld.com/abc123/laptop  ->  abc123
+#        resolver_from_input tls://abc123.dns.controld.com           ->  abc123
+#        resolver_from_input abc123                                  ->  abc123
+resolver_from_input() {
+    _rfi="${1#*://}"
+    case "$_rfi" in
+        dns.controld.com/*)
+            _rfi="${_rfi#dns.controld.com/}"
+            printf '%s' "${_rfi%%/*}" ;;
+        *.dns.controld.com)
+            printf '%s' "${_rfi%.dns.controld.com}" ;;
+        *)  printf '%s' "$1" ;;
+    esac
+}
+
 # Validate MAC address format
 valid_mac() {
     local mac="$1"

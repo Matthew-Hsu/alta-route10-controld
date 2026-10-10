@@ -216,6 +216,11 @@ if [ -z "$RESOLVER_ID" ]; then
     read -r RESOLVER_ID
 fi
 
+# A pasted DoH link or DoT hostname stands for the ID inside it. command -v
+# for the reason step 8 gives: an older lib.sh has no such function.
+command -v resolver_from_input >/dev/null 2>&1 \
+    && RESOLVER_ID="$(resolver_from_input "$RESOLVER_ID")"
+
 if [ -z "$RESOLVER_ID" ]; then
     die "Resolver ID is required."
 fi
@@ -873,6 +878,8 @@ if [ "$DO_SPLIT" = "y" ]; then
         printf "    Resolver ID (or empty to finish): "
         read -r POLICY_RESOLVER
         [ -z "$POLICY_RESOLVER" ] && break
+        command -v resolver_from_input >/dev/null 2>&1 \
+            && POLICY_RESOLVER="$(resolver_from_input "$POLICY_RESOLVER")"
 
         if ! valid_resolver "$POLICY_RESOLVER"; then
             print_warn "Invalid resolver ID, skipping."

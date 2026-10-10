@@ -49,7 +49,7 @@ scripts on the router. Here is how that setting compares with this project:
 | What the ControlD dashboard shows | every query as coming from the router | each device separately, VLANs included |
 | Different profiles for different devices | one profile for the whole network | per device or per subnet, with [split DNS](docs/technical-details.md#split-dns-and-per-device-policy) |
 | Protocol to ControlD | DoH over HTTP/1.1 | DoH3 by default, or DoH, DoQ or DoT |
-| Devices with a hardcoded DNS server | not redirected by this setting | caught on ports 53 and 853 with [forced DNS](#turn-on-forced-dns) |
+| Devices with a hardcoded DNS server | not redirected by this setting | caught on port 53 by every install, and on port 853 (DNS-over-TLS) once [forced DNS](#turn-on-forced-dns) is on |
 | Local DNS Records in Alta Control | work | do not work, see [Not Supported](#not-supported) |
 
 The first row is the one to weigh. If you want your devices' DNS to reach
@@ -187,7 +187,7 @@ identity is an open question in [#60](https://github.com/Matthew-Hsu/alta-route1
 | You might want | What actually happens |
 |---|---|
 | **Routing a device by name** | Devices are matched by MAC address or by subnet. The names in the ControlD dashboard come from discovery and cannot be used as a rule target. Watch for phones using a private or randomised Wi-Fi address: the MAC changes and the device silently stops matching its rule. |
-| **Catching a device that uses DoH** | Forced DNS catches plain DNS (port 53) and DoT (port 853). DoH is indistinguishable from ordinary HTTPS on port 443 and cannot be redirected without breaking the web. Most TVs and IoT gear use DoT, so this is a minority, but a browser set to DoH is out of reach. |
+| **Catching a device that uses DoH** | Every install catches plain DNS (port 53), and forced DNS adds DoT (port 853). DoH is indistinguishable from ordinary HTTPS on port 443 and cannot be redirected without breaking the web. Most TVs and IoT gear use DoT, so this is a minority, but a browser set to DoH is out of reach. |
 | **Encrypted DNS from your devices to the router** | Clients speak plain DNS to the router; encryption starts there, on the way out to ControlD. You cannot point a laptop at the router over DoH or DoT. |
 | **Coverage of something that is not a LAN bridge** | Interception follows the router's LAN and VLAN bridges. A WireGuard tunnel, or anything else the router does not present as a LAN bridge, is not intercepted. |
 | **Local DNS Records in Alta Control** | Records you add in Alta Control under Settings → Networks → DNS answer on the router but not for your devices. The firmware keeps them in dnsmasq, and `ctrld` answers your devices without asking dnsmasq. Your devices' own names still resolve, because `ctrld` answers those from the DHCP leases. Making records work is tracked in [#57](https://github.com/Matthew-Hsu/alta-route10-controld/issues/57). |
@@ -203,9 +203,9 @@ installer, a few things matter before you hand it off:
 - **The resolver ID comes from you, not the agent.** It's from your ControlD
   dashboard. An agent should ask for it, not invent one.
 - **Forced DNS affects every device on the network, not just one.** Enabling
-  it (`reconfigure.sh --force-dns`) redirects DNS for the whole LAN. An agent
-  should only turn this on if you asked for it specifically, separate from a
-  basic DoH setup request.
+  it (`reconfigure.sh --force-dns`) redirects DNS-over-TLS for the whole LAN.
+  An agent should only turn this on if you asked for it specifically, separate
+  from a basic DoH setup request.
 - **`--force` skips confirmation prompts.** That's for you to decide, not
   something an agent should use by default to avoid asking a question. On
   `--force-dns` and `--auto-update` it is riskier still, because those two
@@ -388,8 +388,10 @@ refuses the switch and exits non-zero while your DNS keeps working.
 
 ### Turn On Forced DNS
 
-Catches smart TVs, IoT gear, and browsers that bypass the router's assigned
-DNS with a hardcoded server or DNS-over-TLS. It's off by default because it
+Catches smart TVs and IoT gear that bypass the router's assigned DNS with
+DNS-over-TLS on port 853. A device with a hardcoded plain-DNS server is caught
+without it, because every install redirects port 53 on each LAN bridge
+whatever server the query was sent to. It's off by default because it
 redirects every device on the network at once, not just the one you're
 chasing down.
 

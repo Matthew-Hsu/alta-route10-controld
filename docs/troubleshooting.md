@@ -47,7 +47,11 @@
    > them back. `remove_dns_redirects` deletes our rules one at a time and
    > leaves everything else in place.
 
-4. **Full reset** - reboot the router. If post-cfg.sh has issues, hold off and re-examine the script.
+4. **Full reset**: reboot the router. `post-cfg.sh` runs again at boot and puts
+   the redirects back only once ctrld answers, so a ctrld that still fails
+   leaves your devices on dnsmasq. If `/cfg/post-cfg.sh` has been edited by
+   hand, read it before rebooting: the firmware runs it while applying its own
+   config, so a script that hangs holds up the router's boot.
 
 ## ctrld keeps crashing
 

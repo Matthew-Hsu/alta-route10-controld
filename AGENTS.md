@@ -232,12 +232,13 @@ seemed useful there is a second place to remember, and the copy is the one
 that goes stale, because the person changing the behaviour is looking at the
 file nearest the code.
 
-The same applies to what a change makes true. This branch made a trailing
-comment survive a rewrite, which turned a sentence in
-`docs/technical-details.md` from correct to wrong and a sentence in
-`README.md` from wrong to correct. Both needed finding. Grepping for the
-behaviour you changed finds the first kind; the second kind needs you to ask
-what the docs currently promise that the code could not previously deliver.
+The same applies to what a change makes true. 2d80aab stopped a rewrite of
+`controld.env` deleting a setting that had a trailing comment after it, which
+turned a sentence in `docs/technical-details.md` from correct to wrong and a
+sentence in `README.md` from wrong to correct. Both needed finding. Grepping
+for the behaviour you changed finds the first kind; the second kind needs you
+to ask what the docs currently promise that the code could not previously
+deliver.
 
 ## Scope discipline
 

@@ -3,7 +3,8 @@ Title: type(scope): subject, per Conventional Commits and CONTRIBUTING.md.
 Types used here: fix, feat, refactor, docs, test, ci, chore.
 Scopes name the area, not the file: dns, config, update, watchdog, cron,
 uninstall, setup, version, repair, test, bootstrap, readouts. docs takes the
-file it changes as its scope, and ci takes none.
+file it changes as its scope, and ci takes none. A PR spanning several areas
+or files leaves the scope out.
 -->
 
 ## What was broken or missing

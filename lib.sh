@@ -27,13 +27,13 @@ DEGRADED_FLAG="${DEGRADED_FLAG:-/tmp/controld-degraded}"
 # move off 5354 exports it before sourcing this file); load_env applies the same
 # default for anything that reads /cfg/controld.env.
 DNS_PORT="${DNS_PORT:-5354}"
-# The file fw3 runs when the firewall starts, at boot and on a restart but not
-# on a reload, and the marker for the block this project owns inside it.
-# FW_USER is overridable so tests never touch /etc.
 # awk implementation to use. The router runs BusyBox awk, which handles a
 # regex passed through -v differently from GNU awk; overridable so the tests
 # can run the same assertions under both.
 AWK="${AWK:-awk}"
+# The file fw3 runs when the firewall starts, at boot and on a restart but not
+# on a reload, and the marker for the block this project owns inside it.
+# FW_USER is overridable so tests never touch /etc.
 FW_USER="${FW_USER:-/etc/firewall.user}"
 FW_MARKER="controld-dns-redirect"
 # Identifies /cfg/rc.local as ours. /etc/rc.local sources that path only if it
@@ -890,9 +890,6 @@ bench_protocol() {
     return 0
 }
 
-# Does a resolver answer over a protocol? Asked of a throwaway ctrld on
-# BENCH_PORT, so production DNS on DNS_PORT is never touched.
-#
 # Whether a benchmark's fastest protocol is worth switching to from the one
 # running now. It has to be at least 5 ms and 20% faster. On a Route 10 the
 # benchmark recommended a switch over a 1 ms lead, and reconfigure.sh
@@ -908,6 +905,9 @@ bench_worth_switching() {
     return 0
 }
 
+# Does a resolver answer over a protocol? Asked of a throwaway ctrld on
+# BENCH_PORT, so production DNS on DNS_PORT is never touched.
+#
 # This is the check to run before changing anything. A resolver ID ControlD
 # does not know, or a protocol the network blocks, only shows up once ctrld is
 # running on it, and by then the redirects point every client at it. Installing
@@ -1227,12 +1227,6 @@ dns_redirect_commands() {
     done
 }
 
-# Ensure the port-53 redirect exists on every LAN bridge.
-#
-# Rules are checked per interface and per protocol rather than "is there any
-# rule mentioning the port", so a VLAN added after install gets covered on the
-# next call (boot, or the 5-minute watchdog) instead of silently bypassing ctrld.
-# Returns 0 if anything was added.
 # Is this bridge's port 53 redirect sitting below a firewall zone chain?
 #
 # PREROUTING is evaluated in order, and a zone chain can carry a redirect of its
@@ -1249,6 +1243,12 @@ redirect_outranked() {
     '
 }
 
+# Ensure the port-53 redirect exists on every LAN bridge.
+#
+# Rules are checked per interface and per protocol rather than "is there any
+# rule mentioning the port", so a VLAN added after install gets covered on the
+# next call (boot, or the 5-minute watchdog) instead of silently bypassing ctrld.
+# Returns 0 if anything was added.
 ensure_iptables() {
     local port="${1:-$DNS_PORT}"
     local added=0

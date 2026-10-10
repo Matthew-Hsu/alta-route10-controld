@@ -6,7 +6,7 @@
 #   --protocol      Change DNS protocol (interactive or --to <type>)
 #   --resolver      Change resolver ID (interactive or --to <id>)
 #   --policy        Manage split DNS policies
-#   --benchmark     Run benchmark and apply fastest
+#   --benchmark     Run benchmark, switch if one is clearly faster
 #   --force-dns     Toggle forced DNS (hijack port 53 + 853 for all clients)
 #   --auto-update   Toggle the weekly ctrld auto-update
 #   --repair        Re-apply DNS redirects to every LAN bridge
@@ -55,7 +55,7 @@ usage() {
     --show          Display current configuration
     --protocol      Change DNS protocol (prompts, or use --to <type>)
     --resolver      Change resolver ID (prompts, or use --to <id>)
-    --benchmark     Benchmark all protocols, apply fastest
+    --benchmark     Benchmark all protocols, switch if one is clearly faster
     --policy        Manage split DNS policies (add/remove/list)
     --force-dns     Toggle forced DNS (also redirects DoT, port 853), or --to on|off
     --auto-update   Toggle the weekly ctrld auto-update, or --to on|off
@@ -76,7 +76,7 @@ usage() {
     reconfigure.sh --protocol               # interactive protocol change
     reconfigure.sh --protocol --to doq      # switch to DoQ immediately
     reconfigure.sh --resolver --to xyz789   # change resolver ID
-    reconfigure.sh --benchmark              # find fastest, apply it
+    reconfigure.sh --benchmark              # switch if one is clearly faster
     reconfigure.sh --policy                 # manage split DNS rules
     reconfigure.sh --force-dns              # toggle forced DNS hijacking
     reconfigure.sh --auto-update            # toggle the weekly ctrld update
@@ -301,7 +301,7 @@ do_protocol() {
         printf "  ${BOLD}2)${RESET} DoQ (QUIC)    — lowest overhead\n"
         printf "  ${BOLD}3)${RESET} DoH (HTTP/2)  — most compatible\n"
         printf "  ${BOLD}4)${RESET} DoT (TLS)     — oldest, most widely supported\n"
-        printf "  ${BOLD}5)${RESET} Benchmark     — test and pick fastest\n\n"
+        printf "  ${BOLD}5)${RESET} Benchmark     — test, switch if one is clearly faster\n\n"
         printf "  Choice: "
         read -r choice
         case "$choice" in
@@ -882,7 +882,7 @@ if [ -z "$ACTION" ]; then
     printf "  ${BOLD}What do you want to change?${RESET}\n\n"
     printf "    ${BOLD}1)${RESET} Change DNS protocol\n"
     printf "    ${BOLD}2)${RESET} Change resolver ID\n"
-    printf "    ${BOLD}3)${RESET} Run benchmark, apply fastest\n"
+    printf "    ${BOLD}3)${RESET} Run benchmark, switch if one is clearly faster\n"
     printf "    ${BOLD}4)${RESET} Manage split DNS policies\n"
     printf "    ${BOLD}5)${RESET} Toggle forced DNS hijacking\n"
     printf "    ${BOLD}6)${RESET} Repair DNS redirects (cover all VLANs)\n"

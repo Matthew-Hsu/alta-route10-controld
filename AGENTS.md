@@ -147,6 +147,11 @@ a message: a new marker grepped out of a file, a new section header used as a
 range anchor, a new printed line a test keys on. Add it to the list above too,
 so a person knows without reading the assertion.
 
+The rule against rewording an interface is for a prose pass. A message that is
+wrong, one that tells the reader something the code does not do, is a bug: fix
+it in a `fix` commit of its own, update the test that reads it, and say in the
+commit what it used to claim.
+
 A guard firing on a change you meant to make is the guard working. Update it
 and say in the commit what moved. Deleting one to get green is how this project
 ends up back where it started, with a documented rule and nothing enforcing it.

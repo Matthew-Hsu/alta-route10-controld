@@ -5558,8 +5558,32 @@ printf '#!/bin/sh\nexit 0\n' > "$PD/bin/ping"
 assert_false "an interrupted run releases it" [ -e "$PD/tmp/post-cfg.lock" ]
 assert_not_contains "and stops there, rather than starting ctrld without it" \
     "$(cat "$PD/log" 2>/dev/null)" "ctrld started"
+
+# Before it restarts ctrld, a run waits for the bootstrap host to answer ping,
+# and gives up after the 60 seconds its log line names. That bound counted
+# tries, and BusyBox's ping -c1 waits 10 seconds for a reply unless -W says
+# otherwise, so against an upstream that drops ICMP the 30 tries took about six
+# minutes. Real time cannot show it here, where sleep is a stub, so the stubs
+# record what each call would cost on the router: ping its reply timeout, sleep
+# its argument. The wait is every ping and every sleep between two of them.
+rm -f "$PD/tmp/ctrld.started" "$PD/timeline"
+printf '#!/bin/sh\n_w=10\nwhile [ $# -gt 0 ]; do case "$1" in -W) _w="$2"; shift 2 ;; *) shift ;; esac; done\necho "ping $_w" >> "%s/timeline"\nexit 1\n' \
+    "$PD" > "$PD/bin/ping"
+printf '#!/bin/sh\necho "sleep $1" >> "%s/timeline"\n' "$PD" > "$PD/bin/sleep"
+pk_run >/dev/null
+printf '#!/bin/sh\nexit 0\n' > "$PD/bin/ping"
+printf '#!/bin/sh\nexit 0\n' > "$PD/bin/sleep"
+PK_WAIT="$($AWK '
+    $1 == "ping"            { if (seen) total += gap; seen = 1; gap = 0; total += $2; next }
+    seen && $1 == "sleep"   { gap += $2 }
+    END { print total + 0 }' "$PD/timeline" 2>/dev/null)"
+assert_contains "a bootstrap host that never answers is given up on" \
+    "$(cat "$PD/log" 2>/dev/null)" "no ICMP reply from"
+PK_BOUNDED=no; [ "${PK_WAIT:-999}" -le 60 ] && PK_BOUNDED=yes
+assert_eq "after about the 60 seconds the log names, not ping's timeout per try (${PK_WAIT}s)" \
+    "yes" "$PK_BOUNDED"
 kill "$(cat "$PD/ctrld.pid" 2>/dev/null)" 2>/dev/null || true
-unset PK1 PK2 PK3 PK4 PK5 PK6 PK7 PK_HOLDER PK_RUN _pk_n _pk_tool
+unset PK1 PK2 PK3 PK4 PK5 PK6 PK7 PK_HOLDER PK_RUN PK_WAIT PK_BOUNDED _pk_n _pk_tool
 unset -f pk_run
 unset _pdi
 unset PD

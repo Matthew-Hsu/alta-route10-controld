@@ -785,7 +785,12 @@ else
     # here indefinitely. Carrying on is safe: ctrld's health check below
     # decides whether the redirects go in, and its else branch already falls
     # back to https-dns-proxy.
-    if ! wait_for 30 2 ping -c1 "${BOOTSTRAP_IP}"; then
+    #
+    # -W 1 caps each try at a second. BusyBox's ping otherwise waits 10 seconds
+    # for a reply, so against an upstream that drops ICMP the 30 tries this
+    # used to make took about six minutes, not the minute the log line names.
+    # 20 tries of a second each, two seconds apart, come to about 60.
+    if ! wait_for 20 2 ping -c1 -W 1 "${BOOTSTRAP_IP}"; then
         logger -t post-cfg "no ICMP reply from ${BOOTSTRAP_IP} after 60s — starting ctrld anyway"
     fi
 

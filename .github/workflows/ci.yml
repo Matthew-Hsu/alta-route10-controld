@@ -101,3 +101,24 @@ jobs:
           # opens a pull request writes this text.
           PR_BODY: ${{ github.event.pull_request.body }}
         run: sh .github/scripts/check-issue-refs.sh
+
+  no-urls:
+    # CONTRIBUTING.md rules out URLs in commit messages and pull request
+    # descriptions, and many tools append a session link to both by default.
+    # Only a pull request has commits of its own and a description to check.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The pull request's own commits, from its base to its head.
+          fetch-depth: 0
+      - name: no URLs in commit messages or the description
+        # As in issue-refs, a body edited after the pull request opened is
+        # read again at the next push.
+        env:
+          # Through the environment, never pasted into the script: anyone who
+          # opens a pull request writes this text.
+          PR_BODY: ${{ github.event.pull_request.body }}
+          RANGE: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+        run: sh .github/scripts/check-no-urls.sh "$RANGE"

@@ -54,8 +54,8 @@ what's written there.
 
 **But never put a URL in a commit message or PR body**, including a session
 link your harness adds automatically. Many harnesses append one; remove it.
-This is a hard rule. See `CONTRIBUTING.md` for why. Cite commits by hash and
-files by path instead.
+This is a hard rule, and CI fails a pull request that breaks it. See
+`CONTRIBUTING.md` for why. Cite commits by hash and files by path instead.
 
 ## Prose
 

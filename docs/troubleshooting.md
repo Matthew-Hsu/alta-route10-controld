@@ -61,7 +61,7 @@
 
 - Port 5354 is already in use:
   ```sh
-  netstat -tlnp | grep 5354
+  netstat -tulnp | grep 5354
   ```
 
 - Network not ready when ctrld starts. At boot `post-cfg.sh` waits up to 60

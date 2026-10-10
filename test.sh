@@ -5219,6 +5219,8 @@ sv_run() {
     # leaves its ctrld running for that, which is a re-install. SV_DOH=1 gives
     # dnsmasq the three https-dns-proxy ports, which is Use DoH on, and
     # SV_FALLBACK_BROKEN=1 makes https-dns-proxy stop answering on them.
+    # SV_PORT_TAKEN=1 puts something other than ctrld on 5354, so the installer
+    # offers 5355, where ctrld then listens.
     _sv="$1"
     if [ -z "${SV_REUSE:-}" ]; then
     rm -rf "$_sv"
@@ -5241,8 +5243,8 @@ sv_run() {
         "$_sv" > "$_sv/bin/pidof"
     # The benchmark port is taken while its throwaway config exists, which is
     # from the moment probe_resolver writes it to the moment it removes it.
-    printf '#!/bin/sh\n"$(dirname "$0")/pidof" >/dev/null && echo "udp 0 0 0.0.0.0:5354 0.0.0.0:* 1/ctrld"\n[ -f "%s/tmp/ctrld-bench.toml" ] && echo "udp 0 0 127.0.0.1:5360 0.0.0.0:* 1/ctrld"\nexit 0\n' \
-        "$_sv" > "$_sv/bin/netstat"
+    printf '#!/bin/sh\n"$(dirname "$0")/pidof" >/dev/null && echo "udp 0 0 0.0.0.0:5354 0.0.0.0:* 1/ctrld"\n[ -f "%s/tmp/ctrld-bench.toml" ] && echo "udp 0 0 127.0.0.1:5360 0.0.0.0:* 1/ctrld"\nif [ -f "%s/port.taken" ]; then echo "udp 0 0 0.0.0.0:5354 0.0.0.0:* 2/other"; "$(dirname "$0")/pidof" >/dev/null && echo "udp 0 0 0.0.0.0:5355 0.0.0.0:* 1/ctrld"; fi\nexit 0\n' \
+        "$_sv" "$_sv" > "$_sv/bin/netstat"
     printf '#!/bin/sh\ncase "${2:-}" in\n  *#5360) [ -f "%s/tmp/ctrld-bench.toml" ] || exit 1\n          [ -f "%s/bench.fail" ] && grep -qE "$(cat "%s/bench.fail")" "%s/tmp/ctrld-bench.toml" && exit 1\n          exit 0 ;;\n  *#505[0-9]) [ ! -f "%s/fallback.broken" ]; exit $? ;;\nesac\n"$(dirname "$0")/pidof" >/dev/null && [ ! -f "%s/dns.broken" ]\n' \
         "$_sv" "$_sv" "$_sv" "$_sv" "$_sv" "$_sv" > "$_sv/bin/nslookup"
     # The ctrld release tarball is the only download that succeeds. Everything
@@ -5263,8 +5265,10 @@ sv_run() {
     for _svf in dnsmasq https-dns-proxy; do printf '#!/bin/sh\nexit 0\n' > "$_sv/initd/$_svf"; done
     chmod +x "$_sv/bin"/* "$_sv/initd"/*
     fi
-    rm -f "$_sv/dns.broken" "$_sv/bench.fail" "$_sv/doh.servers" "$_sv/fallback.broken"
+    rm -f "$_sv/dns.broken" "$_sv/bench.fail" "$_sv/doh.servers" "$_sv/fallback.broken" \
+          "$_sv/port.taken"
     [ "$2" = "broken" ] && : > "$_sv/dns.broken"
+    [ -n "${SV_PORT_TAKEN:-}" ] && : > "$_sv/port.taken"
     [ -n "${SV_DOH:-}" ] && printf '127.0.0.1#5053 127.0.0.1#5054 127.0.0.1#5055\n' > "$_sv/doh.servers"
     [ -n "${SV_FALLBACK_BROKEN:-}" ] && : > "$_sv/fallback.broken"
     [ -n "${SV_BENCH_FAIL:-}" ] && printf '%s' "$SV_BENCH_FAIL" > "$_sv/bench.fail"
@@ -5375,6 +5379,74 @@ assert_not_contains "before the step that stops ctrld" "$SV_RE" "Existing Contro
 assert_contains "leaving the installed ID in place" "$(cat "$SV/reinstall/cfg/controld.env")" "RESOLVER_ID=abc123"
 assert_true "and the running ctrld still running" kill -0 "$(cat "$SV/reinstall/ctrld.pid")"
 kill "$(cat "$SV/reinstall/ctrld.pid" 2>/dev/null)" 2>/dev/null || true
+
+describe "yes and no — read however they are typed"
+
+# Each prompt compared its answer against one letter, or in reconfigure.sh
+# against a short list, so a word typed in full went whichever way that
+# comparison fell. "no" at the installer's Overwrite prompt went ahead and
+# overwrote, "yes" at its split-DNS prompt skipped the wizard, and "yes" at its
+# port prompt stopped the install. reconfigure.sh took the words, but only in
+# one case, and "No" is what a phone keyboard sends.
+# The marker stands in for the install already there: anything that rewrites
+# post-cfg.sh takes it out.
+SV_KEEP=1 sv_run "$SV/answer-no" good >/dev/null
+printf '# installed before this run\n' >> "$SV/answer-no/cfg/post-cfg.sh"
+SV_ANS="$(SV_KEEP=1 SV_REUSE=1 sv_run "$SV/answer-no" good 'abc123\n\n1\nno\n')"
+assert_contains "\"no\" at the installer's Overwrite prompt stops it" "$SV_ANS" "Aborting."
+assert_contains "and it exits 0, since nothing went wrong" "$SV_ANS" "rc=0"
+assert_contains "leaving the existing install as it was" \
+    "$(cat "$SV/answer-no/cfg/post-cfg.sh")" "installed before this run"
+kill "$(cat "$SV/answer-no/ctrld.pid" 2>/dev/null)" 2>/dev/null || true
+
+# A fresh install: resolver, default bootstrap, DoH3, then yes to split DNS and
+# an empty resolver ID, which closes the wizard straight away.
+SV_ANS="$(sv_run "$SV/answer-yes" good 'abc123\n\n1\nyes\n\n')"
+assert_contains "\"yes\" at the split-DNS prompt opens the wizard" "$SV_ANS" \
+    "Resolver ID (or empty to finish)"
+assert_contains "and the install completes" "$SV_ANS" "Setup Complete!"
+
+# Something else on 5354, so the installer offers 5355.
+SV_ANS="$(SV_PORT_TAKEN=1 sv_run "$SV/answer-port" good 'abc123\n\n1\nn\nyes\n')"
+assert_contains "\"yes\" at the port prompt takes the port offered" "$SV_ANS" "Using port 5355"
+assert_contains "and the install completes on it" "$SV_ANS" "Setup Complete!"
+assert_contains "with ctrld.toml on that port" "$(cat "$SV/answer-port/cfg/ctrld.toml")" "port = 5355"
+SV_ANS="$(SV_PORT_TAKEN=1 sv_run "$SV/answer-port-no" good 'abc123\n\n1\nn\nno\n')"
+assert_contains "while \"no\" there still stops the install" "$SV_ANS" "Cannot proceed"
+assert_contains "with a non-zero exit" "$SV_ANS" "rc=1"
+
+# The uninstaller, run over the sandbox an sv_run install left. /etc/controld
+# is the one path of its own that sv_run does not rewrite. $2 is what is typed
+# at its prompt, and SU_BIN, when set, goes in front of the sandbox's stubs.
+su_run() {
+    _su="$1"
+    sed -e "s|/etc/controld|${_su}/etc-controld|g" "$_su/src/uninstall.sh" > "$_su/src/uninstall-run.sh"
+    ( PATH="${SU_BIN:+${SU_BIN}:}$_su/bin:$PATH"; FW_USER="$_su/firewall.user"
+      SYSFS_NET="$_su/sys"; DEGRADED_FLAG="$_su/tmp/degraded"
+      export FW_USER SYSFS_NET DEGRADED_FLAG
+      printf '%b' "$2" | sh "$_su/src/uninstall-run.sh"
+      echo "rc=$?" ) 2>&1 || true
+}
+sv_run "$SV/answer-uninstall" good >/dev/null
+SV_ANS="$(su_run "$SV/answer-uninstall" 'yes\n')"
+assert_contains "\"yes\" at the uninstaller's prompt goes ahead" "$SV_ANS" "Removing files"
+assert_false "and the install is gone" [ -f "$SV/answer-uninstall/cfg/controld.env" ]
+
+# reconfigure.sh, both ways round. The auto-update toggle is used because it
+# touches nothing but the env file and the stub crontab.
+ra_ask() { ( PATH="$RA_BIN:$PATH"; printf '%s\n' "$1" | sh "$RA_CFG/reconfigure.sh" --auto-update ) 2>&1 || true; }
+sed -i 's/^AUTO_UPDATE=.*/AUTO_UPDATE=1/' "$RA_CFG/controld.env"
+printf '0 3 * * 1 %s/controld-update.sh\n*/5 * * * * %s/watchdog.sh\n' "$RA_CFG" "$RA_CFG" > "$RA_TAB"
+ra_ask "Yes" >/dev/null
+assert_false "\"Yes\" at reconfigure.sh's [y/N] prompt is a yes" \
+    installed_auto_update "$RA_CFG/controld.env"
+sed -i 's/^AUTO_UPDATE=.*/AUTO_UPDATE=0/' "$RA_CFG/controld.env"
+printf '*/5 * * * * %s/watchdog.sh\n' "$RA_CFG" > "$RA_TAB"
+RA_ANS="$(ra_ask "No")"
+assert_contains "and \"No\" at its [Y/n] prompt is a no" "$RA_ANS" "No changes made"
+assert_false "that leaves the setting where it was" installed_auto_update "$RA_CFG/controld.env"
+unset -f ra_ask
+unset SV_ANS RA_ANS
 
 describe "post-cfg.sh — follows Use DoH in Alta Control, never rewrites dnsmasq's servers"
 

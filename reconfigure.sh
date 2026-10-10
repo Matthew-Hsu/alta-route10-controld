@@ -319,7 +319,9 @@ do_protocol() {
     [ "$FORCE" -eq 1 ] || {
         printf "\n  Switch from ${BOLD}%s${RESET} to ${BOLD}%s${RESET}? [Y/n]: " "$PLABEL" "$(proto_label "$new_type")"
         read -r confirm
-        case "$confirm" in n|N|no|NO) print_info "Cancelled."; return ;; esac
+        # Every answer here is read in any case. The list was n, N, no and NO,
+        # so "No", which is what a phone keyboard sends, went ahead.
+        case "$confirm" in [Nn]|[Nn][Oo]) print_info "Cancelled."; return ;; esac
     }
 
     cp /cfg/ctrld.toml /cfg/ctrld.toml.bak
@@ -356,7 +358,7 @@ do_resolver() {
     [ "$FORCE" -eq 1 ] || {
         printf "\n  Change resolver from ${BOLD}%s${RESET} to ${BOLD}%s${RESET}? [Y/n]: " "$RESOLVER_ID" "$new_id"
         read -r confirm
-        case "$confirm" in n|N|no|NO) print_info "Cancelled."; return ;; esac
+        case "$confirm" in [Nn]|[Nn][Oo]) print_info "Cancelled."; return ;; esac
     }
 
     cp /cfg/ctrld.toml /cfg/ctrld.toml.bak
@@ -448,7 +450,7 @@ do_benchmark() {
         read -r confirm
     fi
 
-    case "$confirm" in n|N|no|NO) print_info "Cancelled. No changes made."; return ;; esac
+    case "$confirm" in [Nn]|[Nn][Oo]) print_info "Cancelled. No changes made."; return ;; esac
 
     cp /cfg/ctrld.toml /cfg/ctrld.toml.bak
     DNS_TYPE="$fastest"
@@ -512,7 +514,7 @@ do_policy() {
                 printf "\n  Adding: MAC %s -> %s (%s)\n" "$mac" "$policy_name" "$policy_resolver"
                 printf "  Confirm? [Y/n]: "
                 read -r confirm
-                case "$confirm" in n|N|no|NO) continue ;; esac
+                case "$confirm" in [Nn]|[Nn][Oo]) continue ;; esac
 
                 # The upstream is appended before the rule is written, so a
                 # failed write would leave an orphan [upstream.N] behind while
@@ -578,7 +580,7 @@ EOF
                 printf "\n  Adding: %s -> %s (%s)\n" "$cidr" "$policy_name" "$policy_resolver"
                 printf "  Confirm? [Y/n]: "
                 read -r confirm
-                case "$confirm" in n|N|no|NO) continue ;; esac
+                case "$confirm" in [Nn]|[Nn][Oo]) continue ;; esac
 
                 cp /cfg/ctrld.toml /cfg/ctrld.toml.bak
                 cat >> /cfg/ctrld.toml << EOF
@@ -612,7 +614,7 @@ EOF
                 fi
                 printf "  ${RED}Remove ALL policy rules and extra upstreams?${RESET} [y/N]: "
                 read -r confirm
-                case "$confirm" in y|Y|yes|YES) ;; *) continue ;; esac
+                case "$confirm" in [Yy]|[Yy][Ee][Ss]) ;; *) continue ;; esac
 
                 # Regenerate base config (drops all policies and extra upstreams)
                 cp /cfg/ctrld.toml /cfg/ctrld.toml.bak
@@ -671,7 +673,7 @@ do_force_dns() {
             read -r confirm
         fi
         case "$confirm" in
-            y|Y|yes|YES)
+            [Yy]|[Yy][Ee][Ss])
                 set_forced_dns_flag 0
                 disable_forced_dns
                 print_ok "Forced DNS disabled. Devices may use their own DNS."
@@ -692,7 +694,7 @@ do_force_dns() {
         fi
         # [Y/n], defaulting to Yes
         case "$confirm" in
-            n|N|no|NO)
+            [Nn]|[Nn][Oo])
                 print_info "No changes made."
                 ;;
             *)
@@ -740,7 +742,7 @@ do_auto_update() {
         fi
         # [Y/n], defaulting to Yes
         case "$confirm" in
-            n|N|no|NO)
+            [Nn]|[Nn][Oo])
                 print_info "No changes made."
                 ;;
             *)
@@ -768,7 +770,7 @@ do_auto_update() {
             read -r confirm
         fi
         case "$confirm" in
-            y|Y|yes|YES)
+            [Yy]|[Yy][Ee][Ss])
                 set_auto_update_flag 0
                 AUTO_UPDATE=0
                 cron_remove /cfg/controld-update.sh

@@ -196,7 +196,7 @@ if [ "$ARCH" != "aarch64" ]; then
     print_warn "Expected aarch64, got ${ARCH}. This may not work."
     printf "  Continue? [y/N]: "
     read -r CONTINUE
-    [ "$CONTINUE" = "y" ] || [ "$CONTINUE" = "Y" ] || exit 1
+    case "$CONTINUE" in [Yy]|[Yy][Ee][Ss]) ;; *) exit 1 ;; esac
 fi
 
 if ! is_alta_router; then
@@ -397,11 +397,12 @@ if [ -f /cfg/post-cfg.sh ] || [ -f /cfg/ctrld ]; then
     if [ -z "$FLAG_RESOLVER" ]; then
         printf "  Overwrite? [Y/n]: "
         read -r OVERWRITE
-        OVERWRITE="${OVERWRITE:-Y}"
-        if [ "$OVERWRITE" = "n" ] || [ "$OVERWRITE" = "N" ]; then
-            print_info "Aborting."
-            exit 0
-        fi
+        # Every yes/no prompt here reads y, yes, n and no in any case. They
+        # each compared against one letter, so "no" typed in full at this one
+        # went ahead and overwrote the install.
+        case "$OVERWRITE" in
+            [Nn]|[Nn][Oo]) print_info "Aborting."; exit 0 ;;
+        esac
     fi
     stop_ctrld
 fi
@@ -841,6 +842,7 @@ if [ "$CARRIED_POLICY" = "1" ]; then
 elif [ -z "$FLAG_RESOLVER" ]; then
     printf "  Configure split DNS policies? [y/N]: "
     read -r DO_SPLIT
+    case "$DO_SPLIT" in [Yy]|[Yy][Ee][Ss]) DO_SPLIT=y ;; esac
 fi
 
 POLICY_UPSTREAMS=""
@@ -864,7 +866,7 @@ POLICY_CONF=""
 UPSTREAM_IDX="$(next_toml_index /cfg/ctrld.toml upstream)"
 NETWORK_IDX="$(next_toml_index /cfg/ctrld.toml network)"
 
-if [ "$DO_SPLIT" = "y" ] || [ "$DO_SPLIT" = "Y" ]; then
+if [ "$DO_SPLIT" = "y" ]; then
     while true; do
         printf "\n"
         print_info "Adding DNS policy upstream..."
@@ -1669,14 +1671,15 @@ if port_in_use "$DNS_PORT"; then
             port_in_use "$_alt_port" || break
             _alt_port=$((_alt_port + 1))
         done
+        _use_alt=""
         if [ -z "$FLAG_RESOLVER" ]; then
             printf "  Use port ${_alt_port} instead? [Y/n]: "
             read -r _use_alt
-            _use_alt="${_use_alt:-Y}"
-        else
-            _use_alt="Y"
         fi
-        if [ "$_use_alt" = "Y" ] || [ "$_use_alt" = "y" ]; then
+        # Anything but a no takes the default, like every other [Y/n] prompt.
+        # Only Y and y used to count as yes here, so "yes" stopped the install.
+        case "$_use_alt" in [Nn]|[Nn][Oo]) _use_alt=n ;; *) _use_alt=y ;; esac
+        if [ "$_use_alt" = "y" ]; then
             DNS_PORT="$_alt_port"
             print_info "Using port ${DNS_PORT}"
             # Rewrite ctrld.toml with new port

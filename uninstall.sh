@@ -193,8 +193,9 @@ if [ "$FORCE" -ne 1 ]; then
     printf "  "
     printf "Remove all ControlD configuration? [y/N]: "
     read -r _confirm
+    # "yes" typed in full aborted here, as anything but y or Y did.
     case "$_confirm" in
-        y|Y) ;;
+        [Yy]|[Yy][Ee][Ss]) ;;
         *)   printf "\n"; print_ok "Aborted. No changes made."; exit 0 ;;
     esac
 fi

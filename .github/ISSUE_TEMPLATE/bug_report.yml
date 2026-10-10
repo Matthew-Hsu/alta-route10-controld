@@ -13,13 +13,13 @@ body:
 
         This project runs on one router in one person's spare time, and
         every defect CI could not see has appeared on hardware first. Only
-        "What did you run, and what happened?" is required beyond the
-        checkboxes below — if this happened on a real router, pasting
-        `status.sh`/`audit.sh` output too is the difference between one
-        round and three rounds of "can you also paste...", but a bug you
-        found by reading the code, or one that only shows up in `test.sh`,
-        won't have any of that to paste, and shouldn't need to invent
-        something just to submit this.
+        "Where did this happen?" and "What did you run, and what happened?"
+        are required beyond the checkboxes below — if this happened on a real
+        router, pasting `status.sh`/`audit.sh` output too is the difference
+        between one round and three rounds of "can you also paste...", but a
+        bug you found by reading the code, or one that only shows up in
+        `test.sh`, won't have any of that to paste, and shouldn't need to
+        invent something just to submit this.
 
   - type: checkboxes
     id: checked-first

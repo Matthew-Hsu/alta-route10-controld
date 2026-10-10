@@ -55,8 +55,11 @@ the first answer back. So your ISP sees each name looked up through this path,
 and when its answer arrives first, ControlD's filtering is skipped for that
 query. With Parallel Queries off, dnsmasq picks among the same servers instead,
 so your ISP's are still in use. Alta has said a later release adds a setting
-to turn the unencrypted requests off. This project leaves dnsmasq's settings to
-the firmware, so it does not turn them off itself.
+to turn the unencrypted requests off, and firmware 1.5i's release notes list
+"support for forcing proxied DNS traffic over DoH", which may be it. What that
+does to dnsmasq's servers, and so to this path, has not been checked. This
+project leaves dnsmasq's settings to the firmware, so it does not turn them off
+itself.
 
 ```
 LAN Devices --port 53--> +----------+  port 5053/5054/5055  +-----------------+   +-----------+

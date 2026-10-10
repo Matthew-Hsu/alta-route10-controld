@@ -1463,11 +1463,29 @@ DNS_PORT="${DNS_PORT:-5354}"
 
 check_dns_local() { nslookup google.com "127.0.0.1#${DNS_PORT}" >/dev/null 2>&1; }
 
+# Start the binary just put in place and wait up to 15 seconds for it to
+# answer. Every client is redirected to DNS_PORT throughout, so when a release
+# will not start, this wait is how long the LAN goes without DNS before the
+# rollback.
+#
+# This loop used to send a query every second whether or not the port was
+# open. A query to a closed port costs the resolver's own timeout, about 5s on
+# a Route 10, so the 15 passes took about 90 seconds. lib.sh's start_ctrld
+# checks the port first and stops at 15 seconds of wall clock, so it is used
+# when lib.sh is installed. The loop below is the fallback for a router
+# without it, and checks the port the same way.
 start_ctrld_wait() {
+    if command -v start_ctrld >/dev/null 2>&1; then
+        start_ctrld /cfg/ctrld.toml 15
+        return
+    fi
     nohup /cfg/ctrld run -c /cfg/ctrld.toml -d >/dev/null 2>&1 &
     _n=0
     while [ "$_n" -lt 15 ]; do
-        check_dns_local && return 0
+        if { netstat -tulnp 2>/dev/null; ss -tulnp 2>/dev/null; } | grep -q ":${DNS_PORT} " \
+            && check_dns_local; then
+            return 0
+        fi
         sleep 1
         _n=$((_n + 1))
     done

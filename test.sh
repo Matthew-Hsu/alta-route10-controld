@@ -904,6 +904,91 @@ assert_eq           "the weekly run stays silent when current" "" "$CU_CUR_CRON"
 assert_not_contains "and logs nothing about it either" \
     "$(cat "$CU_LOG" 2>/dev/null)" "already on"
 
+describe "controld-update.sh — a release that will not start is rolled back without a query per second"
+
+# Every client's DNS is redirected to the binary the updater has just replaced,
+# so a release that will not start leaves the LAN without DNS until the
+# rollback puts the old one back. The wait before that rollback asked DNS once
+# a second whatever the port was doing, the loop start_ctrld was fixed to stop
+# using. On a Route 10 a query to a closed port costs the resolver's own
+# timeout, so its 15 steps took about 90 seconds there and no time at all
+# here. The query count is what a sandbox can see: a release that never opens
+# the port must not be asked anything before the rollback begins.
+#
+# The updater and the library both run with /cfg and /tmp moved into a
+# sandbox, so nothing on a router running this suite is stopped or replaced.
+UW="$TMPDIR/update-wait"
+rm -rf "$UW"
+mkdir -p "$UW/cfg" "$UW/bin" "$UW/tmp" "$UW/pkg/dist/ctrld_9.9.9_linux_arm64"
+sed -n "/^cat > \/cfg\/controld-update.sh << 'UPDATESCRIPT'/,/^UPDATESCRIPT$/p" "$SCRIPT_DIR/setup.sh" \
+    | sed '1d;$d' \
+    | sed -e "s|/tmp/|${UW}/tmp/|g" -e "s|-C /tmp|-C ${UW}/tmp|g" -e "s|/cfg/|${UW}/cfg/|g" \
+    > "$UW/update.sh"
+sed -e "s|/tmp/|${UW}/tmp/|g" -e "s|/cfg/|${UW}/cfg/|g" "$SCRIPT_DIR/lib.sh" > "$UW/lib.sh"
+printf 'RESOLVER_ID=abc123\nCTRLD_VERSION=1.5.7\n' > "$UW/cfg/controld.env"
+: > "$UW/cfg/ctrld.toml"
+# The installed ctrld runs until it is killed. The release it is replaced with
+# exits at once, as a binary that cannot run on this router would.
+printf '#!/bin/sh\necho $$ > "%s/ctrld.pid"\nexec /bin/sleep 300\n' "$UW" > "$UW/cfg/ctrld"
+printf '#!/bin/sh\nexit 1\n' > "$UW/pkg/dist/ctrld_9.9.9_linux_arm64/ctrld"
+chmod +x "$UW/cfg/ctrld" "$UW/pkg/dist/ctrld_9.9.9_linux_arm64/ctrld"
+( cd "$UW/pkg" && tar czf "$UW/release.tgz" dist )
+# GitHub offers 9.9.9 and serves its tarball; checksums.txt is unreachable,
+# which the updater treats as unverifiable rather than as a mismatch.
+cat > "$UW/bin/wget" << UWWGETEOF
+#!/bin/sh
+_o=""; _u=""
+while [ \$# -gt 0 ]; do case "\$1" in -O) _o="\$2"; shift 2 ;; -*) shift ;; *) _u="\$1"; shift ;; esac; done
+case "\$_u" in
+    *releases/latest) printf '%s\n' '{"tag_name":"v9.9.9"}'; exit 0 ;;
+    *ctrld_9.9.9_linux_arm64.tar.gz) cp "$UW/release.tgz" "\$_o"; exit 0 ;;
+esac
+exit 1
+UWWGETEOF
+# A killed ctrld must read as gone, zombie or not, as in the post-cfg.sh tests.
+printf '#!/bin/sh\n_p="$(cat "%s/ctrld.pid" 2>/dev/null)"\n[ -n "$_p" ] && kill -0 "$_p" 2>/dev/null && ! grep -q "^State:.*Z" "/proc/$_p/status" 2>/dev/null && echo "$_p"\n' \
+    "$UW" > "$UW/bin/pidof"
+# The port is open, and DNS answers, only while that ctrld is alive.
+printf '#!/bin/sh\n"$(dirname "$0")/pidof" >/dev/null && echo "udp 0 0 0.0.0.0:5354 0.0.0.0:* 1/ctrld"\nexit 0\n' \
+    > "$UW/bin/netstat"
+# ss is silenced, or a router running this suite would see its own ctrld there.
+printf '#!/bin/sh\nexit 0\n' > "$UW/bin/ss"
+printf '#!/bin/sh\necho "nslookup $*" >> "%s/log"\n"$(dirname "$0")/pidof" >/dev/null\n' "$UW" > "$UW/bin/nslookup"
+printf '#!/bin/sh\necho "logger $*" >> "%s/log"\n' "$UW" > "$UW/bin/logger"
+printf '#!/bin/sh\nexit 0\n' > "$UW/bin/sleep"
+chmod +x "$UW/bin"/*
+
+# Runs one update over a running ctrld and prints how many DNS queries were made
+# before the rollback started.
+uw_run() {
+    rm -f "$UW/log" "$UW/ctrld.pid"
+    "$UW/cfg/ctrld" >/dev/null 2>&1 & _uw_old=$!
+    _uw_n=0
+    while [ ! -s "$UW/ctrld.pid" ] && [ "$_uw_n" -lt 5 ]; do /bin/sleep 1; _uw_n=$((_uw_n + 1)); done
+    ( PATH="$UW/bin:$PATH"; sh "$UW/update.sh" ) >/dev/null 2>&1 || true
+    wait "$_uw_old" 2>/dev/null || true
+    sed -n '1,/rolling back/p' "$UW/log" 2>/dev/null | grep -c '^nslookup' || true
+}
+
+cp "$UW/lib.sh" "$UW/cfg/lib.sh"
+UW_QUERIES="$(uw_run)"
+assert_contains "a release that will not start is rolled back" \
+    "$(cat "$UW/log" 2>/dev/null)" "failed to resolve after install — rolling back to v1.5.7"
+assert_contains "and the old binary answers again" \
+    "$(cat "$UW/log" 2>/dev/null)" "rolled back to v1.5.7, DNS restored"
+assert_eq "no DNS query is made while the new release has not opened the port" "0" "$UW_QUERIES"
+kill "$(cat "$UW/ctrld.pid" 2>/dev/null)" 2>/dev/null || true
+
+# Without lib.sh the updater has its own loop, and it must wait for the port too.
+rm -f "$UW/cfg/lib.sh"
+UW_QUERIES="$(uw_run)"
+assert_contains "without lib.sh it still rolls back" \
+    "$(cat "$UW/log" 2>/dev/null)" "rolled back to v1.5.7, DNS restored"
+assert_eq "and still asks nothing before the port opens" "0" "$UW_QUERIES"
+kill "$(cat "$UW/ctrld.pid" 2>/dev/null)" 2>/dev/null || true
+unset UW UW_QUERIES _uw_old _uw_n
+unset -f uw_run
+
 describe "rc.local — a reboot must not hand back a cron that was turned off"
 
 # The reinstall at boot is why deleting the cron was never an off switch: /etc

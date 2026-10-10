@@ -177,12 +177,21 @@ there must be something you watched happen on hardware, not something the
 suite covers. Do not add a row for work you merely intend to do; the list is
 only useful if every entry is load-bearing.
 
-On the router:
+On the router, `test.sh` needs the whole repository beside it, because it reads
+the sources and docs as well as the scripts an install puts in `/cfg`. Download
+the branch under test into `/tmp` and run it from there:
 
 ```sh
-sh /tmp/controld/test.sh     # unit tests plus on-router integration tests
-sh /cfg/status.sh            # per-bridge redirect coverage
+cd /tmp
+wget -O controld.tar.gz https://github.com/Matthew-Hsu/alta-route10-controld/archive/refs/heads/master.tar.gz
+tar xzf controld.tar.gz
+sh alta-route10-controld-master/test.sh   # unit tests plus on-router integration tests
+sh /cfg/status.sh                         # per-bridge redirect coverage
 ```
+
+For a branch, put its name in place of `master` in the URL. The directory it
+unpacks to has each `/` in the name turned into `-`, so `claude/example`
+unpacks to `alta-route10-controld-claude-example`.
 
 ## Releases
 

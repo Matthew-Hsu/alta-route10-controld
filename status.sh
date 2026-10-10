@@ -178,15 +178,25 @@ fi
 
 force_dns=$(uci -q get https-dns-proxy.config.force_dns 2>/dev/null || echo "0")
 if [ "$force_dns" = "1" ]; then
-    print_ok "Forced DNS: enabled (port 53 + 853 hijacked)"
-else
+    print_ok "Forced DNS: enabled (DoT on port 853 redirected too)"
+elif [ "${FORCED_DNS:-0}" = "1" ]; then
+    # Turned on in controld.env but not in force, as after a firmware update
+    # wipes /etc/config and before the watchdog puts it back.
     print_warn "Forced DNS: disabled (devices may bypass ControlD)"
+else
+    # Off is the default, so it is not a warning. Every install showed two
+    # yellow lines here for a setting it was never asked to turn on. The
+    # setting is easy to miss, though, so say what it would catch and how.
+    # Only port 853: reconfigure.sh's forced DNS screen says why port 53 is
+    # redirected either way.
+    print_info "Forced DNS: off (default) — plain DNS is redirected, DNS-over-TLS on port 853 is not"
+    print_info "Turn it on: sh /cfg/reconfigure.sh --force-dns --to on   (applies to every device)"
 fi
 
 dot_rules=$(iptables -t nat -L PREROUTING -n 2>/dev/null | grep -c 'dpt:853')
 if [ "$dot_rules" -gt 0 ]; then
     print_ok "DoT hijack: ${dot_rules} rule(s) for port 853"
-else
+elif [ "$force_dns" = "1" ] || [ "${FORCED_DNS:-0}" = "1" ]; then
     print_warn "DoT hijack: no port 853 rules (DoT devices can bypass)"
 fi
 

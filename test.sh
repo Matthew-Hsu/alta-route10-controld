@@ -4414,6 +4414,95 @@ assert_contains "status.sh flags it too" \
 assert_not_contains "and does not call that healthy" \
     "$(printf '%s\n' "$RDO_ST_Z" | sed -n '/Cron Jobs/,/^$/p')" "Weekly auto-update cron installed"
 
+describe "status.sh — forced DNS off by default is not a warning"
+
+# A sandboxed install that passes every check status.sh makes, so a line that
+# should not be yellow is the only thing that could make it so. env -i keeps
+# whatever the suite was started with out of it, so the sandbox is all the
+# readout has to answer from.
+ST_DIR="$TMPDIR/st"; ST_CFG="$ST_DIR/cfg"; ST_BIN="$ST_DIR/bin"
+mkdir -p "$ST_CFG" "$ST_BIN" "$ST_DIR/initd"
+for _sts in status.sh lib.sh; do
+    sed -e "s|/cfg/|${ST_CFG}/|g" -e "s|/etc/init.d/|${ST_DIR}/initd/|g" \
+        "$SCRIPT_DIR/$_sts" > "$ST_CFG/$_sts"
+done
+printf '#!/bin/sh\necho running\n' > "$ST_DIR/initd/https-dns-proxy"
+printf '#!/bin/sh\n[ "$1" = ctrld ] && [ ! -f "%s/ctrld.dead" ] && echo 4242\n' "$ST_DIR" > "$ST_BIN/pidof"
+printf '#!/bin/sh\nexit 0\n' > "$ST_BIN/nslookup"
+printf '#!/bin/sh\nexit 1\n' > "$ST_BIN/logread"
+printf '#!/bin/sh\necho "5: br-lan    inet 192.168.1.1/24 brd 192.168.1.255 scope global br-lan"\n' > "$ST_BIN/ip"
+printf '#!/bin/sh\ncase "$*" in *force_dns*) cat "%s/force_dns" 2>/dev/null || echo 0 ;; *) exit 1 ;; esac\n' \
+    "$ST_DIR" > "$ST_BIN/uci"
+printf '#!/bin/sh\nprintf "*/5 * * * * %%s/watchdog.sh\\n0 3 * * 1 %%s/controld-update.sh\\n" "%s" "%s"\n' \
+    "$ST_CFG" "$ST_CFG" > "$ST_BIN/crontab"
+cat > "$ST_BIN/iptables" << STIPEOF
+#!/bin/sh
+case "\$*" in
+    *"-L PREROUTING"*)
+        echo "REDIRECT   udp  --  0.0.0.0/0  0.0.0.0/0  udp dpt:53 redir ports 5354"
+        echo "REDIRECT   tcp  --  0.0.0.0/0  0.0.0.0/0  tcp dpt:53 redir ports 5354"
+        if [ -f "$ST_DIR/dot" ]; then
+            echo "REDIRECT   udp  --  0.0.0.0/0  0.0.0.0/0  udp dpt:853 redir ports 5354"
+            echo "REDIRECT   tcp  --  0.0.0.0/0  0.0.0.0/0  tcp dpt:853 redir ports 5354"
+        fi ;;
+    *"-S PREROUTING"*)
+        echo "-A PREROUTING -i br-lan -p udp -m udp --dport 53 -j REDIRECT --to-ports 5354" ;;
+    *"-C PREROUTING"*) exit 0 ;;
+    *) exit 1 ;;
+esac
+STIPEOF
+chmod +x "$ST_DIR/initd/https-dns-proxy" "$ST_BIN"/*
+for _stf in ctrld post-cfg.sh controld-update.sh watchdog.sh; do : > "$ST_CFG/$_stf"; done
+( . "$ST_CFG/lib.sh"; DNS_PORT=5354 write_ctrld_config "$ST_CFG/ctrld.toml" abc123 76.76.2.22 doh3 )
+
+st_install() {  # $1 = FORCED_DNS in controld.env, $2 = uci force_dns, $3 = dot|nodot
+    { printf 'RESOLVER_ID=abc123\nBOOTSTRAP_IP=76.76.2.22\nCTRLD_VERSION=1.5.7\n'
+      printf 'DNS_TYPE=doh3\nPREFERRED_PROTOCOL=doh3\nDNS_PORT=5354\nAUTO_UPDATE=1\n'
+      printf 'FORCED_DNS=%s\n' "$1"
+    } > "$ST_CFG/controld.env"
+    printf '%s\n' "$2" > "$ST_DIR/force_dns"
+    if [ "$3" = "dot" ]; then : > "$ST_DIR/dot"; else rm -f "$ST_DIR/dot"; fi
+    rm -f "$ST_DIR/ctrld.dead"
+}
+st_run() {
+    env -i PATH="$ST_BIN:$PATH" AWK="${AWK:-awk}" LAN_IFACES=br-lan \
+        DEGRADED_FLAG="$ST_DIR/degraded" LOG_FILES="$ST_DIR/no-log" \
+        sh "$ST_CFG/status.sh" 2>&1
+    echo "rc=$?"
+}
+
+# What every install looks like until someone turns forced DNS on.
+st_install 0 0 nodot
+ST_OUT="$(st_run)"
+assert_not_contains "the sandbox install fails nothing" "$ST_OUT" '\[!!\]'
+assert_not_contains "a default install shows no warnings" "$ST_OUT" '\[~~\]'
+assert_contains "forced DNS reads as off, the default" "$ST_OUT" '\[--\].*Forced DNS: off (default)'
+assert_contains "it says what turning it on would catch" "$ST_OUT" "DNS-over-TLS on port 853 is not"
+# Port 53 is redirected on every bridge with forced DNS off too, which a Route
+# 10 confirmed by answering a query sent to an address where nothing serves
+# DNS. The line this replaced said turning it on caught hardcoded servers.
+assert_contains "and that plain DNS is redirected either way" "$ST_OUT" "plain DNS is redirected"
+assert_not_contains "without claiming it is what catches hardcoded servers" "$ST_OUT" "hardcoded DNS servers"
+assert_contains "and how to turn it on" "$ST_OUT" "reconfigure.sh --force-dns --to on"
+assert_not_contains "no missing-853 line for a hijack nobody asked for" "$ST_OUT" "no port 853 rules"
+
+# Turned on and in force: both lines green, as before.
+st_install 1 1 dot
+ST_OUT="$(st_run)"
+assert_contains "forced DNS on reads as enabled" "$ST_OUT" '\[OK\].*Forced DNS: enabled'
+assert_contains "naming port 853 as what it adds" "$ST_OUT" "Forced DNS: enabled (DoT on port 853 redirected too)"
+assert_contains "with its port 853 rules counted" "$ST_OUT" "DoT hijack: 2 rule(s) for port 853"
+assert_not_contains "and nothing to warn about" "$ST_OUT" '\[~~\]'
+
+# Turned on in controld.env but not in force, as after a firmware update wipes
+# /etc/config. That is a real gap, so it still warns, and the neutral line
+# above must not be what it falls into.
+st_install 1 0 nodot
+ST_OUT="$(st_run)"
+assert_contains "recorded on but not applied still warns" "$ST_OUT" '\[~~\].*Forced DNS: disabled'
+assert_contains "and so do its missing port 853 rules" "$ST_OUT" '\[~~\].*no port 853 rules'
+assert_not_contains "rather than reading as the default" "$ST_OUT" "Forced DNS: off (default)"
+
 describe "reconfigure.sh --force-dns — says what it adds over port 53"
 
 # Its screen said forced DNS intercepted port 53 and port 853, called it on

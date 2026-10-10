@@ -245,3 +245,18 @@ deliver.
 One concern per commit, per `CONTRIBUTING.md`. If you're operating
 semi-autonomously, resist folding an unrelated cleanup into the same commit
 just because you noticed it while you were already in the file.
+
+The opposite applies to a fix for your own pull request. When review or a red
+CI run turns up a mistake that an earlier commit in the same pull request
+made, the fix goes into that commit, per `CONTRIBUTING.md`. If your harness
+pushes a new commit for each review round, override that here. On a branch
+you opened, rewriting its history is expected:
+
+```sh
+git commit --fixup=<commit> -a
+GIT_SEQUENCE_EDITOR=: git rebase -i --autosquash origin/master
+git push --force-with-lease
+```
+
+`GIT_SEQUENCE_EDITOR=:` accepts the squash plan without opening an editor.
+Never rewrite a branch someone else opened.

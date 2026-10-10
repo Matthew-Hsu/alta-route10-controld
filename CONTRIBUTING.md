@@ -177,6 +177,16 @@ there must be something you watched happen on hardware, not something the
 suite covers. Do not add a row for work you merely intend to do; the list is
 only useful if every entry is load-bearing.
 
+Changes can also be exercised before they merge, from one branch that combines
+several open pull requests. The install command in `README.md` downloads from
+`master`, so this is how they reach a router before they reach anyone else's.
+Each pull request then takes out the table rows its own change settled. The
+entries for `docs/hardware-verification.md` go in whichever of those pull
+requests merges last, or in one after it, so `master` never records a result
+for code it does not have yet. Say what ran by release and change, as in "the
+changes that followed 1.12.0", rather than by a commit hash, which the merge
+changes.
+
 On the router, `test.sh` needs the whole repository beside it, because it reads
 the sources and docs as well as the scripts an install puts in `/cfg`. Download
 the branch under test into `/tmp` and run it from there:

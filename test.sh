@@ -4414,6 +4414,71 @@ assert_contains "status.sh flags it too" \
 assert_not_contains "and does not call that healthy" \
     "$(printf '%s\n' "$RDO_ST_Z" | sed -n '/Cron Jobs/,/^$/p')" "Weekly auto-update cron installed"
 
+describe "reconfigure.sh --force-dns — says what it adds over port 53"
+
+# Its screen said forced DNS intercepted port 53 and port 853, called it on
+# "all outbound DNS is intercepted", and after turning it off said devices may
+# use their own DNS. Port 53 is redirected on every bridge whether it is on or
+# not: on a Route 10 with it off, a query to an address where nothing serves
+# DNS still got an answer, and the bridge's port-53 counter rose by one per
+# query. So run the real toggle, both ways, and read what it prints. /etc/init.d
+# and firewall.user are rewritten into the sandbox, and uci and iptables are
+# stubs that accept everything, so nothing here reaches the machine running it.
+FD_CFG="$TMPDIR/fd-cfg"; FD_BIN="$TMPDIR/fd-bin"
+mkdir -p "$FD_CFG/initd" "$FD_BIN"
+for _fds in reconfigure.sh lib.sh; do
+    sed -e "s|/cfg/|${FD_CFG}/|g" -e "s|/etc/init.d/|${FD_CFG}/initd/|g" \
+        "$SCRIPT_DIR/$_fds" > "$FD_CFG/$_fds"
+done
+printf '#!/bin/sh\nexit 0\n' > "$FD_CFG/initd/https-dns-proxy"
+# uci answers 0 for force_dns and nothing for anything else it is asked, and
+# takes every set and commit. iptables has no rule to report and adds or
+# deletes whatever it is told.
+printf '#!/bin/sh\ncase "$*" in *get*force_dns) echo 0 ;; *get*) exit 1 ;; esac\nexit 0\n' > "$FD_BIN/uci"
+printf '#!/bin/sh\ncase "$*" in *-C*|*-S*|*-L*) exit 1 ;; esac\nexit 0\n' > "$FD_BIN/iptables"
+for _fds in logger pidof; do printf '#!/bin/sh\nexit 0\n' > "$FD_BIN/$_fds"; done
+chmod +x "$FD_CFG/initd/https-dns-proxy" "$FD_BIN"/*
+fd_env() {  # $1 = FORCED_DNS
+    printf 'RESOLVER_ID=abc123\nBOOTSTRAP_IP=76.76.2.22\nCTRLD_VERSION=1.5.7\nDNS_TYPE=doh3\nPREFERRED_PROTOCOL=doh3\nDNS_PORT=5354\nFORCED_DNS=%s\n' \
+        "$1" > "$FD_CFG/controld.env"
+    printf '# controld-dns-redirect BEGIN\n# controld-dns-redirect END\n' > "$FD_CFG/firewall.user"
+}
+fd_run() {  # $1 = what to type, then the arguments
+    _fdin="$1"; shift
+    ( PATH="$FD_BIN:$PATH"; export LAN_IFACES=br-lan FW_USER="$FD_CFG/firewall.user"
+      printf '%s\n' "$_fdin" | sh "$FD_CFG/reconfigure.sh" "$@" ) 2>&1 || true
+}
+
+fd_env 0
+FD_OUT="$(fd_run n --force-dns)"
+assert_contains "the screen says port 53 reaches ControlD either way" "$FD_OUT" \
+    "Plain DNS on port 53 reaches ControlD with or without it"
+assert_contains "and that forced DNS adds DoT on port 853" "$FD_OUT" "also redirects DNS-over-TLS (DoT, port 853)"
+assert_not_contains "not that it intercepts port 53" "$FD_OUT" "port 53 (plain) and port 853"
+assert_contains "off names DoT as the gap" "$FD_OUT" "DISABLED.* — DoT on port 853 can bypass ControlD"
+assert_not_contains "rather than every device" "$FD_OUT" "devices can bypass ControlD DNS"
+
+FD_OUT="$(fd_run '' --force-dns --to on)"
+assert_contains "turning it on is recorded" "$(cat "$FD_CFG/controld.env")" "FORCED_DNS=1"
+assert_contains "and it says what changed" "$FD_OUT" "Forced DNS enabled. DoT on port 853 is now redirected too."
+assert_not_contains "not that all outbound DNS is now hijacked" "$FD_OUT" "All outbound DNS"
+
+FD_OUT="$(fd_run n --force-dns)"
+assert_contains "on names port 853 along with port 53" "$FD_OUT" \
+    "ENABLED.* — DoT on port 853 is redirected along with port 53"
+assert_not_contains "not all outbound DNS" "$FD_OUT" "all outbound DNS is intercepted"
+
+FD_OUT="$(fd_run '' --force-dns --to off)"
+assert_contains "turning it off is recorded" "$(cat "$FD_CFG/controld.env")" "FORCED_DNS=0"
+assert_contains "and it says port 53 is still redirected" "$FD_OUT" \
+    "Forced DNS disabled. Port 53 is still redirected, and DoT on port 853 is not."
+assert_not_contains "not that devices may use their own DNS" "$FD_OUT" "their own DNS"
+
+FD_OUT="$(fd_run '' --help)"
+assert_contains "--help says what it adds" "$FD_OUT" "also redirects DoT, port 853"
+assert_not_contains "and not that it hijacks all outbound DNS" "$FD_OUT" "hijack all outbound DNS"
+unset FD_OUT _fds _fdin
+
 describe "audit.sh — a boot hook that never runs must fail the audit"
 
 # Reported as `review` once, so audit.sh exited 0 while boot persistence was

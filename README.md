@@ -45,30 +45,32 @@ scripts on the router. Here is how that setting compares with this project:
 
 | | DoH Servers in Alta Control | This project |
 |---|---|---|
-| Your ISP's DNS | also asked, in plain text, so your ISP sees what is looked up and its answer can skip ControlD's filtering. Firmware 1.5i may have added a way to turn this off, see below | not asked for your devices' queries while `ctrld` is running, [IPv6](#ipv6) aside |
+| After a settings save in Alta Control | on 1.5j the firmware stops the DoH proxy and does not start it again, so your DNS goes to your ISP in plain text, or nowhere with Force DoH on | keeps resolving: it starts the proxy again after every save |
+| Your ISP's DNS | also asked, in plain text, so your ISP sees what is looked up and its answer can skip ControlD's filtering. Force DoH (1.5i and later) turns this off | not asked for your devices' queries while `ctrld` is running, [IPv6](#ipv6) aside |
 | What the ControlD dashboard shows | every query as coming from the router | each device separately, VLANs included |
 | Different profiles for different devices | one profile for the whole network | per device or per subnet, with [split DNS](docs/technical-details.md#split-dns-and-per-device-policy) |
 | Protocol to ControlD | DoH over HTTP/1.1 | DoH3 by default, or DoH, DoQ or DoT |
-| Devices with a hardcoded DNS server | not redirected by this setting | caught on port 53 by every install, and on port 853 (DNS-over-TLS) once [forced DNS](#turn-on-forced-dns) is on |
+| Devices with a hardcoded DNS server | not redirected, so a device that asks another server skips ControlD's blocking | caught on port 53 by every install, and on port 853 (DNS-over-TLS) once [forced DNS](#turn-on-forced-dns) is on |
 | Local DNS Records in Alta Control | work | do not work, see [Not Supported](#not-supported) |
 
-The first row is the one to weigh. If you want your devices' DNS to reach
-ControlD and nothing else, this project does that today. Alta said a later
-release would let you turn the plain-text queries off, and the release notes
-for firmware 1.5i list "support for forcing proxied DNS traffic over DoH",
-which reads like that setting. It has not been tried here yet, with this
-project installed or without. If it does keep your ISP out, DoH Servers on its
-own should be enough if you want one profile for the whole network and don't
-need to know which device asked what.
+The first row is the one to weigh. Force DoH, which firmware 1.5i added next
+to Use DoH, keeps your ISP out. On 1.5j, though, every settings save stops the
+proxy that DoH Servers relies on, and the firmware leaves it stopped. With
+Force DoH off your DNS then goes back to your ISP without telling you; with it
+on, the router and every device lose DNS until the proxy is started again.
 [The fallback path](docs/technical-details.md#architecture) explains how the
-router's own DNS asks both ControlD and your ISP.
+router's own DNS uses ControlD and your ISP.
 
-The DoH Servers column was worked out on a router with this project installed.
-Checking it on one without is tracked in [#59](https://github.com/Matthew-Hsu/alta-route10-controld/issues/59).
+The DoH Servers column was checked on 1.5j with this project uninstalled, as
+recorded in
+[docs/hardware-verification.md](docs/hardware-verification.md#alta-controls-dns-settings).
 
 The two can run together. This project uses the router's own DNS as its
-fallback while `ctrld` is down, which asks your ISP's DNS too, and how it
-treats your DoH settings is under [Not Supported](#not-supported).
+fallback while `ctrld` is down, and starts the proxy again after every save.
+With Force DoH off, that fallback asks your ISP's DNS too; with it on,
+ControlD alone. If you turn Force DoH on, turn it off again before you
+[uninstall](#uninstall). How this project treats your DoH settings is under
+[Not Supported](#not-supported).
 
 ## Get Started
 
@@ -77,9 +79,9 @@ treats your DoH settings is under [Not Supported](#not-supported).
 individually in the ControlD dashboard, including devices on VLANs, not just
 the router as a whole. It survives reboots and firmware updates without
 help, and falls back to the router's own DNS if something goes wrong. That
-fallback is not ControlD alone: while Use DoH is on in Alta Control's DNS
-settings it also asks your ISP's DNS in plain text, as
-[the fallback path](docs/technical-details.md#architecture) explains.
+fallback is ControlD alone only with Force DoH on in Alta Control's DNS
+settings. Otherwise, with Use DoH on, it also asks your ISP's DNS in plain
+text, as [the fallback path](docs/technical-details.md#architecture) explains.
 
 > This project is developed and exercised on an Alta Route 10 running firmware
 > `1.5g` through `1.5j`, across six LAN bridges;
@@ -166,13 +168,14 @@ redirects over IPv4.
 - **IPv6 sites work normally.** AAAA lookups resolve like any other record.
   This is about DNS *carried over* IPv6, not IPv6 addresses in answers.
 - **A device that asks the router for DNS over IPv6 loses its identity.** Its
-  queries go to dnsmasq rather than `ctrld`, so they take
-  [the fallback path](docs/technical-details.md#architecture): ControlD over
-  DoH and your ISP's DNS in plain text while Use DoH is on in Alta Control,
-  and your ISP's DNS alone while it is off. Those that reach ControlD arrive
-  attributed to the router rather than the device, and they skip any split-DNS
-  rule you set for it. Nothing warns you: `status.sh` and `audit.sh` do not
-  look at IPv6, so a clean report does not rule this out.
+  queries go to dnsmasq rather than `ctrld`, so they take [the fallback
+  path](docs/technical-details.md#architecture): ControlD over DoH and your
+  ISP's DNS in plain text while Use DoH is on in Alta Control, ControlD alone
+  with Force DoH on as well, and your ISP's DNS alone while Use DoH is off.
+  Those that reach ControlD arrive attributed to the router rather than the
+  device, and they skip any split-DNS rule you set for it. Nothing warns you:
+  `status.sh` and `audit.sh` do not look at IPv6, so a clean report does not
+  rule this out.
 - **A device hardcoded to an IPv6 resolver bypasses ControlD entirely.**
   Forced DNS cannot catch it, and its queries go wherever it was pointed.
 

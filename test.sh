@@ -6571,9 +6571,17 @@ unset UCI_STORE
 
 # And the uninstaller must go through it rather than naming instances again.
 assert_true "uninstall.sh resets the fallback through the loop" \
-    code_grep "$SCRIPT_DIR/uninstall.sh" 'reset_fallback_resolver "https://dns.quad9.net/dns-query"'
+    code_grep "$SCRIPT_DIR/uninstall.sh" 'reset_fallback_resolver "https://cloudflare-dns.com/dns-query" "1.1.1.1"'
 assert_false "uninstall.sh names no instance by index" \
     code_grep "$SCRIPT_DIR/uninstall.sh" -E 'https-dns-proxy\[[0-9]\]'
+# The reset named Quad9, which answers HTTP/1.1 with 505, and since 1.5h the
+# firmware runs every https-dns-proxy instance on HTTP/1.1. After an uninstall
+# nothing answered on the proxies' ports, which the ISP's servers hid until
+# Force DoH in Alta Control removed them and every device lost DNS. Whether a
+# resolver answers can only be seen on a router, so this guards the one known
+# to fail from coming back.
+assert_false "uninstall.sh does not reset the fallback to Quad9" \
+    code_grep "$SCRIPT_DIR/uninstall.sh" 'dns.quad9.net'
 
 describe "audit.sh — reports without touching anything"
 

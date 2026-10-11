@@ -434,9 +434,15 @@ needed.
 
 **What it does not restore:** your original `https-dns-proxy` resolver. Nothing
 records what it was before install, so uninstall points it at a public
-resolver (Quad9) and says so, and starts it only while Use DoH is on in Alta
-Control. On firmware 1.5h the next save in Alta Control's DNS settings
+resolver (Cloudflare) and says so, and starts it only while Use DoH is on in
+Alta Control. On firmware 1.5h the next save in Alta Control's DNS settings
 rewrites it from DoH Servers anyway.
+
+The resolver has to answer DoH over HTTP/1.1, because that is all the
+firmware's proxies speak: each instance runs with `use_http1='1'`, and the
+router's libcurl is built without HTTP/2. Quad9 refuses HTTP/1.1 with a 505,
+so with it the proxies answer nothing, and with Force DoH on in Alta Control
+nothing else answers either.
 
 `force_dns` is set to 0, which is the entire disable: the https-dns-proxy init
 script drops its whole forcing block unless `force_dns` is 1, so the port list

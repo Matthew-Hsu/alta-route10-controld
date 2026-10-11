@@ -53,6 +53,10 @@ archive. Before the install, `test.sh` from that archive ran under the
 router's own BusyBox: 1,197 passed and none failed, with the three
 destructive tests skipped, as they are unless asked for.
 
+Entries marked **from master after 1.12.0, on 1.5j** ran later on the same
+firmware, with `master` installed by the README's install command, which
+carried the changes after 1.12.0 and the polish that followed them.
+
 Entries that time DNS from a client all did it the same way. A Mac on VLAN 10
 asked the router's LAN address for a record once a second with
 `dig +time=1 +tries=1`, and the `br-lan_10` redirect counter rose with the
@@ -497,6 +501,57 @@ dnsmasq. An outage below is the span of failed probes.
   first save and none during the second. Which part of the firmware's
   re-apply cost that lookup was not found.
 
+- **Force DoH, from master after 1.12.0, on 1.5j.** Alta Control's DNS page
+  has Force DoH next to Use DoH and Parallel Queries. Its help text reads
+  "Send upstream queries only through DoH, with no unencrypted fallback.
+  Requires Use DoH. Proxy bootstrap lookups may still use plain DNS."
+  Snapshots of uci, the generated dnsmasq config and `iptables -t nat -S`,
+  taken before turning it on and after saving, differed in one value:
+  `dhcp.@dnsmasq[0].noresolv` went from 0 to 1, so dnsmasq's config gained
+  `no-resolv` and lost its `resolv-file`. The server list, every
+  https-dns-proxy option and the firewall were unchanged. The ISP's two
+  nameservers stayed in the resolv file, which dnsmasq no longer read. The
+  proxies bootstrapped from `76.76.2.22`, which `post-cfg.sh` sets, so their
+  own lookups did not go to the ISP either. The save's `post-cfg.sh` run left
+  dnsmasq and `ctrld` running and restored `force_dns`, `status.sh` reported
+  Healthy with exit 0, and `audit.sh` found no drift. So `noresolv` is the
+  firmware's own setting, written from Force DoH.
+
+- **A settings save with Force DoH on, from master after 1.12.0, on 1.5j.**
+  The router asked https-dns-proxy on 5053 and dnsmasq for `google.com` once a
+  second for two minutes, across one save that changed TTL. Neither failed.
+  That save's `post-cfg.sh` run took 0.4 seconds, so any gap in
+  https-dns-proxy was shorter than one sample.
+
+- **A reboot with Force DoH on, from master after 1.12.0, on 1.5j.** The
+  router has no hardware clock and boots with its firmware's build date, in
+  2021, which is too early for TLS. Its clock comes from htpdate, which reads
+  the `Date` header of HTTPS servers, and the first server it is given is an
+  IP address. It took its first sample a second after starting and set the
+  time about 90 seconds into the boot, with no DNS involved. The boot hook's
+  `post-cfg.sh` run started on the 2021 clock and started `ctrld` after the
+  correction. A minute after the reboot `status.sh` reported Healthy,
+  https-dns-proxy, dnsmasq and `ctrld` all answered, and `noresolv` was still
+  1.
+
+- **DoH Servers without this project, on 1.5j.** This ran with the project
+  uninstalled. Use DoH, Force DoH and Parallel Queries were on, DoH Servers
+  held the ControlD profile's URL alone, Bootstrap Servers were at Defaults,
+  and a Local DNS Record named `r10test` pointed at `192.0.2.10`. The save ran
+  `/etc/init.d/https-dns-proxy stop` from the firmware's `cfg`, and nothing
+  started it again in the eleven minutes watched. With Force DoH on, dnsmasq
+  had no other server, so the router and every device lost DNS, apart from
+  `r10test`, which dnsmasq answers itself. Started by hand, the firmware's one
+  instance ran with the profile as its resolver, four bootstrap addresses and
+  `-x`, which forces HTTP/1.1. The router's curl 7.76.0 lists no HTTP/2
+  library. With the proxy running, queries reached ControlD's activity log
+  under the router's endpoint with no client named, where a query through
+  `ctrld` also names the device that asked. A Mac got `r10test` from the
+  router, and a name the profile blocks came back `0.0.0.0` through the router
+  and with its real address from 1.1.1.1 asked directly. No rule in the nat,
+  filter or mangle tables matched port 53 or 853, and 1.1.1.1 did not know
+  `r10test`, so a device that names its own DNS server bypasses ControlD.
+
 ## Protocol Reconciliation
 
 - **Protocol reconciliation, end to end.** `ctrld.toml` was retargeted behind
@@ -634,3 +689,33 @@ dnsmasq. An outage below is the span of failed probes.
   client kept resolving through the ISP. Re-installing over that was a fresh
   install: forced DNS back at its default of off, 12 rules, Use DoH off
   logged, dnsmasq still not restarted, and a clean audit.
+
+- **Uninstalling with Force DoH on, from master after 1.12.0, on 1.5j.** Every
+  step of `uninstall.sh` reported `[OK]`, and it closed on `[OK] Uninstall
+  complete.` Its own DNS check warned, and minutes later the router and every
+  device had no DNS. It had pointed every https-dns-proxy instance at Quad9,
+  which answers HTTP/1.1 with `505 HTTP Version Not Supported`, and the
+  firmware runs the proxies on HTTP/1.1 only. A Mac got 505 from Quad9 over
+  HTTP/1.1 and 200 over HTTP/2. From the router over HTTP/1.1, Quad9 returned
+  505 while Cloudflare and Google returned 200. With Force DoH off, the ISP's
+  servers in dnsmasq would have answered instead and hidden the failure. Every
+  instance set by hand to Cloudflare with bootstrap `1.1.1.1`, which
+  `uninstall.sh` now writes, answered on 5053, 5054 and 5055 with `noresolv`
+  at 1, and so did dnsmasq. `uninstall.sh` itself has not made that reset on
+  a router.
+
+- **Re-installing after that, from master after 1.12.0, on 1.5j.** The
+  README's install command with `--resolver` and `--protocol doh3` verified
+  the download, checked that ControlD answered over DoH3 before changing
+  anything, and reported the fallback answering on 5053. `reconfigure.sh
+  --force-dns --to on` turned forced DNS back on, `status.sh` reported Healthy
+  with exit 0, and the md5 sums of the six scripts matched `master`. Force DoH
+  stayed on.
+
+- **The Force DoH warning, from master after 1.12.0, on 1.5j.** With Force
+  DoH on, `lib.sh` and `uninstall.sh` from the change that added the warning
+  were downloaded to a scratch directory on the router, and `uninstall.sh` ran
+  from there with N piped to its prompt. Between its summary and the prompt it
+  printed `[~~] Force DoH is on in Alta Control — turn it off first, or the
+  next settings save leaves the LAN without DNS`, under a paragraph naming
+  Cloudflare as the fallback. It closed on `[OK] Aborted. No changes made.`

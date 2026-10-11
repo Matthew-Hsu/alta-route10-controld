@@ -1290,9 +1290,10 @@ ensure_iptables() {
 # closed port, so every client on every bridge loses DNS entirely, which is
 # worse than not intercepting at all. Removing them hands resolution back to
 # dnsmasq, which forwards to https-dns-proxy and the ISP's DNS while Use DoH is
-# on in Alta Control and to the ISP's DNS alone while it is off, with no
-# per-device visibility either way. post-cfg.sh and the watchdog re-add the
-# rules once ctrld answers again.
+# on in Alta Control, to https-dns-proxy alone while Force DoH is on as well,
+# and to the ISP's DNS alone while Use DoH is off, with no per-device
+# visibility in any of them. post-cfg.sh and the watchdog re-add the rules
+# once ctrld answers again.
 # Usage: remove_dns_redirects [port]
 remove_dns_redirects() {
     _rdr_port="${1:-$DNS_PORT}"

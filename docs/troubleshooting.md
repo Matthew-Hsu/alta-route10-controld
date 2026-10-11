@@ -36,10 +36,13 @@
    . /cfg/lib.sh && load_env && remove_dns_redirects
    /etc/init.d/dnsmasq restart
    ```
-   This restores DNS through dnsmasq, with no per-device visibility and not
-   through ControlD alone: dnsmasq also asks your ISP's DNS in plain text, as
-   [the fallback path](technical-details.md#architecture) explains. The
-   watchdog puts the redirects back automatically once ctrld answers again.
+   This restores DNS through dnsmasq, with no per-device visibility. Unless
+   Force DoH is on in Alta Control, that is not ControlD alone: dnsmasq also
+   asks your ISP's DNS in plain text, as
+   [the fallback path](technical-details.md#architecture) explains. With
+   Force DoH on, dnsmasq asks https-dns-proxy alone, so this helps only while
+   https-dns-proxy answers. The watchdog puts the redirects back automatically
+   once ctrld answers again.
 
    > **Never run `iptables -t nat -F PREROUTING`.** That flushes the entire
    > chain: your port forwards, UPnP mappings and the firewall's own zone jumps

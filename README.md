@@ -539,6 +539,7 @@ correct, but no one has run them on a real device:
 
 | Area | What that means for you |
 |---|---|
+| **The uninstall's Cloudflare reset, as the script runs it** | `uninstall.sh` used to reset the fallback to Quad9, which refuses the HTTP/1.1 a Route 10's proxies speak. Cloudflare answers it, which was checked on a Route 10 by setting it by hand. The changed script has not made that reset on a router since, because only a full uninstall makes it. |
 | **An uninstall on more than three `https-dns-proxy` instances** | `uninstall.sh` loops on uci instead of naming instances 0, 1 and 2, so a fourth is no longer left pointing at your ControlD profile. A full uninstall is verified on the three a Route 10 ships, which is the case the loop replaced; no router here has carried a fourth for the loop itself to be proven on. |
 | **Two `post-cfg.sh` runs at once** | Runs take a lock and a second one waits for the first. An install that landed on firmware 1.5i's per-minute run failed before the lock existed; since then no two runs on a router have overlapped, so the waiting has only run in the test suite. |
 | **The watchdog lock under contention** | Two cycles overlapping. The fix that makes overlap unlikely also makes it hard to observe: every hardware run took and released the lock cleanly, but no two ever raced. |

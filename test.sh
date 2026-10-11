@@ -5501,6 +5501,7 @@ sv_run() {
     # leaves its ctrld running for that, which is a re-install. SV_DOH=1 gives
     # dnsmasq the three https-dns-proxy ports, which is Use DoH on, and
     # SV_FALLBACK_BROKEN=1 makes https-dns-proxy stop answering on them.
+    # SV_FORCE_DOH=1 sets dnsmasq's noresolv, which is Force DoH on.
     # SV_PORT_TAKEN=1 puts something other than ctrld on 5354, so the installer
     # offers 5355, where ctrld then listens.
     _sv="$1"
@@ -5542,20 +5543,22 @@ sv_run() {
         "$_sv" "$_sv" > "$_sv/bin/iptables"
     printf '#!/bin/sh\ncase "$1" in -l) cat "%s/crontab" 2>/dev/null ;; -) cat > "%s/crontab.new" && mv "%s/crontab.new" "%s/crontab" ;; esac\n' \
         "$_sv" "$_sv" "$_sv" "$_sv" > "$_sv/bin/crontab"
-    # uci knows nothing but dnsmasq's servers, and those only while SV_DOH is set.
-    printf '#!/bin/sh\ncase "$*" in *"dhcp.@dnsmasq[0].server"*) [ -f "%s/doh.servers" ] && cat "%s/doh.servers" && exit 0 ;; esac\nexit 1\n' \
-        "$_sv" "$_sv" > "$_sv/bin/uci"
+    # uci knows nothing but dnsmasq's servers, and those only while SV_DOH is
+    # set, and its noresolv, only while SV_FORCE_DOH is.
+    printf '#!/bin/sh\ncase "$*" in *"dhcp.@dnsmasq[0].server"*) [ -f "%s/doh.servers" ] && cat "%s/doh.servers" && exit 0 ;;\n  *"dhcp.@dnsmasq[0].noresolv"*) [ -f "%s/force.doh" ] && echo 1 && exit 0 ;; esac\nexit 1\n' \
+        "$_sv" "$_sv" "$_sv" > "$_sv/bin/uci"
     printf '#!/bin/sh\nexit 1\n' > "$_sv/bin/iptables-save"
     for _svf in sleep logger ping; do printf '#!/bin/sh\nexit 0\n' > "$_sv/bin/$_svf"; done
     for _svf in dnsmasq https-dns-proxy; do printf '#!/bin/sh\nexit 0\n' > "$_sv/initd/$_svf"; done
     chmod +x "$_sv/bin"/* "$_sv/initd"/*
     fi
     rm -f "$_sv/dns.broken" "$_sv/bench.fail" "$_sv/doh.servers" "$_sv/fallback.broken" \
-          "$_sv/port.taken"
+          "$_sv/port.taken" "$_sv/force.doh"
     [ "$2" = "broken" ] && : > "$_sv/dns.broken"
     [ -n "${SV_PORT_TAKEN:-}" ] && : > "$_sv/port.taken"
     [ -n "${SV_DOH:-}" ] && printf '127.0.0.1#5053 127.0.0.1#5054 127.0.0.1#5055\n' > "$_sv/doh.servers"
     [ -n "${SV_FALLBACK_BROKEN:-}" ] && : > "$_sv/fallback.broken"
+    [ -n "${SV_FORCE_DOH:-}" ] && : > "$_sv/force.doh"
     [ -n "${SV_BENCH_FAIL:-}" ] && printf '%s' "$SV_BENCH_FAIL" > "$_sv/bench.fail"
 
     ( PATH="$_sv/bin:$PATH"; FW_USER="$_sv/firewall.user"; SYSFS_NET="$_sv/sys"
@@ -5609,6 +5612,14 @@ assert_contains "a fallback that does not answer is reported, however dnsmasq an
 assert_contains "as a warning: devices resolve through ctrld, so the install completes" \
     "$SV_FB" "Setup Complete!"
 assert_contains "and exits 0" "$SV_FB" "rc=0"
+assert_contains "with the ISP's servers still read, it says they will answer" \
+    "$SV_FB" "only your ISP's DNS will answer"
+# Force DoH stops dnsmasq reading the ISP's servers, so with https-dns-proxy
+# down nothing answers once ctrld stops. The warning said the ISP's DNS would.
+SV_FB="$(SV_DOH=1 SV_FALLBACK_BROKEN=1 SV_FORCE_DOH=1 sv_run "$SV/fallback-forced" good)"
+assert_contains "with Force DoH on, it says devices would have no DNS" \
+    "$SV_FB" "with Force DoH on, if ctrld stops, devices will have no DNS"
+assert_not_contains "and does not promise the ISP's DNS" "$SV_FB" "only your ISP's DNS will answer"
 assert_contains "with Use DoH off, it asks the router's own DNS and says what that is" \
     "$SV_GOOD" "Router DNS answering — with Use DoH off"
 

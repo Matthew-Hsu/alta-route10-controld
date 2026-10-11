@@ -3024,6 +3024,17 @@ assert_false "restart_fallback does nothing while DoH is off" restart_fallback
 : > "$UCI_STORE"
 assert_false "no servers at all reads as off" alta_doh_on
 
+# Force DoH, as the firmware leaves it: dnsmasq's noresolv. Without this
+# project nothing restarts https-dns-proxy after a settings save, and with
+# noresolv set dnsmasq has no other server, so uninstall.sh warns on it.
+: > "$UCI_STORE"
+uci set 'dhcp.@dnsmasq[0].noresolv=1'
+assert_true "alta_force_doh_on reads noresolv=1 as Force DoH on" alta_force_doh_on
+uci set 'dhcp.@dnsmasq[0].noresolv=0'
+assert_false "and noresolv=0 as off" alta_force_doh_on
+: > "$UCI_STORE"
+assert_false "no noresolv at all reads as off" alta_force_doh_on
+
 PATH="$FD_SAVED_PATH"
 unset UCI_STORE FW_USER SYSFS_NET DNS_PORT FORCED_DNS
 assert_false "setup.sh never hardcodes FORCED_DNS=0" \
@@ -6582,6 +6593,13 @@ assert_false "uninstall.sh names no instance by index" \
 # to fail from coming back.
 assert_false "uninstall.sh does not reset the fallback to Quad9" \
     code_grep "$SCRIPT_DIR/uninstall.sh" 'dns.quad9.net'
+# The warning is only worth giving before the prompt, while Force DoH can
+# still be turned off with this project's post-cfg.sh covering that save.
+FD_WARN_AT="$(code_lineno "$SCRIPT_DIR/uninstall.sh" 'alta_force_doh_on; then')"
+FD_PROMPT_AT="$(code_lineno "$SCRIPT_DIR/uninstall.sh" 'Remove all ControlD configuration')"
+assert_true "uninstall.sh checks Force DoH" [ -n "$FD_WARN_AT" ]
+assert_true "and does so before its prompt" [ "${FD_WARN_AT:-0}" -lt "${FD_PROMPT_AT:-0}" ]
+unset FD_WARN_AT FD_PROMPT_AT
 
 describe "audit.sh — reports without touching anything"
 

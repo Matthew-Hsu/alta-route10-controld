@@ -184,6 +184,17 @@ printf "\n  ${BOLD}Summary:${RESET}  %d file(s), %d cron job(s), %d iptables rul
 printf "\n  After removal, your devices use the router's own DNS (dnsmasq), which\n"
 printf "  keeps the servers Alta Control's DNS settings give it. https-dns-proxy\n"
 printf "  is pointed at Cloudflare, and restarted if Use DoH is on in Alta Control.\n"
+
+# Force DoH leaves dnsmasq nothing to ask but https-dns-proxy, and the firmware
+# stops https-dns-proxy on every settings save without starting it again. The
+# post-cfg.sh this removes is what started it, so the first save after an
+# uninstall left the router and every device without DNS. Said before the
+# prompt, so it can be turned off while this project still covers the save.
+# Guarded like setup.sh's alta_doh_on call, for an older lib.sh in /cfg.
+if command -v alta_force_doh_on >/dev/null 2>&1 && alta_force_doh_on; then
+    printf "\n"
+    print_warn "Force DoH is on in Alta Control — turn it off first, or the next settings save leaves the LAN without DNS"
+fi
 printf "\n  Only this project's DNS redirect rules are removed. Your port\n"
 printf "  forwards, UPnP mappings and other firewall rules are untouched,\n"
 printf "  and no reboot is needed.\n"

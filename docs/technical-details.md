@@ -45,29 +45,40 @@ Alta Control's DNS settings (Settings → Networks → DNS). With it off, dnsmas
 to your ISP's DNS servers instead, unencrypted, and `post-cfg.sh` leaves
 https-dns-proxy stopped rather than override the setting. The firmware says
 which it is in dnsmasq's servers, and `post-cfg.sh` reads it from there. On
-firmware 1.5h, `post-cfg.sh` is also what keeps https-dns-proxy running: the
-firmware stops it on every settings save and does not start it again.
+firmware 1.5h and 1.5j, `post-cfg.sh` is also what keeps https-dns-proxy
+running: the firmware stops it on every settings save and does not start it
+again.
 
-With Use DoH on, dnsmasq does not use https-dns-proxy alone. It also forwards
-to the DNS servers your ISP hands the router, in plain text, from the resolver
-file the firmware gives it. On the Route 10 this was checked on, firmware 1.5h
-ran dnsmasq with `all-servers`, which is Alta Control's Parallel Queries
-setting: every query goes to all of those servers at once, and dnsmasq uses
-the first answer back. So your ISP sees each name looked up through this path,
-and when its answer arrives first, ControlD's filtering is skipped for that
-query. With Parallel Queries off, dnsmasq picks among the same servers instead,
-so your ISP's are still in use. Alta has said a later release adds a setting
-to turn the unencrypted requests off, and firmware 1.5i's release notes list
-"support for forcing proxied DNS traffic over DoH", which may be it. What that
-does to dnsmasq's servers, and so to this path, has not been checked. This
-project leaves dnsmasq's settings to the firmware, so it does not turn them off
-itself.
+With Use DoH on and Force DoH off, dnsmasq does not use https-dns-proxy alone.
+It also forwards to the DNS servers your ISP hands the router, in plain text,
+from the resolver file the firmware gives it. On the Route 10 this was checked
+on, firmware 1.5h ran dnsmasq with `all-servers`, which is Alta Control's
+Parallel Queries setting: every query goes to all of those servers at once,
+and dnsmasq uses the first answer back. So your ISP sees each name looked up
+through this path, and when its answer arrives first, ControlD's filtering is
+skipped for that query. With Parallel Queries off, dnsmasq picks among the
+same servers instead, so your ISP's are still in use.
+
+Force DoH, which firmware 1.5i added next to Use DoH, turns the ISP's servers
+off. It sets dnsmasq's `noresolv`, so dnsmasq stops reading the resolver file
+and https-dns-proxy is the only server it asks. Its help text warns that
+bootstrap lookups may still use plain DNS, but https-dns-proxy here bootstraps
+from ControlD's own address, which `post-cfg.sh` sets, so those do not reach
+the ISP either. With Force DoH on, this path is ControlD alone. The cost is
+that nothing else answers when https-dns-proxy does not: the router's own
+lookups fail, and if `ctrld` is down too, so does every device's. With this
+project installed on 1.5j, the router kept resolving across a settings save,
+after which `post-cfg.sh` starts https-dns-proxy again, and came back
+resolving after a reboot. Without this project nothing restarts it after a
+save, which is why `uninstall.sh` warns when Force DoH is on. This project
+leaves dnsmasq's settings to the firmware, so Force DoH is yours to turn on or
+off in Alta Control.
 
 ```
 LAN Devices --port 53--> +----------+  port 5053/5054/5055  +-----------------+   +-----------+
                           | dnsmasq  | ----------------------> | https-dns-proxy | -> | ControlD  |
                           +----------+                         +-----------------+   +-----------+
-                     (your ISP's DNS is asked too, in plain text; no per-device visibility)
+   (your ISP's DNS is asked too, in plain text, unless Force DoH is on; no per-device visibility)
 ```
 
 **Forced-DNS path**: only when forced DNS is enabled, for DNS-over-TLS, which
@@ -271,7 +282,7 @@ Losing an opt-out that way is recoverable and the readouts show it. That is the 
 4. If DNS is healthy, re-asserts redirect coverage for any LAN bridge added since install (new VLANs), self-heals forced-DNS state, corrects the recorded protocol if it disagrees with what `ctrld.toml` is actually running, warns if `dhcp.leases` is stale, and **self-upgrades back to your preferred protocol** if currently on a fallback
 5. If DNS fails, **waits for a second consecutive failure** before acting (debounce, to avoid restarting ctrld or churning the protocol on a single transient blip). On the second, it reconciles the recorded protocol against `ctrld.toml` before walking the fallback chain, so the chain starts from what the router is really running
 6. Restores iptables redirect rules if they disappeared
-7. As a last resort, if every protocol fails and ctrld cannot be revived, **removes the DNS redirects.** Otherwise port 53 points at a dead port and every client loses DNS entirely. Resolution falls back to dnsmasq, which uses https-dns-proxy and your ISP's DNS as the fallback path under Architecture describes, with no per-device visibility, and the rules go back automatically once ctrld answers again
+7. As a last resort, if every protocol fails and ctrld cannot be revived, **removes the DNS redirects.** Otherwise port 53 points at a dead port and every client loses DNS entirely. Resolution falls back to dnsmasq, which uses https-dns-proxy, and your ISP's DNS too unless Force DoH is on, as the fallback path under Architecture describes, with no per-device visibility, and the rules go back automatically once ctrld answers again
 8. Logs all actions to syslog
 
 If no protocol works, `ctrld.toml` is restored to the one `controld.env` still names, so the two never disagree about what the router is running. A full recovery cycle (one restart plus three fallback attempts) takes about a minute; give a manual run time to finish rather than interrupting it.
@@ -375,7 +386,7 @@ pick.
 Two layers of protection:
 
 1. **ctrld health check**: iptables redirect rules are only added if ctrld passes a DNS resolution test
-2. **https-dns-proxy fallback**: even if ctrld fails, dnsmasq still answers, without per-device visibility. It is not ControlD alone: with Use DoH on in Alta Control's DNS settings it asks https-dns-proxy and your ISP's DNS side by side, and with it off your ISP's DNS only, as the fallback path under Architecture describes.
+2. **https-dns-proxy fallback**: even if ctrld fails, dnsmasq still answers, without per-device visibility. It is not ControlD alone unless Force DoH is on: with Use DoH on in Alta Control's DNS settings it asks https-dns-proxy and your ISP's DNS side by side, with Force DoH on as well https-dns-proxy only, and with Use DoH off your ISP's DNS only, as the fallback path under Architecture describes.
 
 ### Test Suite
 

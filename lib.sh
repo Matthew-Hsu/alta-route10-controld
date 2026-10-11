@@ -1819,6 +1819,18 @@ alta_doh_on() {
     return 1
 }
 
+# Whether Force DoH (firmware 1.5i and later) is on in Alta Control's DNS
+# settings.
+#
+# The firmware writes the toggle as dnsmasq's noresolv, so dnsmasq stops
+# reading the ISP's servers and https-dns-proxy is all it has left. On 1.5j a
+# settings save stops https-dns-proxy and nothing in the firmware starts it
+# again. post-cfg.sh does while this project is installed; after an uninstall
+# the next save left the router and every device without DNS.
+alta_force_doh_on() {
+    [ "$(uci -q get 'dhcp.@dnsmasq[0].noresolv' 2>/dev/null)" = "1" ]
+}
+
 # Restart https-dns-proxy so a changed setting takes effect, but only while Use
 # DoH is on. Firmware 1.5h stops the service on every settings save and leaves
 # it stopped, so a restart here is also a start, and with DoH off that would

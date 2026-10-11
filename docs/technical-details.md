@@ -139,7 +139,7 @@ All scripts source `lib.sh` which provides:
 - Release verification (`verify_ctrld_download`, `checksum_for_asset`)
 - LAN bridge discovery (`lan_ifaces`, `lan_cidr`, `lan_net_name`) and redirect rules (`ensure_redirect_rule`, `ensure_firewall_user_rules`, `firewall_user_block`)
 - Forced DNS (`ensure_forced_dns`, `disable_forced_dns`, `set_forced_dns_flag`)
-- Fallback resolver (`set_fallback_resolver`, `reset_fallback_resolver`, `alta_doh_on`, `restart_fallback`): keeps https-dns-proxy on the same ControlD profile as ctrld, restarts it only while Use DoH is on in Alta Control, and points every instance back at a public resolver on uninstall
+- Fallback resolver (`set_fallback_resolver`, `reset_fallback_resolver`, `alta_doh_on`, `alta_force_doh_on`, `restart_fallback`): keeps https-dns-proxy on the same ControlD profile as ctrld, restarts it only while Use DoH is on in Alta Control, and points every instance back at a public resolver on uninstall, which warns first when Force DoH is on
 - Input validation (`valid_resolver`, `valid_mac`, `valid_cidr`, `valid_policy_name`, `valid_proto`)
 - Protocol utilities (`proto_label`, `next_proto`) and per-upstream protocol switching (`retarget_upstreams`, `resolver_from_endpoint`)
 - Degraded-mode handling (`remove_dns_redirects`) and config editing (`toml_blocks`, `next_toml_index`)
@@ -443,6 +443,13 @@ firmware's proxies speak: each instance runs with `use_http1='1'`, and the
 router's libcurl is built without HTTP/2. Quad9 refuses HTTP/1.1 with a 505,
 so with it the proxies answer nothing, and with Force DoH on in Alta Control
 nothing else answers either.
+
+If Force DoH is on in Alta Control, uninstall warns about it before its
+prompt. Force DoH stops dnsmasq reading the ISP's servers, and on 1.5j every
+settings save stops https-dns-proxy without starting it again. While this
+project is installed, `post-cfg.sh` starts it after each save. Once that is
+gone, the first save leaves the router and every device without DNS, so turn
+Force DoH off before uninstalling.
 
 `force_dns` is set to 0, which is the entire disable: the https-dns-proxy init
 script drops its whole forcing block unless `force_dns` is 1, so the port list

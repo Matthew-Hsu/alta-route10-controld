@@ -492,8 +492,10 @@ release and stay on it, see [Versioning](docs/technical-details.md#versioning).
 sh /cfg/uninstall.sh            # --force skips the confirmation
 ```
 
-It verifies its own removal on the way out. **Before a factory reset,
-uninstall first.** See [Uninstalling](docs/technical-details.md#uninstalling) for exactly what gets
+It verifies its own removal on the way out. If Force DoH is on in Alta
+Control, turn it off first: without this project, the next settings save
+leaves the router with no DNS. **Before a factory reset, uninstall first.**
+See [Uninstalling](docs/technical-details.md#uninstalling) for exactly what gets
 removed and what doesn't.
 
 ## Troubleshooting

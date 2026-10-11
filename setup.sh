@@ -1795,6 +1795,10 @@ fi
 # port in dnsmasq's servers is asked directly instead. With it off, dnsmasq and
 # the ISP's DNS are the fallback, so dnsmasq is what gets asked.
 #
+# Force DoH (1.5i and later) stops dnsmasq reading the ISP's servers. With it
+# on, https-dns-proxy not answering means nothing answers once ctrld stops,
+# and the warning said the ISP's DNS would.
+#
 # A warning, not a failed install: devices resolve through ctrld, which the
 # check above has just seen answer. post-cfg.sh restarted https-dns-proxy
 # moments ago, so it gets a few tries before it counts as not answering; each
@@ -1806,6 +1810,8 @@ if command -v alta_doh_on >/dev/null 2>&1 && alta_doh_on; then
     _fb_port="${_fb_port:-5053}"
     if wait_for 5 2 check_dns "127.0.0.1#${_fb_port}"; then
         print_ok "Fallback DNS answering (https-dns-proxy on port ${_fb_port})"
+    elif command -v alta_force_doh_on >/dev/null 2>&1 && alta_force_doh_on; then
+        print_warn "https-dns-proxy not answering on port ${_fb_port} — with Force DoH on, if ctrld stops, devices will have no DNS"
     else
         print_warn "https-dns-proxy not answering on port ${_fb_port} — if ctrld stops, only your ISP's DNS will answer"
     fi

@@ -183,7 +183,7 @@ printf "\n  ${BOLD}Summary:${RESET}  %d file(s), %d cron job(s), %d iptables rul
 
 printf "\n  After removal, your devices use the router's own DNS (dnsmasq), which\n"
 printf "  keeps the servers Alta Control's DNS settings give it. https-dns-proxy\n"
-printf "  is pointed at Quad9, and restarted if Use DoH is on in Alta Control.\n"
+printf "  is pointed at Cloudflare, and restarted if Use DoH is on in Alta Control.\n"
 printf "\n  Only this project's DNS redirect rules are removed. Your port\n"
 printf "  forwards, UPnP mappings and other firewall rules are untouched,\n"
 printf "  and no reboot is needed.\n"
@@ -365,14 +365,24 @@ print_step "Restoring default DNS services..."
 # set_fallback_resolver reads from uci rather than assuming: on a router with a
 # fourth instance, that one kept pointing at the user's ControlD profile after
 # an uninstall run to stop being routed through it.
+#
+# The resolver is Cloudflare. This used to name Quad9, which refuses every
+# request these proxies can make. Since 1.5h the firmware runs each instance
+# with -x (use_http1='1'), and the router's libcurl lists no HTTP/2 library,
+# so the proxies speak HTTP/1.1 and Quad9 answers 505 HTTP Version Not
+# Supported. After an uninstall nothing answered on their ports. With Use DoH
+# alone, dnsmasq still asked the ISP and the failure stayed hidden. With
+# Force DoH on in Alta Control it had no other server, and every device lost
+# DNS. Cloudflare and Google both answer DoH over HTTP/1.1 from a Route 10.
+#
 # Restarted only while Use DoH is on in Alta Control, the rule post-cfg.sh
 # follows: on firmware 1.5h a restart is also a start, and with DoH off it
 # would turn the fallback back on against the setting.
-if reset_fallback_resolver "https://dns.quad9.net/dns-query" "9.9.9.9"; then
+if reset_fallback_resolver "https://cloudflare-dns.com/dns-query" "1.1.1.1"; then
     if restart_fallback; then
-        print_ok "https-dns-proxy restarted (Quad9)"
+        print_ok "https-dns-proxy restarted (Cloudflare)"
     else
-        print_info "https-dns-proxy pointed at Quad9 — Use DoH is off in Alta Control, so it stays stopped"
+        print_info "https-dns-proxy pointed at Cloudflare — Use DoH is off in Alta Control, so it stays stopped"
     fi
 else
     print_warn "No https-dns-proxy instances found — check 'uci show https-dns-proxy'"

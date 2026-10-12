@@ -70,7 +70,10 @@ bootstrap lookups may still use plain DNS, but https-dns-proxy here bootstraps
 from ControlD's own address, which `post-cfg.sh` sets, so those do not reach
 the ISP either. With Force DoH on, this path is ControlD alone. The cost is
 that nothing else answers when https-dns-proxy does not: the router's own
-lookups fail, and if `ctrld` is down too, so does every device's. With this
+lookups fail, and if `ctrld` is down too, so does every device's. An outage at
+ControlD stops both at once, because `ctrld` asks ControlD as well.
+[Troubleshooting](troubleshooting.md#every-device-loses-dns-during-a-controld-outage)
+shows how to use your ISP's DNS until it ends. With this
 project installed on 1.5j, the router kept resolving across a settings save
 and came back resolving after a reboot. With the router's DOH switch off as
 well, only `post-cfg.sh` starts the proxy again after a save, which is why

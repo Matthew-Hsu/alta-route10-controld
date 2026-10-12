@@ -56,6 +56,62 @@
    hand, read it before rebooting: the firmware runs it while applying its own
    config, so a script that hangs holds up the router's boot.
 
+## Every device loses DNS during a ControlD outage
+
+**Symptom:** nothing on the network resolves, the router included, and a
+reboot does not help. Force DoH is on in Alta Control. `status.sh` may say the
+DNS redirects were removed.
+
+**Cause:** ControlD itself is not answering. `ctrld` asks ControlD, and so
+does the router's own fallback, so one outage takes both down, and with Force
+DoH on dnsmasq has nothing else to ask.
+[The fallback path](technical-details.md#architecture) explains how they
+connect. With Force DoH off, dnsmasq falls back to your ISP's DNS instead, so
+the same outage costs you ControlD's filtering rather than your DNS.
+
+**Check:** on the router, send one DNS-over-HTTPS query to the address your
+fallback uses, then the same query to Cloudflare. Neither command needs
+working DNS, and the first reads your resolver from the fallback's settings
+without printing it:
+
+```sh
+Q='dns=AAABAAABAAAAAAAAB2V4YW1wbGUDY29tAAABAAE'   # a query for example.com
+URL=$(uci -q get 'https-dns-proxy.@https-dns-proxy[0].resolver_url')
+curl -s -m 10 -o /dev/null -w 'ControlD:   %{http_code}\n' \
+  -H 'accept: application/dns-message' \
+  --resolve dns.controld.com:443:76.76.2.22 "$URL?$Q"
+curl -s -m 10 -o /dev/null -w 'Cloudflare: %{http_code}\n' \
+  -H 'accept: application/dns-message' \
+  --resolve cloudflare-dns.com:443:1.1.1.1 "https://cloudflare-dns.com/dns-query?$Q"
+```
+
+If both print 200, ControlD is answering and the problem is elsewhere, so
+start at [DNS not working after setup](#dns-not-working-after-setup). If only
+Cloudflare prints 200, ControlD is down. If neither does, the router cannot
+reach the internet, and no DNS setting will fix that.
+
+**Fix:** wait it out, or use your ISP's DNS until ControlD is back. Turning
+Force DoH off in Alta Control would do that, but the save may not reach a
+router whose own DNS is down, so make the same change over SSH:
+
+```sh
+uci set 'dhcp.@dnsmasq[0].noresolv=0' && uci commit dhcp && /etc/init.d/dnsmasq restart
+```
+
+dnsmasq then answers from your ISP's DNS, in plain text and without
+ControlD's filtering. Your devices reach it once the watchdog has removed the
+redirects to `ctrld`, which it does on its own within about ten minutes; step
+3 of [DNS not working after setup](#dns-not-working-after-setup) removes them
+straight away.
+
+When the ControlD check above prints 200 again, turn Force DoH back on:
+
+```sh
+uci set 'dhcp.@dnsmasq[0].noresolv=1' && uci commit dhcp && /etc/init.d/dnsmasq restart
+```
+
+The watchdog puts the redirects back by itself once `ctrld` answers.
+
 ## ctrld keeps crashing
 
 **Possible causes:**
@@ -106,6 +162,9 @@ every bridge. Removing them hands resolution back to dnsmasq, which keeps every
 client resolving without per-device visibility. It asks ControlD through
 https-dns-proxy and your ISP's DNS side by side while Use DoH is on in Alta
 Control, as [the fallback path](technical-details.md#architecture) describes.
+If nothing resolves even so and Force DoH is on, ControlD itself is probably
+down, as in
+[Every device loses DNS during a ControlD outage](#every-device-loses-dns-during-a-controld-outage).
 
 Look for `ctrld will not start` in the log below: that means the binary or
 `/cfg/ctrld.toml` is the problem, not the upstream protocol.

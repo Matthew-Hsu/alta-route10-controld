@@ -68,8 +68,11 @@ recorded in
 
 The two can run together. This project uses the router's own DNS as its
 fallback while `ctrld` is down, and starts the proxy again if a save leaves it
-stopped. With Force DoH off, that fallback asks your ISP's DNS too; with it on,
-ControlD alone. If you turn Force DoH on, check that the router's DOH switch is
+stopped. With Force DoH off, that fallback asks your ISP's DNS too. With it on,
+it asks ControlD alone, so an outage at ControlD leaves every device without
+DNS until it ends or you
+[switch to your ISP's for a while](docs/troubleshooting.md#every-device-loses-dns-during-a-controld-outage).
+If you turn Force DoH on, check that the router's DOH switch is
 on before you [uninstall](#uninstall). How this project treats your DoH
 settings is under [Not Supported](#not-supported).
 

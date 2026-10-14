@@ -3024,9 +3024,9 @@ assert_false "restart_fallback does nothing while DoH is off" restart_fallback
 : > "$UCI_STORE"
 assert_false "no servers at all reads as off" alta_doh_on
 
-# Force DoH, as the firmware leaves it: dnsmasq's noresolv. Without this
-# project nothing restarts https-dns-proxy after a settings save, and with
-# noresolv set dnsmasq has no other server, so uninstall.sh warns on it.
+# Force DoH, as the firmware leaves it: dnsmasq's noresolv. With noresolv set
+# dnsmasq has no other server than https-dns-proxy, which uninstall.sh warns
+# about when nothing will start it again after a settings save.
 : > "$UCI_STORE"
 uci set 'dhcp.@dnsmasq[0].noresolv=1'
 assert_true "alta_force_doh_on reads noresolv=1 as Force DoH on" alta_force_doh_on
@@ -3034,6 +3034,25 @@ uci set 'dhcp.@dnsmasq[0].noresolv=0'
 assert_false "and noresolv=0 as off" alta_force_doh_on
 : > "$UCI_STORE"
 assert_false "no noresolv at all reads as off" alta_force_doh_on
+
+# The router's own DOH switch, as 1.5j leaves it in /cfg/config.json. With it
+# off, a settings save stops https-dns-proxy and nothing in the firmware starts
+# it again. That was once read as every 1.5j router's behaviour, and
+# uninstall.sh warned everyone with Force DoH on to turn it off.
+ALTA_SAVED_CONFIG="$ALTA_CONFIG"
+ALTA_CONFIG="$TMPDIR/alta-config.json"
+printf '{"leds":"default","nodoh":true,"forceDoH":true}' > "$ALTA_CONFIG"
+assert_true "alta_router_doh_off reads \"nodoh\":true as the switch off" alta_router_doh_off
+printf '{\n  "nodoh": true\n}\n' > "$ALTA_CONFIG"
+assert_true "with a space after the colon too" alta_router_doh_off
+printf '{"leds":"default","forceDoH":true}' > "$ALTA_CONFIG"
+assert_false "no nodoh key as on, which is how the firmware writes it on" alta_router_doh_off
+printf '{"nodoh":false}' > "$ALTA_CONFIG"
+assert_false "\"nodoh\":false as on" alta_router_doh_off
+rm -f "$ALTA_CONFIG"
+assert_false "and no config at all as on" alta_router_doh_off
+ALTA_CONFIG="$ALTA_SAVED_CONFIG"
+unset ALTA_SAVED_CONFIG
 
 PATH="$FD_SAVED_PATH"
 unset UCI_STORE FW_USER SYSFS_NET DNS_PORT FORCED_DNS
@@ -5788,6 +5807,29 @@ assert_contains "it says it is incomplete" "$SU_OUT" "Uninstall incomplete"
 assert_contains "with a non-zero exit" "$SU_OUT" "rc=1"
 unset SU_OUT SU_BIN
 
+describe "uninstall.sh — warns about Force DoH only while the router's DOH switch is off"
+
+# With Force DoH on, dnsmasq asks https-dns-proxy alone. With the router's own
+# DOH switch off as well, the first settings save after an uninstall stops the
+# proxy and nothing starts it again, so every device loses DNS. With the switch
+# on, its default, the save restarts the proxy. The warning used to fire on
+# Force DoH alone, which told everyone with the default to turn Force DoH off.
+SV_FORCE_DOH=1 sv_run "$SV/uninstall-fd" good >/dev/null
+printf '{"leds":"default","nodoh":true,"forceDoH":true}' > "$SV/uninstall-fd/cfg/config.json"
+SU_OUT="$(su_run "$SV/uninstall-fd" 'n\n')"
+assert_contains "Force DoH on with the switch off is warned about" "$SU_OUT" \
+    "Force DoH is on and the router's DOH switch is off in Alta Control — the next settings save leaves the LAN without DNS"
+assert_contains "with where the switch is" "$SU_OUT" "in the Network tab under the Route 10's Advanced settings"
+assert_contains "and N at the prompt still changes nothing" "$SU_OUT" "No changes made"
+printf '{"leds":"default","forceDoH":true}' > "$SV/uninstall-fd/cfg/config.json"
+SU_OUT="$(su_run "$SV/uninstall-fd" 'n\n')"
+assert_not_contains "Force DoH on with the switch on is not" "$SU_OUT" "router's DOH switch is off"
+printf '{"leds":"default","nodoh":true}' > "$SV/uninstall-fd/cfg/config.json"
+rm -f "$SV/uninstall-fd/force.doh"
+SU_OUT="$(su_run "$SV/uninstall-fd" 'n\n')"
+assert_not_contains "and neither is the switch off with Force DoH off" "$SU_OUT" "router's DOH switch is off"
+unset SU_OUT
+
 describe "setup.sh — the Bootstrap IP prompt says what it is for"
 
 # Everyone was asked for a Bootstrap IP with nothing on what it does, and for a
@@ -6604,9 +6646,10 @@ assert_false "uninstall.sh names no instance by index" \
 # to fail from coming back.
 assert_false "uninstall.sh does not reset the fallback to Quad9" \
     code_grep "$SCRIPT_DIR/uninstall.sh" 'dns.quad9.net'
-# The warning is only worth giving before the prompt, while Force DoH can
-# still be turned off with this project's post-cfg.sh covering that save.
-FD_WARN_AT="$(code_lineno "$SCRIPT_DIR/uninstall.sh" 'alta_force_doh_on; then')"
+# The warning is only worth giving before the prompt, while the router's DOH
+# switch can still be turned on with this project's post-cfg.sh covering that
+# save.
+FD_WARN_AT="$(code_lineno "$SCRIPT_DIR/uninstall.sh" 'alta_router_doh_off; then')"
 FD_PROMPT_AT="$(code_lineno "$SCRIPT_DIR/uninstall.sh" 'Remove all ControlD configuration')"
 assert_true "uninstall.sh checks Force DoH" [ -n "$FD_WARN_AT" ]
 assert_true "and does so before its prompt" [ "${FD_WARN_AT:-0}" -lt "${FD_PROMPT_AT:-0}" ]

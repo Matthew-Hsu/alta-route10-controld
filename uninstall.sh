@@ -185,15 +185,19 @@ printf "\n  After removal, your devices use the router's own DNS (dnsmasq), whic
 printf "  keeps the servers Alta Control's DNS settings give it. https-dns-proxy\n"
 printf "  is pointed at Cloudflare, and restarted if Use DoH is on in Alta Control.\n"
 
-# Force DoH leaves dnsmasq nothing to ask but https-dns-proxy, and the firmware
-# stops https-dns-proxy on every settings save without starting it again. The
-# post-cfg.sh this removes is what started it, so the first save after an
-# uninstall left the router and every device without DNS. Said before the
-# prompt, so it can be turned off while this project still covers the save.
-# Guarded like setup.sh's alta_doh_on call, for an older lib.sh in /cfg.
-if command -v alta_force_doh_on >/dev/null 2>&1 && alta_force_doh_on; then
+# Force DoH leaves dnsmasq nothing to ask but https-dns-proxy, and with the
+# router's own DOH switch off the firmware stops https-dns-proxy on every
+# settings save without starting it again. The post-cfg.sh this removes is what
+# started it, so the first save after an uninstall left the router and every
+# device without DNS. With the switch on, as it is by default, the save restarts
+# the proxy, and this warning used to fire there too, which sent people to turn
+# Force DoH off for nothing. Said before the prompt, so the switch can be turned
+# on while this project still covers the save. Guarded like setup.sh's
+# alta_doh_on call, for an older lib.sh in /cfg.
+if command -v alta_router_doh_off >/dev/null 2>&1 && alta_force_doh_on && alta_router_doh_off; then
     printf "\n"
-    print_warn "Force DoH is on in Alta Control — turn it off first, or the next settings save leaves the LAN without DNS"
+    print_warn "Force DoH is on and the router's DOH switch is off in Alta Control — the next settings save leaves the LAN without DNS"
+    print_info "Turn DOH on first, in the Network tab under the Route 10's Advanced settings"
 fi
 printf "\n  Only this project's DNS redirect rules are removed. Your port\n"
 printf "  forwards, UPnP mappings and other firewall rules are untouched,\n"

@@ -78,6 +78,13 @@ dnsmasq. An outage below is the span of failed probes.
   expected, nothing duplicated, and the second run re-downloading `lib.sh`
   rather than reusing the copy the first left in `/tmp`
 
+- **A re-install with `ctrld` ahead of the pin, 1.13.0 on 1.5j.** After the
+  weekly update had moved the router to 1.5.8, re-running `setup.sh` from
+  `master`, still pinned to 1.5.7, printed `ctrld 1.5.8 is newer than the 1.5.7
+  pin — left as it is` and fetched no release. Afterwards `ctrld --version` and
+  `CTRLD_VERSION` still read 1.5.8, the redirects were back on all six bridges,
+  and `status.sh` and `audit.sh` both exited 0.
+
 - **What a config rewrite keeps.** `write_env_file` run on the device, against
   the router's own `lib.sh` and its BusyBox `awk` and `sed`, carried
   `LAN_IFACES_EXCLUDE="br-lan_40"   # guest wifi` and a commented `DNS_PORT`
@@ -302,6 +309,18 @@ dnsmasq. An outage below is the span of failed probes.
   ran, since every other path under `--now` either prints or exits non-zero.
   With the fix that shipped in 1.11.0, the same command on the same router
   answered `already on v1.5.7 — nothing to update`.
+
+- **A real weekly update, 1.13.0 on 1.5j.** With the 1.13.0 release installed
+  from `master` and `ctrld` at its 1.5.7 pin, the Monday cron moved the router
+  to 1.5.8 unattended. The next day `ctrld --version` and `CTRLD_VERSION` both
+  read 1.5.8, `/cfg/ctrld.prev` was the 6,877,476-byte 1.5.7 binary it
+  replaced, and `status.sh` and `audit.sh` both exited 0. The updater puts the
+  old binary back when the new one fails its lookup after the install, so this
+  one passed. The job ran at 03:00 by the router's clock, which keeps local
+  time, seven hours behind UTC here, so its log lines would have been stamped
+  10:00. They had rotated out before anyone looked, which leaves open whether
+  the checksum was verified or skipped. `/cfg` held both binaries with 10.4 MB
+  of its 26.2 MB free.
 
 - **Where the boot hook's log lines go.** They do reach `/tmp/log/messages`,
   but they carry pre-NTP timestamps, dated `Oct 24 09:02` on this router, and

@@ -17,7 +17,7 @@ VERSION="1.13.0"
 # bump silently pointed setup.sh at a ctrld release that does not exist.
 # The version actually installed on a router is CTRLD_VERSION in
 # /cfg/controld.env, which the weekly updater moves forward from this pin.
-CTRLD_PIN="1.5.7"
+CTRLD_PIN="1.5.8"
 
 # Set while the watchdog has torn the DNS redirects down to keep the LAN
 # resolving; cleared as soon as the rules go back.

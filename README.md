@@ -87,7 +87,7 @@ text, as [the fallback path](docs/technical-details.md#architecture) explains.
 > `1.5g` through `1.5j`, across six LAN bridges;
 > [docs/hardware-verification.md](docs/hardware-verification.md) records what
 > was watched happen. A few paths pass the test suite but have not been run on
-> a real router, a real auto-update among them. See [Verification
+> a real router, an auto-update's rollback among them. See [Verification
 > Status](#verification-status) before relying on them. **DNS interception is
 > IPv4-only**, and that plus the project's other limits are in [Not
 > Supported](#not-supported).
@@ -543,8 +543,7 @@ correct, but no one has run them on a real device:
 | **An uninstall on more than three `https-dns-proxy` instances** | `uninstall.sh` loops on uci instead of naming instances 0, 1 and 2, so a fourth is no longer left pointing at your ControlD profile. A full uninstall is verified on the three a Route 10 ships, which is the case the loop replaced; no router here has carried a fourth for the loop itself to be proven on. |
 | **Two `post-cfg.sh` runs at once** | Runs take a lock and a second one waits for the first. An install that landed on firmware 1.5i's per-minute run failed before the lock existed; since then no two runs on a router have overlapped, so the waiting has only run in the test suite. |
 | **The watchdog lock under contention** | Two cycles overlapping. The fix that makes overlap unlikely also makes it hard to observe: every hardware run took and released the lock cleanly, but no two ever raced. |
-| **Keeping a `ctrld` newer than the pin** | A re-install must not roll a newer binary back to `CTRLD_PIN`. Unit-tested; no router has been ahead of the pin to try it on. |
-| **A real auto-update** | `controld-update.sh`'s version comparison, checksum verification and rollback are unit-tested. No router has taken an actual upgrade through it. |
+| **An auto-update that has to back out** | `controld-update.sh`'s checksum check and rollback are unit-tested. A router has taken a real upgrade through it, from 1.5.7 to 1.5.8, as [docs/hardware-verification.md](docs/hardware-verification.md#boot-persistence-and-recovery) records, but none has met a bad checksum or a release that failed to resolve. |
 | **A quoted `FORCED_DNS` through a real firmware update** | Config rewriting is verified on a Route 10, protocol change included. The one case standing in for the real thing is `uci` being unable to answer, which was a stub rather than a router that had just been updated. |
 | **Reconciliation on the paths that only run while DNS is failing** | The divergence and every repair for it are now verified on hardware, but two paths there are not, because both need DNS to actually fail on the device: the fallback loop seeding its chain from the reconciled protocol rather than the recorded one, and a reboot landing between a retarget and the record of its result, the interruption that produces the divergence in the first place. |
 

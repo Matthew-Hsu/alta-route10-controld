@@ -448,6 +448,10 @@ dnsmasq. An outage below is the span of failed probes.
 
 ## Alta Control's DNS Settings
 
+The entries below that see a settings save stop https-dns-proxy and leave it
+stopped fit the router's own DOH switch being off. It was found off on 1.5j,
+in the last entry of this section, and when it was turned off is not known.
+
 - **A settings save re-runs `post-cfg.sh`, on 1.5h.** Saving any change on
   the DNS page in Alta Control, a local DNS record included, re-applied the
   router's whole config: the firmware stopped https-dns-proxy, reloaded the
@@ -570,6 +574,26 @@ dnsmasq. An outage below is the span of failed probes.
   and with its real address from 1.1.1.1 asked directly. No rule in the nat,
   filter or mangle tables matched port 53 or 853, and 1.1.1.1 did not know
   `r10test`, so a device that names its own DNS server bypasses ControlD.
+
+- **The router's own DOH switch, 1.13.0 on 1.5j.** Alta could not reproduce
+  the stop in the entry above, which is how this was found. Clicking the
+  Route 10 in Alta Control's Network tab opens its own settings, which have a
+  DOH switch under Advanced, apart from Use DoH and Force DoH on the DNS page.
+  Its help text reads "Disable DNS over HTTPS (DOH) on this device, which may
+  break controller DNS resolution. DOH is enabled by default on Alta devices."
+  It was off, turned off while troubleshooting at a time no one recorded, and
+  `/cfg/config.json` held `"nodoh":true` at its top level. Turning Use DoH off
+  and on again, a save each time, wrote and removed `"useDoH":false` and left
+  `nodoh` alone. With the switch off, `cfg` ran
+  `/etc/init.d/https-dns-proxy stop` early in a save whenever the proxy was
+  running, then `diff -q` on the proxy's config, then `stop` again when that
+  config had changed. It never ran `start`, and `post-cfg.sh` started the
+  proxy again each time. Turned on, `nodoh` was gone, and the first save
+  logged afterwards ran `diff -q` and then
+  `/etc/init.d/https-dns-proxy restart`, with no `stop` before it. So did the
+  last of two TTL saves after that, to 301 and back to 300, and three proxy
+  processes were running afterwards. A save with the switch on and this
+  project uninstalled was not tried.
 
 ## Protocol Reconciliation
 

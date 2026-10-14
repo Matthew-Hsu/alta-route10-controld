@@ -85,6 +85,18 @@ dnsmasq. An outage below is the span of failed probes.
   `CTRLD_VERSION` still read 1.5.8, the redirects were back on all six bridges,
   and `status.sh` and `audit.sh` both exited 0.
 
+- **An upgrade that downloads the new pin, 1.13.1 on 1.5j.** The router ran
+  1.13.0 with `ctrld` 1.5.8, which 1.13.1 also pins. Upgrading with the
+  README's command, `setup.sh` re-downloaded 1.5.8, since it keeps only a
+  `ctrld` strictly newer than the pin, and printed `Download verified against
+  published SHA-256` and `ctrld binary installed to /cfg/ctrld`. Its own
+  checks found `ctrld` answering on 5354, the redirects on all six bridges and
+  the fallback answering. Afterwards `status.sh --version` read
+  `controld-tools 1.13.1 (pins ctrld 1.5.8)`, `ctrld --version` read v1.5.8,
+  `status.sh` and `audit.sh` both exited 0, and the six scripts in `/cfg`
+  matched `master` by md5. This is the first time the installer, rather than
+  the weekly updater, fetched 1.5.8 on a router.
+
 - **What a config rewrite keeps.** `write_env_file` run on the device, against
   the router's own `lib.sh` and its BusyBox `awk` and `sed`, carried
   `LAN_IFACES_EXCLUDE="br-lan_40"   # guest wifi` and a commented `DNS_PORT`

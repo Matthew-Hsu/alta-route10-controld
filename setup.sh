@@ -753,8 +753,10 @@ if [ "$ALTA_DOH" = "1" ]; then
     # combing through to find out what went wrong.
     _hdp_before="$(uci -q show https-dns-proxy 2>/dev/null)"
     command -v set_fallback_resolver >/dev/null 2>&1 && { set_fallback_resolver "$RESOLVER_ID" "$BOOTSTRAP_IP" || true; }
-    # This is also what starts it. Firmware 1.5h stops https-dns-proxy on every
-    # settings save, with DoH on too, and does not start it again.
+    # This is also what starts it. With the router's own DOH switch off in Alta
+    # Control, every settings save stops https-dns-proxy, with Use DoH on too,
+    # and nothing in the firmware starts it again. With the switch on, its
+    # default, a save does not leave it stopped.
     #
     # Only when it is stopped or its settings just changed, though. Firmware
     # 1.5i runs this script every minute, and restarting a service that is

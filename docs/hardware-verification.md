@@ -557,6 +557,19 @@ in the last entry of this section, and when it was turned off is not known.
   https-dns-proxy, dnsmasq and `ctrld` all answered, and `noresolv` was still
   1.
 
+- **The commands for a ControlD outage, 1.13.0 on 1.5j.** These are the
+  check, fix and undo from the troubleshooting entry for a ControlD outage,
+  run on a healthy router with Force DoH on and `ctrld` at 1.5.8. The check
+  printed 200 for ControlD and 200 for Cloudflare, so the resolver URL read
+  from the fallback's settings worked, and `--resolve` reached both servers
+  without asking DNS. Then `noresolv` was set to 0 and back to 1, each
+  committed with dnsmasq restarted, and three seconds after each restart
+  dnsmasq answered `example.com` on `127.0.0.1`. With ControlD answering, that
+  shows the commands leave dnsmasq working, not that it turns to the ISP's
+  servers when ControlD stops answering. That needs an outage, and so does
+  whether a save in Alta Control reaches a router whose own DNS is down.
+  Neither was tried.
+
 - **DoH Servers without this project, on 1.5j.** This ran with the project
   uninstalled. Use DoH, Force DoH and Parallel Queries were on, DoH Servers
   held the ControlD profile's URL alone, Bootstrap Servers were at Defaults,

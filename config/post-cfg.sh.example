@@ -28,7 +28,8 @@ case " $(uci -q get 'dhcp.@dnsmasq[0].server' 2>/dev/null) " in
             i=$((i + 1))
         done
         uci commit https-dns-proxy
-        # Also what starts it: firmware 1.5h stops it on every settings save
+        # Also what starts it: with the router's own DOH switch off in Alta
+        # Control, every settings save stops it
         /etc/init.d/https-dns-proxy restart
         ;;
 esac

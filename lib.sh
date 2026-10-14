@@ -1851,9 +1851,10 @@ alta_router_doh_off() {
 }
 
 # Restart https-dns-proxy so a changed setting takes effect, but only while Use
-# DoH is on. Firmware 1.5h stops the service on every settings save and leaves
-# it stopped, so a restart here is also a start, and with DoH off that would
-# override the setting. Returns non-zero, having done nothing, when DoH is off.
+# DoH is on. When the service is stopped, as a settings save leaves it with the
+# router's own DOH switch off, a restart here is also a start, and with DoH off
+# that would override the setting. Returns non-zero, having done nothing, when
+# DoH is off.
 restart_fallback() {
     alta_doh_on || return 1
     /etc/init.d/https-dns-proxy restart >/dev/null 2>&1 || true

@@ -1824,12 +1824,30 @@ alta_doh_on() {
 # settings.
 #
 # The firmware writes the toggle as dnsmasq's noresolv, so dnsmasq stops
-# reading the ISP's servers and https-dns-proxy is all it has left. On 1.5j a
-# settings save stops https-dns-proxy and nothing in the firmware starts it
-# again. post-cfg.sh does while this project is installed; after an uninstall
-# the next save left the router and every device without DNS.
+# reading the ISP's servers and https-dns-proxy is all it has left. With the
+# router's own DOH switch off (alta_router_doh_off), a settings save stops
+# https-dns-proxy and nothing in the firmware starts it again. post-cfg.sh does
+# while this project is installed; after an uninstall the next save left the
+# router and every device without DNS.
 alta_force_doh_on() {
     [ "$(uci -q get 'dhcp.@dnsmasq[0].noresolv' 2>/dev/null)" = "1" ]
+}
+
+# Where the firmware keeps the settings Alta Control sends it. Overridable so
+# tests can point at a fixture.
+ALTA_CONFIG="${ALTA_CONFIG:-/cfg/config.json}"
+
+# Whether the router's own DOH switch is off in Alta Control. It is not on the
+# DNS page but under Advanced in the Route 10's own settings, which open when
+# it is clicked in the Network tab. It is on by default.
+#
+# The firmware stores it off as "nodoh":true, seen on 1.5j. With it off, every
+# settings save stops https-dns-proxy and leaves it stopped, while Use DoH still
+# points dnsmasq at it. With it on, a save does not leave it stopped. Should a
+# later firmware rename the key, this reads as on, and uninstall.sh's warning
+# stops appearing.
+alta_router_doh_off() {
+    grep -q '"nodoh": *true' "$ALTA_CONFIG" 2>/dev/null
 }
 
 # Restart https-dns-proxy so a changed setting takes effect, but only while Use

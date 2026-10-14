@@ -762,3 +762,14 @@ in the last entry of this section, and when it was turned off is not known.
   printed `[~~] Force DoH is on in Alta Control — turn it off first, or the
   next settings save leaves the LAN without DNS`, under a paragraph naming
   Cloudflare as the fallback. It closed on `[OK] Aborted. No changes made.`
+
+- **The Force DoH warning with the router's DOH switch read, 1.13.0 on
+  1.5j.** The change that narrowed the warning to Force DoH with the switch
+  off was run the same way, from a scratch directory with N piped to its
+  prompt. With Force DoH and the switch both on, it printed no warning and
+  closed on `[OK] Aborted. No changes made.` With `ALTA_CONFIG` pointed at a
+  file holding `{"nodoh":true}`, a second run printed `[~~] Force DoH is on
+  and the router's DOH switch is off in Alta Control — the next settings save
+  leaves the LAN without DNS` and a line saying where to find the switch, then
+  aborted the same way. That line was worded less precisely at the time; it
+  now names the Network tab, where the switch is.

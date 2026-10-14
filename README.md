@@ -45,7 +45,6 @@ scripts on the router. Here is how that setting compares with this project:
 
 | | DoH Servers in Alta Control | This project |
 |---|---|---|
-| After a settings save in Alta Control | on 1.5j the firmware stops the DoH proxy and does not start it again, so your DNS goes to your ISP in plain text, or nowhere with Force DoH on | keeps resolving: it starts the proxy again after every save |
 | Your ISP's DNS | also asked, in plain text, so your ISP sees what is looked up and its answer can skip ControlD's filtering. Force DoH (1.5i and later) turns this off | not asked for your devices' queries while `ctrld` is running, [IPv6](#ipv6) aside |
 | What the ControlD dashboard shows | every query as coming from the router | each device separately, VLANs included |
 | Different profiles for different devices | one profile for the whole network | per device or per subnet, with [split DNS](docs/technical-details.md#split-dns-and-per-device-policy) |
@@ -53,11 +52,13 @@ scripts on the router. Here is how that setting compares with this project:
 | Devices with a hardcoded DNS server | not redirected, so a device that asks another server skips ControlD's blocking | caught on port 53 by every install, and on port 853 (DNS-over-TLS) once [forced DNS](#turn-on-forced-dns) is on |
 | Local DNS Records in Alta Control | work | do not work, see [Not Supported](#not-supported) |
 
-The first row is the one to weigh. Force DoH, which firmware 1.5i added next
-to Use DoH, keeps your ISP out. On 1.5j, though, every settings save stops the
-proxy that DoH Servers relies on, and the firmware leaves it stopped. With
-Force DoH off your DNS then goes back to your ISP without telling you; with it
-on, the router and every device lose DNS until the proxy is started again.
+Force DoH, which firmware 1.5i added next to Use DoH, keeps your ISP out. Both
+settings rely on the router's own DOH switch, which is on by default. It is not
+on the DNS page: click the Route 10 in Alta Control's Network tab, and it is
+under Advanced. With it off, every settings save stops the proxy that DoH
+Servers relies on, and the firmware leaves it stopped. With Force DoH off your DNS then goes back to your
+ISP without telling you; with it on, the router and every device lose DNS
+until the proxy is started again.
 [The fallback path](docs/technical-details.md#architecture) explains how the
 router's own DNS uses ControlD and your ISP.
 
@@ -66,11 +67,11 @@ recorded in
 [docs/hardware-verification.md](docs/hardware-verification.md#alta-controls-dns-settings).
 
 The two can run together. This project uses the router's own DNS as its
-fallback while `ctrld` is down, and starts the proxy again after every save.
-With Force DoH off, that fallback asks your ISP's DNS too; with it on,
-ControlD alone. If you turn Force DoH on, turn it off again before you
-[uninstall](#uninstall). How this project treats your DoH settings is under
-[Not Supported](#not-supported).
+fallback while `ctrld` is down, and starts the proxy again if a save leaves it
+stopped. With Force DoH off, that fallback asks your ISP's DNS too; with it on,
+ControlD alone. If you turn Force DoH on, check that the router's DOH switch is
+on before you [uninstall](#uninstall). How this project treats your DoH
+settings is under [Not Supported](#not-supported).
 
 ## Get Started
 

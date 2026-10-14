@@ -44,10 +44,14 @@ LAN Devices (router-assigned DNS, or a hardcoded server)
 Alta Control's DNS settings (Settings → Networks → DNS). With it off, dnsmasq forwards
 to your ISP's DNS servers instead, unencrypted, and `post-cfg.sh` leaves
 https-dns-proxy stopped rather than override the setting. The firmware says
-which it is in dnsmasq's servers, and `post-cfg.sh` reads it from there. On
-firmware 1.5h and 1.5j, `post-cfg.sh` is also what keeps https-dns-proxy
-running: the firmware stops it on every settings save and does not start it
-again.
+which it is in dnsmasq's servers, and `post-cfg.sh` reads it from there.
+`post-cfg.sh` also starts https-dns-proxy when it finds it stopped, which
+matters when the router's own DOH switch is off. That switch is not on the DNS
+page: click the Route 10 in Alta Control's Network tab, and it is under
+Advanced, on by default. With it off, every settings save stops https-dns-proxy and the
+firmware does not start it again, while Use DoH still points dnsmasq at it.
+The firmware stores it off as `"nodoh":true` in `/cfg/config.json`. With it
+on, a save does not leave the proxy stopped.
 
 With Use DoH on and Force DoH off, dnsmasq does not use https-dns-proxy alone.
 It also forwards to the DNS servers your ISP hands the router, in plain text,
@@ -67,12 +71,12 @@ from ControlD's own address, which `post-cfg.sh` sets, so those do not reach
 the ISP either. With Force DoH on, this path is ControlD alone. The cost is
 that nothing else answers when https-dns-proxy does not: the router's own
 lookups fail, and if `ctrld` is down too, so does every device's. With this
-project installed on 1.5j, the router kept resolving across a settings save,
-after which `post-cfg.sh` starts https-dns-proxy again, and came back
-resolving after a reboot. Without this project nothing restarts it after a
-save, which is why `uninstall.sh` warns when Force DoH is on. This project
-leaves dnsmasq's settings to the firmware, so Force DoH is yours to turn on or
-off in Alta Control.
+project installed on 1.5j, the router kept resolving across a settings save
+and came back resolving after a reboot. With the router's DOH switch off as
+well, only `post-cfg.sh` starts the proxy again after a save, which is why
+`uninstall.sh` warns when it finds both. This project leaves dnsmasq's
+settings to the firmware, so Force DoH is yours to turn on or off in Alta
+Control.
 
 ```
 LAN Devices --port 53--> +----------+  port 5053/5054/5055  +-----------------+   +-----------+

@@ -295,7 +295,7 @@ if [ -z "$DNS_TYPE" ]; then
             if [ ! -x /cfg/ctrld ]; then
                 print_info "Downloading ctrld for benchmark..."
                 _asset="ctrld_${CTRLD_PIN}_linux_arm64.tar.gz"
-                wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${CTRLD_PIN}/${_asset}" >/dev/null 2>&1 || die "Download failed"
+                fetch_url "https://github.com/Control-D-Inc/ctrld/releases/download/v${CTRLD_PIN}/${_asset}" /tmp/ctrld.tar.gz >/dev/null 2>&1 || die "Download failed"
                 # set -e is on: capture the status instead of letting a
                 # non-zero return abort the script before we can act on it
                 _vrc=0; verify_ctrld_download /tmp/ctrld.tar.gz "$_asset" "$CTRLD_PIN" || _vrc=$?
@@ -446,7 +446,7 @@ else
     print_step "Step 2: Installing ctrld v${CTRLD_PIN}..."
 
     CTRLD_ASSET="ctrld_${CTRLD_PIN}_linux_arm64.tar.gz"
-    wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${CTRLD_PIN}/${CTRLD_ASSET}" || {
+    fetch_url "https://github.com/Control-D-Inc/ctrld/releases/download/v${CTRLD_PIN}/${CTRLD_ASSET}" /tmp/ctrld.tar.gz || {
         die "Download failed. Check internet connectivity."
     }
     # set -e is on: capture the status rather than aborting on a non-zero return
@@ -534,6 +534,15 @@ else
     # https-dns-proxy while per-device visibility was gone on every boot, with
     # nothing in the log but a failed health check.
     DNS_PORT="${DNS_PORT:-5354}"
+    # Same choice as lib.sh's fetch_url: the router's wget cannot reach every
+    # github.com address, and the self-heal below downloads from there.
+    fetch_url() {
+        if command -v curl >/dev/null 2>&1; then
+            curl -fsSL --connect-timeout 15 --max-time 300 -o "$2" "$1"
+        else
+            wget -q -O "$2" "$1"
+        fi
+    }
     get_endpoint() {
         case "$1" in
             doq|dot) printf "%s.dns.controld.com" "$2" ;;
@@ -704,7 +713,7 @@ if [ ! -x /cfg/ctrld ]; then
     }
     logger -t post-cfg 'ctrld binary missing, downloading...'
     _asset="ctrld_${CTRLD_VERSION}_linux_arm64.tar.gz"
-    wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/v${CTRLD_VERSION}/${_asset}" || { logger -t post-cfg 'ctrld download failed'; exit 1; }
+    fetch_url "https://github.com/Control-D-Inc/ctrld/releases/download/v${CTRLD_VERSION}/${_asset}" /tmp/ctrld.tar.gz || { logger -t post-cfg 'ctrld download failed'; exit 1; }
     if command -v verify_ctrld_download >/dev/null 2>&1; then
         _vrc=0; verify_ctrld_download /tmp/ctrld.tar.gz "$_asset" "$CTRLD_VERSION" || _vrc=$?
         [ "$_vrc" = "1" ] && { rm -f /tmp/ctrld.tar.gz; logger -t post-cfg 'ctrld checksum mismatch, refusing to install'; exit 1; }
@@ -1495,6 +1504,17 @@ if [ -f /cfg/lib.sh ]; then
 fi
 DNS_PORT="${DNS_PORT:-5354}"
 
+# lib.sh's copy when it is installed. See the note there on why curl comes
+# first: the router's wget times out on some of github.com's addresses, which
+# is how two weekly runs in a row failed at the download.
+command -v fetch_url >/dev/null 2>&1 || fetch_url() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --connect-timeout 15 --max-time 300 -o "$2" "$1"
+    else
+        wget -q -O "$2" "$1"
+    fi
+}
+
 check_dns_local() { nslookup google.com "127.0.0.1#${DNS_PORT}" >/dev/null 2>&1; }
 
 # Start the binary just put in place and wait up to 15 seconds for it to
@@ -1526,7 +1546,7 @@ start_ctrld_wait() {
     return 1
 }
 
-LATEST="$(wget -qO- 'https://api.github.com/repos/Control-D-Inc/ctrld/releases/latest' | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\(v[0-9.]*\)".*/\1/')"
+LATEST="$(fetch_url 'https://api.github.com/repos/Control-D-Inc/ctrld/releases/latest' - 2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\(v[0-9.]*\)".*/\1/')"
 if [ -z "$LATEST" ]; then
     _cu_say "could not determine latest release (rate limit or no network) — skipping"
     exit 0
@@ -1553,7 +1573,11 @@ VER="${LATEST#v}"
 ASSET="ctrld_${VER}_linux_arm64.tar.gz"
 _cu_say "updating ctrld from ${CURRENT} to ${LATEST}"
 
-wget -O /tmp/ctrld.tar.gz "https://github.com/Control-D-Inc/ctrld/releases/download/${LATEST}/${ASSET}" || exit 1
+fetch_url "https://github.com/Control-D-Inc/ctrld/releases/download/${LATEST}/${ASSET}" /tmp/ctrld.tar.gz || {
+    rm -f /tmp/ctrld.tar.gz
+    _cu_say "download of ${LATEST} failed — keeping ${CURRENT}"
+    exit 1
+}
 
 # Verify before trusting a binary we are about to run as the LAN's resolver
 if command -v verify_ctrld_download >/dev/null 2>&1; then

@@ -150,6 +150,28 @@ code_only()   { sed 's/^[[:space:]]*#.*$//' "$@"; }
 code_grep()   { _cg_f="$1"; shift; code_only "$_cg_f" | grep -q "$@"; }
 code_lineno() { _cl_f="$1"; shift; code_only "$_cl_f" | grep -n "$@" | head -1 | cut -d: -f1; }
 
+# Downloads go through fetch_url, which prefers curl, and CI runners have a real
+# one that would reach the network past every wget stub below. Put a curl in a
+# stub directory that hands its download to the wget stub beside it, so each
+# stub keeps answering whichever tool fetch_url picks.
+# Usage: curl_shim <bin-dir>
+curl_shim() {
+    cat > "$1/curl" << 'CURLSHIMEOF'
+#!/bin/sh
+_o="-"; _u=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -o) _o="$2"; shift 2 ;;
+        --connect-timeout|--max-time) shift 2 ;;
+        -*) shift ;;
+        *)  _u="$1"; shift ;;
+    esac
+done
+exec "$(dirname "$0")/wget" -O "$_o" "$_u"
+CURLSHIMEOF
+    chmod +x "$1/curl"
+}
+
 skip() {
     TOTAL=$((TOTAL + 1))
     SKIP=$((SKIP + 1))
@@ -792,6 +814,41 @@ AUTO_UPDATE=0'
 printf 'AUTO_UPDATE=maybe\n' > "$AUV_ENV"
 assert_eq "an unparseable value means on, not off" "on" "$(auv_sed_says "$AUV_ENV")"
 
+describe "fetch_url() — curl when the router has it, wget when it does not"
+
+# The Route 10's wget is uclient-fetch, which times out on some of github.com's
+# addresses that curl reaches. Every release download depends on which of the
+# two is picked, so the choice is asserted with PATH holding nothing but stubs.
+FU="$TMPDIR/fetch-url"; rm -rf "$FU"; mkdir -p "$FU/both" "$FU/wget-only"
+for _fud in both wget-only; do
+    printf '#!/bin/sh\necho "wget $*" >> "%s/log"\n' "$FU" > "$FU/$_fud/wget"
+done
+printf '#!/bin/sh\necho "curl $*" >> "%s/log"\n' "$FU" > "$FU/both/curl"
+chmod +x "$FU/both"/* "$FU/wget-only"/*
+
+: > "$FU/log"
+# shellcheck disable=SC2123 # the stubs are meant to be all there is
+( PATH="$FU/both"; fetch_url https://example.invalid/a.tgz /tmp/a.tgz ) || true
+FU_BOTH="$(cat "$FU/log")"
+assert_contains     "with curl present it downloads with curl" "$FU_BOTH" "curl"
+assert_contains     "to the destination it was given"          "$FU_BOTH" "-o /tmp/a.tgz https://example.invalid/a.tgz"
+assert_not_contains "and never falls through to wget"          "$FU_BOTH" "wget"
+
+: > "$FU/log"
+# shellcheck disable=SC2123 # the stubs are meant to be all there is
+( PATH="$FU/wget-only"; fetch_url https://example.invalid/a.tgz - ) || true
+assert_contains "without curl it uses wget, to stdout for a destination of -" \
+    "$(cat "$FU/log")" "wget -q -O - https://example.invalid/a.tgz"
+
+# curl's exit status is the result. A download that fails must read as failed,
+# or the updater goes on to unpack nothing.
+printf '#!/bin/sh\nexit 22\n' > "$FU/both/curl"
+FU_RC=0
+# shellcheck disable=SC2123 # the stubs are meant to be all there is
+( PATH="$FU/both"; fetch_url https://example.invalid/a.tgz /tmp/a.tgz ) || FU_RC=$?
+assert_eq "a failed curl is a failed fetch" "22" "$FU_RC"
+unset FU FU_BOTH FU_RC _fud
+
 describe "controld-update.sh — the flag stops an update the cron did not"
 
 # An outcome test on the generated script, run the way the watchdog's is: the
@@ -800,7 +857,7 @@ describe "controld-update.sh — the flag stops an update the cron did not"
 # the test starts the script exactly as crond would and asserts it reaches the
 # network not at all.
 CU_CFG="$TMPDIR/cu-cfg"; CU_BIN="$TMPDIR/cu-bin"; CU_LOG="$TMPDIR/cu.log"
-mkdir -p "$CU_CFG" "$CU_BIN"
+mkdir -p "$CU_CFG/tmp" "$CU_BIN"
 export CU_LOG
 
 # "|| true" on every run below: the suite runs under set -e (line 6), and this
@@ -810,7 +867,7 @@ export CU_LOG
 CUGEN="$TMPDIR/controld-update-generated.sh"
 sed -n "/^cat > \/cfg\/controld-update.sh << 'UPDATESCRIPT'/,/^UPDATESCRIPT$/p" "$SCRIPT_DIR/setup.sh" \
     | sed '1d;$d' \
-    | sed -e "s|/cfg/|${CU_CFG}/|g" > "$CUGEN"
+    | sed -e "s|/tmp/|${CU_CFG}/tmp/|g" -e "s|-C /tmp|-C ${CU_CFG}/tmp|g" -e "s|/cfg/|${CU_CFG}/|g" > "$CUGEN"
 
 assert_true "the generated updater is valid sh" sh -n "$CUGEN"
 
@@ -818,6 +875,7 @@ printf '#!/bin/sh\necho "logger $*" >> "$CU_LOG"\n' > "$CU_BIN/logger"
 # wget is the first thing an update reaches for. If it runs, the flag failed.
 printf '#!/bin/sh\necho "wget $*" >> "$CU_LOG"\nexit 1\n' > "$CU_BIN/wget"
 chmod +x "$CU_BIN/logger" "$CU_BIN/wget"
+curl_shim "$CU_BIN"
 
 cat > "$CU_CFG/controld.env" << 'CUENVOFF'
 RESOLVER_ID=abc123
@@ -922,6 +980,28 @@ assert_eq           "the weekly run stays silent when current" "" "$CU_CUR_CRON"
 assert_not_contains "and logs nothing about it either" \
     "$(cat "$CU_LOG" 2>/dev/null)" "already on"
 
+# A download that fails has to say so. The updater used to exit straight after
+# logging "updating ctrld from ... to ...", so when the Route 10's wget began
+# failing on github.com, the last word in the log was an update that never
+# happened.
+cat > "$CU_BIN/wget" << 'CUWGETDL'
+#!/bin/sh
+echo "wget $*" >> "$CU_LOG"
+case "$*" in
+    *releases/latest) printf '%s\n' '{"tag_name":"v1.5.8"}' ;;
+    *) exit 4 ;;
+esac
+CUWGETDL
+chmod +x "$CU_BIN/wget"
+printf 'RESOLVER_ID=abc123\nCTRLD_VERSION=1.5.7\n' > "$CU_CFG/controld.env"
+printf 'old\n' > "$CU_CFG/ctrld"; rm -f "$CU_CFG/ctrld.prev"
+: > "$CU_LOG"
+( PATH="$CU_BIN:$PATH"; sh "$CUGEN" ) >/dev/null 2>&1 || true
+CU_DL="$(cat "$CU_LOG" 2>/dev/null)"
+assert_contains "a failed download is logged" "$CU_DL" "download of v1.5.8 failed — keeping v1.5.7"
+assert_eq       "and the installed binary is left alone" "old" "$(cat "$CU_CFG/ctrld")"
+assert_true     "and the recorded version too" grep -q '^CTRLD_VERSION=1.5.7$' "$CU_CFG/controld.env"
+
 describe "controld-update.sh — a release that will not start is rolled back without a query per second"
 
 # Every client's DNS is redirected to the binary the updater has just replaced,
@@ -963,6 +1043,7 @@ case "\$_u" in
 esac
 exit 1
 UWWGETEOF
+curl_shim "$UW/bin"
 # A killed ctrld must read as gone, zombie or not, as in the post-cfg.sh tests.
 printf '#!/bin/sh\n_p="$(cat "%s/ctrld.pid" 2>/dev/null)"\n[ -n "$_p" ] && kill -0 "$_p" 2>/dev/null && ! grep -q "^State:.*Z" "/proc/$_p/status" 2>/dev/null && echo "$_p"\n' \
     "$UW" > "$UW/bin/pidof"
@@ -5568,6 +5649,7 @@ sv_run() {
         "$_sv" "$_sv" "$_sv" > "$_sv/bin/uci"
     printf '#!/bin/sh\nexit 1\n' > "$_sv/bin/iptables-save"
     for _svf in sleep logger ping; do printf '#!/bin/sh\nexit 0\n' > "$_sv/bin/$_svf"; done
+    curl_shim "$_sv/bin"
     for _svf in dnsmasq https-dns-proxy; do printf '#!/bin/sh\nexit 0\n' > "$_sv/initd/$_svf"; done
     chmod +x "$_sv/bin"/* "$_sv/initd"/*
     fi

@@ -697,6 +697,24 @@ version_gt() {
     }'
 }
 
+# ── Downloads ──
+
+# Fetch a URL to a file, or to stdout when the destination is "-".
+#
+# curl when the router has it, wget only when it does not. The Route 10's wget
+# is OpenWrt's uclient-fetch, and on firmware 1.5o it times out connecting to
+# the addresses github.com answered with by mid-November 2026, while curl
+# reaches the same addresses. Every ctrld release download goes through
+# github.com, so the weekly updater failed at its download two Mondays running.
+# Usage: fetch_url <url> <dest|->
+fetch_url() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --connect-timeout 15 --max-time 300 -o "$2" "$1"
+    else
+        wget -q -O "$2" "$1"
+    fi
+}
+
 # ── Release Download Verification ──
 
 # Pull one asset's SHA-256 out of a checksums.txt body ("<sha>  <filename>")
@@ -714,7 +732,7 @@ verify_ctrld_download() {
     _vcd_file="$1"; _vcd_asset="$2"; _vcd_ver="$3"
     command -v sha256sum >/dev/null 2>&1 || return 2
     [ -f "$_vcd_file" ] || return 2
-    _vcd_sums="$(wget -qO- "https://github.com/Control-D-Inc/ctrld/releases/download/v${_vcd_ver}/checksums.txt" 2>/dev/null)"
+    _vcd_sums="$(fetch_url "https://github.com/Control-D-Inc/ctrld/releases/download/v${_vcd_ver}/checksums.txt" - 2>/dev/null)"
     [ -n "$_vcd_sums" ] || return 2
     _vcd_want="$(checksum_for_asset "$_vcd_sums" "$_vcd_asset")"
     [ -n "$_vcd_want" ] || return 2

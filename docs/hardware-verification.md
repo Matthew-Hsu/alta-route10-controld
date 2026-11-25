@@ -334,6 +334,27 @@ dnsmasq. An outage below is the span of failed probes.
   the checksum was verified or skipped. `/cfg` held both binaries with 10.4 MB
   of its 26.2 MB free.
 
+- **Weekly updates lost to the router's `wget`, 1.13.1 on 1.5o.** The Monday
+  cron took the router to 1.5.9 on Nov 2, 2026, then left it there through
+  1.5.10 and 1.5.11, with `ctrld.prev` still stamped Nov 2 03:00. Firmware
+  1.5o's `wget` is OpenWrt's `uclient-fetch`. Run by hand, it timed out three
+  times out of three connecting to github.com, at 4.149.173.80 and
+  20.29.134.23, and once more at 172.194.155.208 on a release download.
+  `curl` got a 200 from 4.149.173.80 and 172.194.155.208. The release check
+  against api.github.com still answered, so each Monday's run got as far as
+  the download and died there. Those log lines had rotated out before anyone
+  looked.
+
+- **The update through `curl`, on the same router.** With the change that
+  sends downloads through `curl`, installed from its branch archive (fetched
+  on the router with `curl`), re-running `setup.sh` kept 1.5.9 as newer than
+  the 1.5.8 pin. `controld-update.sh --now` then printed `updating ctrld from
+  v1.5.9 to v1.5.11` and `ctrld updated to v1.5.11 and resolving`, and exited
+  0. It printed no `could not verify` line, so `checksums.txt` also came
+  through `curl` and matched. Afterwards `ctrld --version` and `CTRLD_VERSION`
+  read 1.5.11, `ctrld.prev` was the 6,842,572-byte 1.5.9 binary, `status.sh`
+  and `audit.sh` both exited 0, and `/cfg/lib.sh` matched the branch by md5.
+
 - **Where the boot hook's log lines go.** They do reach `/tmp/log/messages`,
   but they carry pre-NTP timestamps, dated `Oct 24 09:02` on this router, and
   sort to the top of the file, so looking for them with `tail` finds nothing.
